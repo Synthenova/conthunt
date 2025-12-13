@@ -1,0 +1,10 @@
+postgres name conthunt-dev:us-central1:conthunt-dev
+
+<script src="https://www.gstatic.com/firebasejs/8.0/firebase.js"></script>
+<script>
+  var config = {
+    apiKey: "AIzaSyAbucXWcWu-wsaKBSZ8dKlziYa_ZWqpsZA",
+    authDomain: "conthunt-dev.firebaseapp.com",
+  };
+  firebase.initializeApp(config);
+</script>
