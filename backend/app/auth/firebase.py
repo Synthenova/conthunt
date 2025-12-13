@@ -1,9 +1,11 @@
+"""Firebase authentication module."""
 import os
 import firebase_admin
 from firebase_admin import auth, credentials
 from fastapi import Header, HTTPException
 
 _app = None
+
 
 def init_firebase():
     global _app
@@ -21,9 +23,16 @@ def init_firebase():
         _app = firebase_admin.get_app()
     return _app
 
+
 init_firebase()
 
+
 def get_current_user(authorization: str = Header(default="")):
+    """
+    Extract and verify Firebase ID token from Authorization header.
+    
+    Returns the decoded token payload containing user info.
+    """
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     id_token = authorization.split(" ", 1)[1].strip()

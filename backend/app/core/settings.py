@@ -1,0 +1,37 @@
+"""Application settings loaded from environment variables."""
+from pydantic_settings import BaseSettings
+from functools import lru_cache
+
+
+class Settings(BaseSettings):
+    # Database
+    DATABASE_URL: str
+    DB_SCHEMA: str = "conthunt"
+
+    # GCP / Firebase
+    GCLOUD_PROJECT: str = "conthunt-dev"
+    GCP_PROJECT: str = "conthunt-dev"
+
+    # ScrapeCreators API
+    SCRAPECREATORS_API_KEY: str
+    SCRAPECREATORS_BASE_URL: str = "https://api.scrapecreators.com"
+
+    # GCS Buckets
+    GCS_BUCKET_RAW: str = "conthunt-dev-raw"
+    GCS_BUCKET_MEDIA: str = "conthunt-dev-media"
+
+    # Media download behavior
+    MEDIA_DOWNLOAD_ENABLED: bool = True
+    MEDIA_MAX_CONCURRENCY: int = 4
+    MEDIA_HTTP_TIMEOUT_S: int = 40
+    RAW_UPLOAD_ENABLED: bool = True
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        extra = "ignore"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
