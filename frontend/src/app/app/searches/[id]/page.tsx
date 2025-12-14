@@ -1,7 +1,8 @@
 "use client";
 
 import { useSearch } from "@/hooks/useSearch";
-import { ResultsGrid } from "@/components/search/ResultsGrid";
+import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
+import { SelectionBar } from "@/components/boards/SelectionBar";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Calendar, Search } from "lucide-react";
 import Link from "next/link";
@@ -95,8 +96,11 @@ export default function SearchDetailPage() {
             {/* Results */}
             <div className="space-y-4">
                 <h2 className="text-xl font-semibold border-b border-white/10 pb-2">Results ({flattenedResults.length})</h2>
-                <ResultsGrid results={flattenedResults} loading={false} />
+                <SelectableResultsGrid results={flattenedResults} loading={false} />
             </div>
+
+            {/* Selection Bar */}
+            <SelectionBar />
         </div>
     );
 }

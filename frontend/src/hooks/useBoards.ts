@@ -1,0 +1,148 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { auth } from "@/lib/firebaseClient";
+import { Board, BoardItem, CreateBoardRequest } from "@/lib/types/boards";
+
+const API_BASE = "http://localhost:8000/v1";
+
+async function fetchWithAuth(url: string, options: RequestInit = {}) {
+    const user = auth.currentUser;
+    if (!user) throw new Error("User not authenticated");
+
+    const token = await user.getIdToken();
+    const headers = {
+        ...options.headers,
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+    };
+
+    const res = await fetch(url, { ...options, headers });
+    if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(error.detail || "API request failed");
+    }
+
+    // Handle 204 No Content
+    if (res.status === 204) return null;
+    return res.json();
+}
+
+/**
+ * Hook for all board-related operations.
+ */
+export function useBoards() {
+    const queryClient = useQueryClient();
+
+    // GET /v1/boards - List all boards
+    const boardsQuery = useQuery<Board[]>({
+        queryKey: ["boards"],
+        queryFn: () => fetchWithAuth(`${API_BASE}/boards`),
+    });
+
+    // GET /v1/boards/:id - Get single board
+    const getBoard = (id: string) =>
+        useQuery<Board>({
+            queryKey: ["board", id],
+            queryFn: () => fetchWithAuth(`${API_BASE}/boards/${id}`),
+            enabled: !!id,
+        });
+
+    // GET /v1/boards/:id/items - Get board items
+    const getBoardItems = (id: string) =>
+        useQuery<BoardItem[]>({
+            queryKey: ["boardItems", id],
+            queryFn: () => fetchWithAuth(`${API_BASE}/boards/${id}/items`),
+            enabled: !!id,
+        });
+
+    // POST /v1/boards - Create board
+    const createBoardMutation = useMutation({
+        mutationFn: (data: CreateBoardRequest) =>
+            fetchWithAuth(`${API_BASE}/boards`, {
+                method: "POST",
+                body: JSON.stringify(data),
+            }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["boards"] });
+        },
+    });
+
+    // DELETE /v1/boards/:id - Delete board
+    const deleteBoardMutation = useMutation({
+        mutationFn: (boardId: string) =>
+            fetchWithAuth(`${API_BASE}/boards/${boardId}`, {
+                method: "DELETE",
+            }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["boards"] });
+        },
+    });
+
+    // POST /v1/boards/:id/items - Add item(s) to board
+    const addToBoardMutation = useMutation({
+        mutationFn: async ({
+            boardId,
+            contentItemIds,
+        }: {
+            boardId: string;
+            contentItemIds: string[];
+        }) => {
+            // Add each item sequentially (backend accepts one at a time)
+            const results = [];
+            for (const contentItemId of contentItemIds) {
+                const result = await fetchWithAuth(`${API_BASE}/boards/${boardId}/items`, {
+                    method: "POST",
+                    body: JSON.stringify({ content_item_id: contentItemId }),
+                });
+                results.push(result);
+            }
+            return results;
+        },
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["boards"] }); // Update item counts
+            queryClient.invalidateQueries({ queryKey: ["boardItems", variables.boardId] });
+        },
+    });
+
+    // DELETE /v1/boards/:id/items/:item_id - Remove item from board
+    const removeFromBoardMutation = useMutation({
+        mutationFn: ({
+            boardId,
+            contentItemId,
+        }: {
+            boardId: string;
+            contentItemId: string;
+        }) =>
+            fetchWithAuth(`${API_BASE}/boards/${boardId}/items/${contentItemId}`, {
+                method: "DELETE",
+            }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["boards"] });
+            queryClient.invalidateQueries({ queryKey: ["boardItems", variables.boardId] });
+        },
+    });
+
+    return {
+        // Queries
+        boards: boardsQuery.data || [],
+        isLoadingBoards: boardsQuery.isLoading,
+        boardsError: boardsQuery.error,
+        getBoard,
+        getBoardItems,
+
+        // Mutations
+        createBoard: createBoardMutation.mutateAsync,
+        isCreatingBoard: createBoardMutation.isPending,
+
+        deleteBoard: deleteBoardMutation.mutateAsync,
+        isDeletingBoard: deleteBoardMutation.isPending,
+
+        addToBoard: addToBoardMutation.mutateAsync,
+        isAddingToBoard: addToBoardMutation.isPending,
+
+        removeFromBoard: removeFromBoardMutation.mutateAsync,
+        isRemovingFromBoard: removeFromBoardMutation.isPending,
+
+        // Refetch
+        refetchBoards: () => queryClient.invalidateQueries({ queryKey: ["boards"] }),
+    };
+}

@@ -7,8 +7,9 @@ import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { SearchHeader } from "@/components/search/SearchHeader";
 import { FilterBar } from "@/components/search/FilterBar";
 import { Button } from "@/components/ui/button";
-import { ResultsGrid } from "@/components/search/ResultsGrid";
+import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
 import { ClientResultControls } from "@/components/search/ClientResultControls";
+import { SelectionBar } from "@/components/boards/SelectionBar";
 
 import { LogoutButton } from "@/components/logout-button";
 
@@ -70,7 +71,7 @@ export default function SearchPage() {
 
                 {/* Main Content */}
                 <main className="flex-1 w-full flex flex-col gap-8">
-                    <ResultsGrid results={flatResults} loading={isInitialLoading} />
+                    <SelectableResultsGrid results={flatResults} loading={isInitialLoading} />
 
                     {hasMore && !isLoadingMore && (
                         <div className="flex justify-center pb-8">
@@ -100,6 +101,9 @@ export default function SearchPage() {
                     </div>
                 </footer>
             </div>
+
+            {/* Selection Bar - Fixed at bottom */}
+            <SelectionBar />
         </div>
     );
 }
