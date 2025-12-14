@@ -1,0 +1,73 @@
+
+// Types for what the UI expects (Flat)
+export interface FlatMediaItem {
+    id: string;
+    platform: string;
+    title: string;
+    thumbnail_url: string;
+    video_url?: string;
+    url?: string;
+    view_count: number;
+    like_count: number;
+    comment_count: number;
+    share_count: number;
+    published_at?: string;
+    creator?: string;
+}
+
+/**
+ * Transforms a raw Search Result Item (Backend) into a FlatMediaItem (Frontend UI).
+ * 
+ * Logic:
+ * 1. Title: Falls back from `title` -> `primary_text` -> `caption` -> "No Title".
+ * 2. Assets: Finds the best 'video' and 'image' assets from the assets list.
+ * 3. Metrics: Flattened from the `metrics` object.
+ */
+export function transformToMediaItem(backendResult: any): FlatMediaItem {
+    const content = backendResult.content_item || {};
+    const assets = backendResult.assets || [];
+
+    // 1. Asset Resolution
+    // Strategy: Prefer GCS URI if available? No, browser can't read GCS URI directly typically unless public.
+    // Usually we want the signed URL or the source URL. 
+    // For now we use source_url as primary.
+    const videoAsset = assets.find((a: any) => a.asset_type === 'video');
+    const imageAsset = assets.find((a: any) => a.asset_type === 'cover' || a.asset_type === 'thumbnail' || a.mime_type?.startsWith('image'));
+
+    const videoUrl = videoAsset?.source_url || videoAsset?.gcs_uri;
+    const thumbnailUrl = imageAsset?.source_url || imageAsset?.gcs_uri;
+
+    // 2. Metrics Resolution
+    const metrics = content.metrics || {};
+
+    return {
+        id: content.id || backendResult.id || 'unknown',
+        platform: content.platform || 'unknown',
+
+        // Title fallback chain
+        title: content.title || content.primary_text || content.caption || content.description || "No Title",
+
+        // URLs
+        thumbnail_url: thumbnailUrl || '/placeholder-image.jpg', // You might want a real placeholder
+        video_url: videoUrl,
+        url: content.canonical_url || content.url || content.web_url,
+
+        // Stats
+        view_count: Number(metrics.views || metrics.play_count || 0),
+        like_count: Number(metrics.likes || metrics.digg_count || 0),
+        comment_count: Number(metrics.comments || 0),
+        share_count: Number(metrics.shares || 0),
+
+        // Metadata
+        published_at: content.published_at,
+        creator: content.creator_handle || content.author,
+    };
+}
+
+/**
+ * Transforms a list of results.
+ */
+export function transformSearchResults(results: any[]): FlatMediaItem[] {
+    if (!Array.isArray(results)) return [];
+    return results.map(transformToMediaItem);
+}
