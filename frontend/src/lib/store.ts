@@ -8,7 +8,6 @@ interface SearchInputs {
     pinterest: boolean;
 }
 
-// ... existing code ...
 interface SearchState {
     query: string;
     limit: number;
@@ -19,6 +18,13 @@ interface SearchState {
     // keys: platform name. values: sort key
     sortBy: Record<string, string>;
 
+    // Selection state for adding to boards
+    selectedItems: string[];
+    toggleItemSelection: (id: string) => void;
+    clearSelection: () => void;
+    selectAll: (ids: string[]) => void;
+    isItemSelected: (id: string) => boolean;
+
     setQuery: (q: string) => void;
     setLimit: (n: number) => void;
     togglePlatform: (key: keyof SearchInputs) => void;
@@ -28,7 +34,7 @@ interface SearchState {
     setSort: (platform: string, sortKey: string) => void;
 }
 
-export const useSearchStore = create<SearchState>((set) => ({
+export const useSearchStore = create<SearchState>((set, get) => ({
     query: '',
     limit: 5,
     platformInputs: {
@@ -40,6 +46,17 @@ export const useSearchStore = create<SearchState>((set) => ({
     },
     filters: {},
     sortBy: {},
+
+    // Selection state
+    selectedItems: [],
+    toggleItemSelection: (id) => set((state) => ({
+        selectedItems: state.selectedItems.includes(id)
+            ? state.selectedItems.filter(i => i !== id)
+            : [...state.selectedItems, id]
+    })),
+    clearSelection: () => set({ selectedItems: [] }),
+    selectAll: (ids) => set({ selectedItems: ids }),
+    isItemSelected: (id) => get().selectedItems.includes(id),
 
     setQuery: (query) => set({ query }),
     setLimit: (limit) => set({ limit }),
