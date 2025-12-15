@@ -142,25 +142,46 @@ async def dodo_subscription_webhook(request: Request):
     product_id = data.get("product_id")
     status = data.get("status")
     
-    # Determine new role based on product_id
+    # Determine new role based on Event + Status + Product Matrix
     settings = get_settings()
+    current_product_role = None
+    
+    # Map product to role
+    if product_id == settings.DODO_PRODUCT_CREATOR:
+        current_product_role = UserRole.CREATOR.value
+    elif product_id == settings.DODO_PRODUCT_PRO:
+        current_product_role = UserRole.PRO_RESEARCH.value
+    
     new_role = None
     
-    if product_id == settings.DODO_PRODUCT_CREATOR:
-        new_role = UserRole.CREATOR.value
-    elif product_id == settings.DODO_PRODUCT_PRO:
-        new_role = UserRole.PRO_RESEARCH.value
+    # Log the context for debugging
+    logger.info(f"Processing webhook {webhook_id}: Type={event_type}, Status={status}, Product={product_id}, MappedRole={current_product_role}")
+
+    # Matrix Logic:
     
-    # Handle specific events
+    # 1. Active States: Grant Access
     if event_type in ("subscription.active", "subscription.renewed", "subscription.plan_changed"):
-        if not new_role:
-             logger.warning(f"Webhook {webhook_id}: Unknown product_id {product_id}")
-    elif event_type in ("subscription.cancelled", "subscription.expired", "payment.failed"):
-        # Downgrade logic or status update?
-        # For now, just track the status. Implementing auto-downgrade might be safer to do strictly on cancellation?
-        # Actually, let's update status and keep the role sync logic strict.
-        # If cancelled, Dodo status will reflect it.
-        pass
+        if status in ("active", "trialing") and current_product_role:
+             new_role = current_product_role
+        else:
+            # e.g. plan changed but status is past_due? Keep existing role (do nothing)
+            logger.info(f"Webhook {webhook_id}: Active event but status '{status}' or unknown product. No role change.")
+
+    # 2. Cancellation / Expiration: Revoke Access
+    elif event_type in ("subscription.cancelled", "subscription.expired"):
+        # Immediate downgrade
+        new_role = "free"
+        logger.info(f"Webhook {webhook_id}: Subscription cancelled/expired. Downgrading to free.")
+
+    # 3. Failures / Past Due: Persist Access (Validation Grace)
+    elif event_type in ("payment.failed",):
+        # Do not change role. Log warning.
+        logger.warning(f"Webhook {webhook_id}: Payment failed. Keeping existing access for now.")
+        new_role = None
+        
+    else:
+        # Unknown event type
+        logger.info(f"Webhook {webhook_id}: Unhandled event type {event_type}. No role change.")
         
     # Update DB
     async with get_db_connection() as conn:
