@@ -29,7 +29,7 @@ async def get_signed_url(
     
     async with get_db_connection() as conn:
         # Get or create user
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         
         # Set RLS context
         await set_rls_user(conn, user_uuid)

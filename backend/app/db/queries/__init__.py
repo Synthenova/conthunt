@@ -6,6 +6,7 @@ Import from specific modules for cleaner code:
     from app.db.queries.search import insert_search
     from app.db.queries.boards import create_board
     from app.db.queries.twelvelabs import get_video_analysis_by_content_item
+    from app.db.queries.users import get_user_role
 """
 
 # Search queries
@@ -46,6 +47,13 @@ from app.db.queries.twelvelabs import (
     get_content_item_by_id,
 )
 
+# User queries
+from app.db.queries.users import (
+    get_user_role,
+    update_user_role,
+    update_user_dodo_subscription,
+)
+
 __all__ = [
     # Search
     "compute_search_hash",
@@ -76,4 +84,9 @@ __all__ = [
     "get_video_analysis_by_content_item",
     "insert_video_analysis",
     "get_content_item_by_id",
+    # Users
+    "get_user_role",
+    "update_user_role",
+    "update_user_dodo_subscription",
 ]
+

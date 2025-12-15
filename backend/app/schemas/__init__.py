@@ -17,6 +17,7 @@ from .history import (
     SearchDetailResponse,
 )
 from .media import SignedUrlResponse
+from .roles import UserRole, UserRoleUpdate, UserInfo
 
 __all__ = [
     # Search
@@ -36,4 +37,9 @@ __all__ = [
     "SearchDetailResponse",
     # Media
     "SignedUrlResponse",
+    # Roles
+    "UserRole",
+    "UserRoleUpdate",
+    "UserInfo",
 ]
+
