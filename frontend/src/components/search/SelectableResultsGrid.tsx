@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { SelectableMediaCard } from "./SelectableMediaCard";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
 
 interface SelectableResultsGridProps {
     results: any[];
@@ -7,6 +9,8 @@ interface SelectableResultsGridProps {
 }
 
 export function SelectableResultsGrid({ results, loading }: SelectableResultsGridProps) {
+    const [selectedItem, setSelectedItem] = useState<any | null>(null);
+
     if (loading) {
         return (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
@@ -34,15 +38,28 @@ export function SelectableResultsGrid({ results, loading }: SelectableResultsGri
     }
 
     return (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-20">
-            {results.map((item, i) => (
-                <div key={item.id || i} className="animate-in fade-in zoom-in duration-500" style={{ animationDelay: `${i * 50}ms` }}>
-                    <SelectableMediaCard
-                        item={item}
-                        platform={item.platform || 'unknown'}
-                    />
-                </div>
-            ))}
-        </div>
+        <>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-20">
+                {results.map((item, i) => (
+                    <div
+                        key={item.id || i}
+                        className="animate-in fade-in zoom-in duration-500 cursor-pointer"
+                        style={{ animationDelay: `${i * 50}ms` }}
+                        onClick={() => setSelectedItem(item)}
+                    >
+                        <SelectableMediaCard
+                            item={item}
+                            platform={item.platform || 'unknown'}
+                        />
+                    </div>
+                ))}
+            </div>
+
+            <ContentDrawer
+                isOpen={!!selectedItem}
+                onClose={() => setSelectedItem(null)}
+                item={selectedItem}
+            />
+        </>
     );
 }

@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     MEDIA_HTTP_TIMEOUT_S: int = 40
     RAW_UPLOAD_ENABLED: bool = True
 
+    # TwelveLabs Video Analysis
+    TWELVELABS_API_KEY: str = ""
+    TWELVELABS_INDEX_ID: str = "" # Static Index ID
+    TWELVELABS_DEFAULT_INDEX_NAME: str = "conthunt-videos"
+    TWELVELABS_UPLOAD_TIMEOUT: int = 120  # seconds
+    TWELVELABS_INDEX_TIMEOUT: int = 180  # seconds
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
