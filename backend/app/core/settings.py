@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Frontend Return URL
     FRONTEND_RETURN_URL: str = "http://localhost:3000/app/billing/return"
 
+    # LangGraph & Redis
+    LANGGRAPH_URL: str
+    REDIS_URL: str = "redis://localhost:6379"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
