@@ -22,7 +22,7 @@ async def list_boards(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         return await queries.get_user_boards(conn, user_uuid)
 
@@ -38,7 +38,7 @@ async def create_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         board_id = await queries.create_board(conn, user_uuid, board_in.name)
@@ -58,7 +58,7 @@ async def search_boards(
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         return await queries.search_user_boards(conn, user_uuid, q)
 
@@ -74,7 +74,7 @@ async def get_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         board = await queries.get_board_by_id(conn, board_id)
@@ -95,7 +95,7 @@ async def delete_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         success = await queries.delete_board(conn, board_id)
@@ -115,7 +115,7 @@ async def get_board_items(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         # Verify board exists
@@ -138,7 +138,7 @@ async def add_item_to_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         try:
@@ -162,7 +162,7 @@ async def remove_item_from_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         success = await queries.remove_item_from_board(conn, board_id, content_item_id)
@@ -183,7 +183,7 @@ async def search_in_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid = await get_or_create_user(conn, firebase_uid)
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         board = await queries.get_board_by_id(conn, board_id)
