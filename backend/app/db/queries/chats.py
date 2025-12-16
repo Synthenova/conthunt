@@ -67,7 +67,15 @@ async def get_chat_thread_id(conn: AsyncConnection, chat_id: UUID) -> Optional[s
 async def check_chat_exists(conn: AsyncConnection, chat_id: UUID) -> bool:
     """Check if a chat exists."""
     row = await conn.execute(
-        text("SELECT 1 FROM conthunt.chats WHERE id = :id"),
+        text("SELECT 1 FROM conthunt.chats WHERE id = :id AND deleted_at IS NULL"),
         {"id": chat_id}
     )
     return bool(row.fetchone())
+
+
+async def delete_chat(conn: AsyncConnection, chat_id: UUID) -> None:
+    """Soft delete a chat."""
+    await conn.execute(
+        text("UPDATE conthunt.chats SET deleted_at = NOW() WHERE id = :id"),
+        {"id": chat_id}
+    )

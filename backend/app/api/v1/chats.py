@@ -203,6 +203,29 @@ async def send_message(
     
     return {"ok": True}
 
+@router.delete("/{chat_id}")
+async def delete_chat(
+    chat_id: uuid.UUID,
+    user: dict = Depends(get_current_user),
+):
+    """Delete a chat session."""
+    user_id = user.get("uid")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    async with get_db_connection() as conn:
+        user_uuid, _ = await get_or_create_user(conn, user_id)
+        await set_rls_user(conn, user_uuid)
+        
+        exists = await queries.check_chat_exists(conn, chat_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Chat not found")
+            
+        await queries.delete_chat(conn, chat_id)
+        await conn.commit()
+        
+    return {"ok": True}
+
 @router.get("/{chat_id}/stream")
 async def stream_chat(
     chat_id: uuid.UUID,
