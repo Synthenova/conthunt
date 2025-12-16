@@ -74,3 +74,4 @@ env/
 # Local tooling (do not commit binaries)
 cloud-sql-proxy
 cloud-sql-proxy*
+agent/.langgraph_api
