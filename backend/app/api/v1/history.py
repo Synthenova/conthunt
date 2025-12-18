@@ -1,7 +1,7 @@
 """History API endpoints - GET /v1/searches."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.auth import get_current_user
 from app.core import logger
@@ -59,6 +59,7 @@ async def list_searches(
 @router.get("/searches/{search_id}", response_model=SearchDetailResponse)
 async def get_search_detail(
     search_id: UUID,
+    request: Request,
     user: dict = Depends(get_current_user),
 ):
     """
@@ -128,7 +129,11 @@ async def get_search_detail(
                         id=a["id"],
                         asset_type=a["asset_type"],
                         status=a["status"],
-                        source_url=a["source_url"],
+                        source_url=(
+                            str(request.url_for("get_media_content", asset_id=a["id"]))
+                            if a["status"] in ("stored", "downloaded") and a["gcs_uri"]
+                            else a["source_url"]
+                        ),
                         gcs_uri=a["gcs_uri"],
                         sha256=a["sha256"],
                         mime_type=a["mime_type"],

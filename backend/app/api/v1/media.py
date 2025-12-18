@@ -2,6 +2,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 
 from app.auth import get_current_user
 from app.core import logger
@@ -60,3 +61,42 @@ async def get_signed_url(
     except Exception as e:
         logger.error(f"Failed to generate signed URL for asset {asset_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate signed URL")
+
+
+@router.get("/media/{asset_id}/content")
+async def get_media_content(
+    asset_id: UUID,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Redirect to the GCS signed URL for a media asset.
+    Used for persistent access to media (e.g., in history/boards).
+    """
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+    
+    async with get_db_connection() as conn:
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
+        asset = await queries.get_media_asset_with_access_check(conn, asset_id)
+    
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    # Check if we have the file
+    if asset["status"] not in ("stored", "downloaded") or not asset["gcs_uri"]:
+         # If not stored, we can't redirect to GCS.
+         # For now, 404. Ideally we might redirect to source_url but that expires.
+        raise HTTPException(status_code=404, detail="Media content not available in storage")
+    
+    try:
+        # Generate short-lived signed URL
+        signed_url = gcs_client.generate_signed_url(
+            gcs_uri=asset["gcs_uri"],
+            expiration_seconds=3600, # 1 hour
+        )
+        return RedirectResponse(url=signed_url, status_code=307)
+    except Exception as e:
+        logger.error(f"Failed to generate redirect for asset {asset_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve media content")
