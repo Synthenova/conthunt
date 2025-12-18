@@ -3,6 +3,31 @@ from pydantic import BaseModel
 from typing import Optional, List, Any
 from datetime import datetime
 from uuid import UUID
+from datetime import datetime
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+class TwelveLabsSearchRequest(BaseModel):
+    """Request to search 12Labs index."""
+    query: str
+    index_id: Optional[str] = None # Optional override, else use env default
+    search_options: List[str] = ["visual", "conversation", "text_in_video", "logo"]
+
+
+class TwelveLabsSearchResponseItem(BaseModel):
+    """Single search result item."""
+    score: float
+    start: float
+    end: float
+    video_id: str
+    confidence: str
+    thumbnail_url: Optional[str] = None
+    metadata: Optional[dict] = None
+
+class TwelveLabsSearchResponse(BaseModel):
+    """Response for search request."""
+    data: List[TwelveLabsSearchResponseItem]
 
 
 class VideoAnalysisRequest(BaseModel):
