@@ -176,12 +176,25 @@ async def send_message(
     chat_id: uuid.UUID,
     request: SendMessageRequest,
     background_tasks: BackgroundTasks,
+    req_obj: Request, # Need Request object to get headers
     user: dict = Depends(get_current_user),
 ):
     """Send a message (triggers background stream)."""
     user_id = user.get("uid")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid user")
+
+    # Extract auth token from header
+    auth_header = req_obj.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+         # Should ideally not happen if get_current_user passed, but specific token needed
+         # In Firebase auth, the token is reused. 
+         # get_current_user verifies it but doesn't return the raw token string usually?
+         # Depends on implementation. We grab it from header to be safe.
+         raise HTTPException(status_code=401, detail="Missing Bearer token")
+    
+    auth_token = auth_header.split(" ")[1]
+
     
     async with get_db_connection() as conn:
         user_uuid, _ = await get_or_create_user(conn, user_id)
@@ -192,7 +205,10 @@ async def send_message(
             raise HTTPException(status_code=404, detail="Chat not found")
         
     # Trigger Background Task
-    inputs = {"messages": [{"role": "user", "content": request.message}]}
+    inputs = {
+        "messages": [{"role": "user", "content": request.message}],
+        "auth_token": auth_token # Pass token to agent state
+    }
     
     background_tasks.add_task(
         stream_generator_to_redis,
