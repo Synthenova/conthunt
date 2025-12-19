@@ -10,13 +10,10 @@ from app.db.queries import (
     get_content_item_by_id,
     upsert_twelvelabs_asset,
     update_twelvelabs_asset_status,
-    insert_video_analysis,
-    get_video_analysis_by_content_item,
     get_twelvelabs_asset_by_content_item
 )
 from app.services.twelvelabs_client import (
     get_twelvelabs_client,
-    DEFAULT_ANALYSIS_PROMPT,
 )
 from app.storage.gcs import gcs_client
 
@@ -54,28 +51,20 @@ async def _archive_twelvelabs_response(
         return None
 
 
-async def process_video_analysis(content_item_id: UUID):
+async def process_twelvelabs_indexing(content_item_id: UUID):
     """
-    Background task to handle the full TwelveLabs analysis flow.
+    Background task to handle TwelveLabs indexing flow (Upload -> Index).
     
     1. Upload video (if needed)
     2. Index video (if needed)
-    3. Analyze video
-    4. Store results
     
     Handles DB updates and error status setting.
     """
-    logger.info(f"Starting background analysis for content item {content_item_id}")
+    logger.info(f"Starting background indexing for content item {content_item_id}")
     settings = get_settings()
     
     try:
         async with get_db_connection() as conn:
-            # 0. Check if analysis already exists (double check race condition)
-            existing = await get_video_analysis_by_content_item(conn, content_item_id)
-            if existing:
-                logger.info(f"Analysis already exists for {content_item_id}, skipping")
-                return
-
             # 1. Get content item and video URL
             content_item = await get_content_item_by_id(conn, content_item_id)
             if not content_item:
@@ -97,21 +86,13 @@ async def process_video_analysis(content_item_id: UUID):
                 
                 # If currently working, abort
                 if status in ("uploading", "processing") or idx_status in ("queued", "indexing", "processing"):
-                    logger.info(f"Analysis already in progress for {content_item_id} (status: {status}/{idx_status}), skipping")
+                    logger.info(f"Indexing already in progress for {content_item_id} (status: {status}/{idx_status}), skipping")
                     return
                 
-                # If it's failed, we might be retrying.
-                # If it's ready, we shouldn't be here (checked by get_video_analysis above), 
-                # but if analysis failed but index is ready, we proceed to analysis.
-                if idx_status == "ready":
-                     # Skip upload/index and go to analysis
-                     logger.info(f"Asset already indexed ({existing_asset['asset_id']}), skipping to analysis")
-                     tl_index_id = existing_asset["index_id"]
-                     indexed_asset_id = existing_asset["indexed_asset_id"]
-                     internal_asset_id = existing_asset["id"]
-                     # Jump to analysis
-                     # We need to restructure this flow to allow jumping.
-                     # For now, let's keep it simple: if ready, we just fall through to the analysis block if we structure it right.
+                # If both ready, nothing to do
+                if status == "ready" and idx_status == "ready":
+                     logger.info(f"Asset already fully indexed for {content_item_id}, skipping")
+                     return
             
             # 3. Initialize TwelveLabs client
             try:
@@ -127,36 +108,40 @@ async def process_video_analysis(content_item_id: UUID):
                 return
 
             # Determine where to start
-            # If we have an indexed asset ready, verify it and proceed to analyze
             current_asset_id = None
             current_indexed_asset_id = None
-            internal_asset_id = existing_asset["id"] if existing_asset else None
-
-            if existing_asset and existing_asset.get("index_status") == "ready":
-                 current_indexed_asset_id = existing_asset["indexed_asset_id"]
-                 current_asset_id = existing_asset["asset_id"]
-                 logger.info(f"Asset already indexed, proceeding to analysis: {current_indexed_asset_id}")
             
-            elif existing_asset and existing_asset.get("asset_status") == "ready":
-                 # Uploaded but not indexed
-                 current_asset_id = existing_asset["asset_id"]
-                 logger.info(f"Asset already uploaded, proceeding to index: {current_asset_id}")
+            if existing_asset:
+                 current_asset_id = existing_asset.get("asset_id")
+                 # Check if we have a valid index ID match
+                 if existing_asset.get("index_id") != tl_index_id:
+                      logger.warning(f"Existing asset index ID mismatch for {content_item_id}, might re-upload/index")
+                      # Ideally we handle this, but for now proceed with existing asset if ID present
+
+                 if existing_asset.get("index_status") == "ready":
+                      current_indexed_asset_id = existing_asset.get("indexed_asset_id")
+            
+            if current_asset_id and existing_asset.get("asset_status") == "ready":
+                 logger.info(f"Asset already uploaded: {current_asset_id}")
 
             # 4. Upload Step
-            if not current_asset_id:
-                logger.info(f"Starting upload for {content_item_id}...")
-                
-                # Pre-insert to lock and track
-                internal_asset_id = await upsert_twelvelabs_asset(
-                    conn,
-                    content_item_id=content_item_id,
-                    index_id=tl_index_id,
-                    asset_id="pending", # Temporary
-                    asset_status="uploading"
-                )
-                await conn.commit()
+            if not current_asset_id or existing_asset.get("asset_status") != "ready":
+                if not current_asset_id:
+                     logger.info(f"Starting upload for {content_item_id}...")
+                     
+                     # Pre-insert to lock and track
+                     await upsert_twelvelabs_asset(
+                         conn,
+                         content_item_id=content_item_id,
+                         index_id=tl_index_id,
+                         asset_id="pending", # Temporary
+                         asset_status="uploading"
+                     )
+                     await conn.commit()
 
                 try:
+                    # If we don't have asset ID, upload.
+                    # If we have one but status failed, retrying upload might create new asset ID
                     asset_id, upload_raw = await client.upload_asset(video_url)
                     
                     upload_gcs_uri = await _archive_twelvelabs_response(
@@ -246,31 +231,8 @@ async def process_video_analysis(content_item_id: UUID):
                     conn, content_item_id, index_status="ready"
                 )
                 await conn.commit()
-
-            # 6. Analyze Step
-            logger.info(f"Analyzing video {current_indexed_asset_id}...")
-            # Double check analysis doesn't exist (in case of parallel race)
-            if await get_video_analysis_by_content_item(conn, content_item_id):
-                 logger.info("Analysis appeared during processing, skipping.")
-                 return
-
-            analysis_result = await client.analyze_video(current_indexed_asset_id)
             
-            analyze_gcs_uri = await _archive_twelvelabs_response(
-                content_item_id, "analyze", analysis_result.get("raw_response", {})
-            )
-            
-            await insert_video_analysis(
-                conn,
-                content_item_id=content_item_id,
-                twelvelabs_asset_id=internal_asset_id, # This should be set by now
-                prompt=DEFAULT_ANALYSIS_PROMPT,
-                analysis_result=analysis_result["analysis"],
-                token_usage=analysis_result.get("token_usage"),
-                raw_gcs_uri=analyze_gcs_uri,
-            )
-            await conn.commit()
-            logger.info(f"Background analysis complete for {content_item_id}")
+            logger.info(f"Background indexing complete for {content_item_id}")
 
                 
     except Exception as e:
