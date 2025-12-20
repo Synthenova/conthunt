@@ -2,6 +2,7 @@
 import asyncio
 import time
 from typing import List
+import uuid
 from uuid import UUID
 import traceback
 from dataclasses import asdict
@@ -235,16 +236,20 @@ async def create_search(
                 items_data = []
                 if result.parsed:
                     for item in result.parsed.items:
+                        # Generate deterministic ID for content item
+                        content_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
+
                         # Construct assets list
                         assets_data = []
                         for media in item.media_urls:
-                            # We don't have DB IDs yet, so we use a placeholder or None
-                            # The frontend keys off content_item.id usually, but assets might need IDs
-                            # Let's generate a temporary ID if needed, or just leave it empty if frontend tolerates it
-                            # Actually, frontend likely needs some unique key. But since this is a stream, 
-                            # we can't give real DB IDs.
+                            # Generate deterministic ID for asset
+                            # using content_id + asset_type + source_url (or just type if one per type)
+                            # To be safe against multiple assets of same type, use source_url
+                            asset_seed = f"{content_id}:{media.asset_type.value}:{media.source_url}"
+                            asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, asset_seed))
+
                             assets_data.append({
-                                "id": None, # Will be ignored or handled by frontend keys
+                                "id": asset_id, 
                                 "asset_type": media.asset_type.value,
                                 "status": "pending",
                                 "source_url": media.source_url,
@@ -254,7 +259,7 @@ async def create_search(
                         items_data.append({
                             "rank": 0, # Not relevant for stream
                             "content_item": {
-                                "id": None, # No DB ID yet
+                                "id": content_id,
                                 "platform": item.platform,
                                 "external_id": item.external_id,
                                 "content_type": item.content_type,

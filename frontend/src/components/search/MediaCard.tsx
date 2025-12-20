@@ -54,6 +54,7 @@ export function MediaCard({ item, platform }: MediaCardProps) {
                         alt={title}
                         className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${isPlaying && videoUrl ? 'opacity-0' : 'opacity-100'}`}
                         loading="lazy"
+                        referrerPolicy="no-referrer"
                     />
 
                     {/* Video Player (Hidden until hover) */}

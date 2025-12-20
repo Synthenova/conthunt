@@ -32,10 +32,18 @@ export function transformToMediaItem(backendResult: any): FlatMediaItem {
     // Usually we want the signed URL or the source URL. 
     // For now we use source_url as primary.
     const videoAsset = assets.find((a: any) => a.asset_type === 'video');
-    const imageAsset = assets.find((a: any) => a.asset_type === 'cover' || a.asset_type === 'thumbnail' || a.mime_type?.startsWith('image'));
+    const imageAsset = assets.find((a: any) => a.asset_type === 'cover' || a.asset_type === 'thumbnail' || a.asset_type === 'image' || a.mime_type?.startsWith('image'));
 
     const videoUrl = videoAsset?.source_url || videoAsset?.gcs_uri;
-    const thumbnailUrl = imageAsset?.source_url || imageAsset?.gcs_uri;
+    let thumbnailUrl = imageAsset?.source_url || imageAsset?.gcs_uri;
+
+    // Use backend proxy for Instagram/Meta images to avoid hotlinking blocks
+    if (thumbnailUrl && (thumbnailUrl.includes("cdninstagram.com") || thumbnailUrl.includes("fbcdn.net"))) {
+        // Use environment variable, fallback to localhost only if missing but warn? 
+        // Better to assume env var is there as per user request.
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+        thumbnailUrl = `${backendUrl}/v1/media/proxy?url=${encodeURIComponent(thumbnailUrl)}`;
+    }
 
     // 2. Metrics Resolution
     const metrics = content.metrics || {};
