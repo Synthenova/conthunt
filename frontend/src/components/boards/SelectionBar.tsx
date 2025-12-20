@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchStore } from "@/lib/store";
 import { useBoards } from "@/hooks/useBoards";
 import { Button } from "@/components/ui/button";
@@ -10,10 +10,16 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
-import { Check, ChevronDown, Plus, X, Loader2, FolderPlus } from "lucide-react";
+import { Check, ChevronDown, Plus, X, Loader2, FolderPlus, Download } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { auth } from "@/lib/firebaseClient";
 
-export function SelectionBar() {
+interface SelectionBarProps {
+    itemsById?: Record<string, any>;
+    downloadDisabled?: boolean;
+}
+
+export function SelectionBar({ itemsById = {}, downloadDisabled = false }: SelectionBarProps) {
     const { selectedItems, clearSelection } = useSearchStore();
     const { boards, isLoadingBoards, createBoard, addToBoard, isAddingToBoard, isCreatingBoard } = useBoards();
 
@@ -21,8 +27,19 @@ export function SelectionBar() {
     const [selectedBoards, setSelectedBoards] = useState<string[]>([]);
     const [newBoardName, setNewBoardName] = useState("");
     const [showNewBoardInput, setShowNewBoardInput] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
 
     const count = selectedItems.length;
+    const downloadableItems = useMemo(() => {
+        const items = selectedItems
+            .map((id) => itemsById[id])
+            .filter(Boolean);
+        return items.filter((item: any) => {
+            const platform = String(item.platform || "").toLowerCase();
+            const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
+            return platform !== "youtube" && videoAsset?.id;
+        });
+    }, [itemsById, selectedItems]);
 
     // Don't render if no items selected
     if (count === 0) return null;
@@ -63,6 +80,57 @@ export function SelectionBar() {
             setIsOpen(false);
         } catch (error) {
             console.error("Failed to add to boards:", error);
+        }
+    };
+
+    const handleDownloadZip = async () => {
+        if (downloadDisabled || isDownloading || downloadableItems.length === 0) return;
+        setIsDownloading(true);
+
+        try {
+            const user = auth.currentUser;
+            if (!user) {
+                throw new Error("User not authenticated");
+            }
+            const token = await user.getIdToken();
+            const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+            const JSZip = (await import("jszip")).default;
+            const zip = new JSZip();
+
+            for (const item of downloadableItems) {
+                const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
+                if (!videoAsset?.id) continue;
+                const safeId = String(item.id || "video").replace(/[^a-zA-Z0-9_-]/g, "_");
+                const filename = `${item.platform || "video"}_${safeId}.mp4`;
+
+
+                const downloadUrl = item.video_url || videoAsset?.source_url || videoAsset?.gcs_uri?.replace("gs://", "https://storage.googleapis.com/");
+
+                if (!downloadUrl) {
+                    console.warn(`No download URL found for item ${item.id}`);
+                    continue;
+                }
+
+                const response = await fetch(downloadUrl);
+
+                if (!response.ok) continue;
+                const data = await response.arrayBuffer();
+                zip.file(filename, data);
+            }
+
+            const blob = await zip.generateAsync({ type: "blob" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `conthunt-videos-${new Date().toISOString().slice(0, 10)}.zip`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error("Failed to download zip:", error);
+        } finally {
+            setIsDownloading(false);
         }
     };
 
@@ -211,6 +279,21 @@ export function SelectionBar() {
                         )}
                     </PopoverContent>
                 </Popover>
+
+                {/* Download Selected */}
+                <Button
+                    variant="secondary"
+                    className="gap-2"
+                    onClick={handleDownloadZip}
+                    disabled={downloadDisabled || isDownloading || downloadableItems.length === 0}
+                >
+                    {isDownloading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Download className="h-4 w-4" />
+                    )}
+                    {downloadDisabled ? "Download after search completes" : "Download ZIP"}
+                </Button>
 
                 {/* Clear Selection */}
                 <Button

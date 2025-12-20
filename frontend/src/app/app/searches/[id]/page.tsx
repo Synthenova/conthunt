@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
 import { SelectionBar } from "@/components/boards/SelectionBar";
 import { Button } from "@/components/ui/button";
@@ -152,6 +152,15 @@ export default function SearchDetailPage() {
 
     // Transform results for grid
     const flattenedResults = transformSearchResults(results);
+    const itemsById = useMemo(() => {
+        const map: Record<string, any> = {};
+        for (const item of flattenedResults) {
+            if (item?.id) {
+                map[item.id] = item;
+            }
+        }
+        return map;
+    }, [flattenedResults]);
 
 
     if (isLoading) {
@@ -251,7 +260,7 @@ export default function SearchDetailPage() {
             </div>
 
             {/* Selection Bar */}
-            <SelectionBar />
+            <SelectionBar itemsById={itemsById} downloadDisabled={isStreaming} />
         </div>
     );
 }

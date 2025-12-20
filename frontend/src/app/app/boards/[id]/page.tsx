@@ -29,7 +29,7 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { SelectableMediaCard } from "@/components/search/SelectableMediaCard";
-import { ArrowLeft, Trash2, Plus, Loader2, FolderOpen, Video } from "lucide-react";
+import { ArrowLeft, Trash2, Plus, Loader2, FolderOpen, Video, Download } from "lucide-react";
 import { transformToMediaItem } from "@/lib/transformers";
 import { formatDistanceToNow } from "date-fns";
 
@@ -54,6 +54,7 @@ export default function BoardDetailPage() {
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [showRemoveDialog, setShowRemoveDialog] = useState(false);
     const [drawerItem, setDrawerItem] = useState<any | null>(null);
+    const [isDownloading, setIsDownloading] = useState(false);
 
     // Transform board items to flat media format for cards
     const transformedItems = (items || []).map(item => {
@@ -81,6 +82,66 @@ export default function BoardDetailPage() {
             setShowRemoveDialog(false);
         } catch (error) {
             console.error("Failed to remove items:", error);
+        }
+    };
+
+    const handleDownloadZip = async () => {
+        if (selectedItems.length === 0) return;
+        setIsDownloading(true);
+
+        try {
+            // Filter only the selected items from the transformed list
+            const downloadableItems = transformedItems.filter(item => selectedItems.includes(item.id));
+
+            const JSZip = (await import("jszip")).default;
+            const zip = new JSZip();
+
+            for (const item of downloadableItems) {
+                // For now, assume video is the target. The assets are already on the item from transform.
+                // We need to look at the raw assets which are passed through by transformToMediaItem
+                const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
+
+                // Fallback: If no explicit video asset in raw array, check if video_url is valid?
+                // But transformToMediaItem sets video_url from asset.source_url usually.
+                // Let's rely on the same logic as SelectionBar: check assets directly.
+
+                const downloadUrl = item.video_url || videoAsset?.source_url || videoAsset?.gcs_uri?.replace("gs://", "https://storage.googleapis.com/");
+
+                if (!downloadUrl) {
+                    console.warn(`No download URL found for item ${item.id}`);
+                    continue;
+                }
+
+                const safeId = String(item.id || "video").replace(/[^a-zA-Z0-9_-]/g, "_");
+                const filename = `${item.platform || "video"}_${safeId}.mp4`;
+
+                try {
+                    const response = await fetch(downloadUrl);
+                    if (!response.ok) {
+                        console.error(`Failed to fetch ${downloadUrl}: ${response.statusText}`);
+                        continue;
+                    }
+                    const data = await response.arrayBuffer();
+                    zip.file(filename, data);
+                } catch (err) {
+                    console.error(`Error downloading ${downloadUrl}:`, err);
+                }
+            }
+
+            const blob = await zip.generateAsync({ type: "blob" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `conthunt-board-${board?.name || 'videos'}-${new Date().toISOString().slice(0, 10)}.zip`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+
+        } catch (error) {
+            console.error("Failed to download zip:", error);
+        } finally {
+            setIsDownloading(false);
         }
     };
 
@@ -159,6 +220,21 @@ export default function BoardDetailPage() {
                         <span className="text-sm">
                             {selectedCount} item{selectedCount !== 1 ? 's' : ''} selected
                         </span>
+
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={handleDownloadZip}
+                            disabled={isDownloading}
+                        >
+                            {isDownloading ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                                <Download className="h-4 w-4 mr-2" />
+                            )}
+                            Download
+                        </Button>
+
                         <Button
                             variant="destructive"
                             size="sm"

@@ -104,6 +104,8 @@ async def get_media_content(
         logger.error(f"Failed to generate redirect for asset {asset_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to serve media content")
 
+
+
 @router.get("/proxy")
 async def proxy_media(url: str):
     """
@@ -138,5 +140,4 @@ async def proxy_media(url: str):
     except Exception as e:
         logger.error(f"Proxy failed for {url}: {e}")
         raise HTTPException(status_code=500, detail="Proxy failed")
-
 

@@ -577,7 +577,7 @@ async def get_media_asset_with_access_check(
     """
     result = await conn.execute(
         text("""
-            SELECT ma.id, ma.gcs_uri, ma.status, ma.asset_type, ma.mime_type
+            SELECT ma.id, ma.gcs_uri, ma.source_url, ma.status, ma.asset_type, ma.mime_type
             FROM media_assets ma
             JOIN content_items ci ON ma.content_item_id = ci.id
             JOIN search_results sr ON sr.content_item_id = ci.id
@@ -594,9 +594,10 @@ async def get_media_asset_with_access_check(
     return {
         "id": row[0],
         "gcs_uri": row[1],
-        "status": row[2],
-        "asset_type": row[3],
-        "mime_type": row[4],
+        "source_url": row[2],
+        "status": row[3],
+        "asset_type": row[4],
+        "mime_type": row[5],
     }
 
 
