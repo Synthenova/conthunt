@@ -60,12 +60,15 @@ async def get_board_by_id(
     conn: AsyncConnection,
     board_id: UUID,
 ) -> dict | None:
-    """Get a single board."""
+    """Get a single board with item count (single query, no N+1)."""
     result = await conn.execute(
         text("""
-            SELECT id, user_id, name, created_at, updated_at
-            FROM boards
-            WHERE id = :id
+            SELECT b.id, b.user_id, b.name, b.created_at, b.updated_at,
+                   COUNT(bi.content_item_id) as item_count
+            FROM boards b
+            LEFT JOIN board_items bi ON b.id = bi.board_id
+            WHERE b.id = :id
+            GROUP BY b.id
         """),
         {"id": board_id}
     )
@@ -73,20 +76,13 @@ async def get_board_by_id(
     if not row:
         return None
     
-    # Get item count separately or could joint above
-    count_res = await conn.execute(
-        text("SELECT COUNT(*) FROM board_items WHERE board_id = :id"),
-        {"id": board_id}
-    )
-    item_count = count_res.scalar()
-    
     return {
         "id": row[0],
         "user_id": row[1],
         "name": row[2],
         "created_at": row[3],
         "updated_at": row[4],
-        "item_count": item_count
+        "item_count": row[5]
     }
 
 
@@ -127,6 +123,38 @@ async def add_item_to_board(
     except Exception:
         # Should catch specific integrity errors ideally, but RLS might raise simple auth errors or check violations
         raise
+
+
+async def batch_add_items_to_board(
+    conn: AsyncConnection,
+    board_id: UUID,
+    content_item_ids: List[UUID],
+) -> int:
+    """
+    Add multiple items to a board in a single query.
+    
+    Returns the number of items actually inserted (excludes duplicates).
+    """
+    if not content_item_ids:
+        return 0
+    
+    # Use unnest for efficient batch insert
+    result = await conn.execute(
+        text("""
+            INSERT INTO board_items (board_id, content_item_id)
+            SELECT :board_id, unnest(CAST(:content_item_ids AS UUID[]))
+            ON CONFLICT (board_id, content_item_id) DO NOTHING
+        """),
+        {"board_id": board_id, "content_item_ids": content_item_ids}
+    )
+    
+    # Update board updated_at
+    await conn.execute(
+        text("UPDATE boards SET updated_at = now() WHERE id = :id"),
+        {"id": board_id}
+    )
+    
+    return result.rowcount
 
 
 async def remove_item_from_board(

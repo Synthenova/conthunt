@@ -11,6 +11,7 @@ from langgraph_sdk import get_client
 from app.auth import get_current_user
 from app.core import get_settings, logger
 from app.db import get_db_connection, set_rls_user, get_or_create_user, queries
+from app.services.user_cache import get_cached_user_uuid
 from app.schemas.chats import (
     Chat, 
     CreateChatRequest, 
@@ -132,7 +133,7 @@ async def create_chat(
 
     # 2. Insert into DB
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, user_id)
+        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         chat_id = uuid.uuid4()
@@ -170,7 +171,7 @@ async def list_chats(
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, user_id)
+        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         return await queries.get_user_chats(conn, user_uuid)
 
@@ -200,7 +201,7 @@ async def send_message(
 
     
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, user_id)
+        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         thread_id = await queries.get_chat_thread_id(conn, chat_id)
@@ -241,7 +242,7 @@ async def delete_chat(
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, user_id)
+        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         exists = await queries.check_chat_exists(conn, chat_id)
@@ -267,7 +268,7 @@ async def stream_chat(
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, user_id)
+        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         exists = await queries.check_chat_exists(conn, chat_id)
@@ -323,7 +324,7 @@ async def get_chat_messages(
          raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, user_id)
+        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         thread_id = await queries.get_chat_thread_id(conn, chat_id)

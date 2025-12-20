@@ -418,6 +418,7 @@ async def get_media_asset_with_access_check(
     row = result.fetchone()
     if not row:
         return None
+
     return {
         "id": row[0],
         "gcs_uri": row[1],
@@ -425,4 +426,107 @@ async def get_media_asset_with_access_check(
         "asset_type": row[3],
         "mime_type": row[4],
     }
+
+
+
+async def get_full_search_detail(conn: AsyncConnection, search_id: UUID) -> dict | None:
+    """
+    Fetch ALL search data in a single query:
+    1. Search metadata
+    2. Platform calls
+    3. Results + Content Items + Metrics + Assets
+    
+    Returns a dict matching SearchDetailResponse structure (mostly).
+    Data is aggregated using JSON_BUILD_OBJECT to avoid N+1 queries.
+    """
+    result = await conn.execute(
+        text("""
+            WITH search_data AS (
+                SELECT 
+                    id, query, inputs, mode, status, created_at
+                FROM searches 
+                WHERE id = :search_id
+            ),
+            calls_agg AS (
+                SELECT 
+                    search_id,
+                    json_agg(json_build_object(
+                        'id', id,
+                        'platform', platform,
+                        'success', success,
+                        'http_status', http_status,
+                        'error', error,
+                        'duration_ms', duration_ms,
+                        'next_cursor', next_cursor,
+                        'response_meta', COALESCE(response_meta, '{}'::jsonb)
+                    ) ORDER BY created_at) as calls
+                FROM platform_calls
+                WHERE search_id = :search_id
+                GROUP BY search_id
+            ),
+            assets_agg AS (
+                SELECT 
+                    ma.content_item_id,
+                    json_agg(json_build_object(
+                        'id', ma.id,
+                        'asset_type', ma.asset_type,
+                        'status', ma.status,
+                        'source_url', ma.source_url,
+                        'gcs_uri', ma.gcs_uri,
+                        'sha256', ma.sha256,
+                        'mime_type', ma.mime_type,
+                        'bytes', ma.bytes
+                    )) as assets
+                FROM search_results sr
+                JOIN media_assets ma ON sr.content_item_id = ma.content_item_id
+                WHERE sr.search_id = :search_id
+                GROUP BY ma.content_item_id
+            ),
+            results_agg AS (
+                SELECT 
+                    sr.search_id,
+                    json_agg(json_build_object(
+                        'rank', sr.rank,
+                        'content_item', json_build_object(
+                            'id', ci.id,
+                            'platform', ci.platform,
+                            'external_id', ci.external_id,
+                            'content_type', ci.content_type,
+                            'canonical_url', ci.canonical_url,
+                            'title', ci.title,
+                            'primary_text', ci.primary_text,
+                            'published_at', ci.published_at,
+                            'creator_handle', ci.creator_handle,
+                            'metrics', COALESCE(ci.metrics, '{}'::jsonb),
+                            'payload', COALESCE(ci.payload, '{}'::jsonb)
+                        ),
+                        'assets', COALESCE(aa.assets, '[]'::json)
+                    ) ORDER BY sr.rank) as results
+                FROM search_results sr
+                JOIN content_items ci ON sr.content_item_id = ci.id
+                LEFT JOIN assets_agg aa ON ci.id = aa.content_item_id
+                WHERE sr.search_id = :search_id
+                GROUP BY sr.search_id
+            )
+            SELECT 
+                sd.id,
+                sd.query,
+                sd.inputs,
+                sd.mode,
+                sd.status,
+                sd.created_at,
+                COALESCE(ca.calls, '[]'::json) as platform_calls,
+                COALESCE(ra.results, '[]'::json) as results
+            FROM search_data sd
+            LEFT JOIN calls_agg ca ON sd.id = ca.search_id
+            LEFT JOIN results_agg ra ON sd.id = ra.search_id
+        """),
+        {"search_id": search_id}
+    )
+    
+    row = result.fetchone()
+    if not row:
+        return None
+        
+    return dict(row._mapping)
 

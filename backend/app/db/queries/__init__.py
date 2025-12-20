@@ -23,6 +23,7 @@ from app.db.queries.search import (
     get_platform_calls_for_search,
     get_search_results_with_content,
     get_media_asset_with_access_check,
+    get_full_search_detail,
     update_search_status,
 )
 
@@ -33,6 +34,7 @@ from app.db.queries.boards import (
     get_board_by_id,
     delete_board,
     add_item_to_board,
+    batch_add_items_to_board,
     remove_item_from_board,
     get_board_items,
     get_board_items_summary,

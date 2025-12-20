@@ -117,16 +117,22 @@ async def update_twelvelabs_asset_status(
 async def get_user_twelvelabs_assets(
     conn: AsyncConnection,
 ) -> List[str]:
-    """Get all TwelveLabs indexed asset IDs for a user's boards (RLS implicit)."""
+    """
+    Get all TwelveLabs indexed asset IDs for a user's boards.
+    
+    Optimized: Uses subquery to reduce JOINs from 5 to 3.
+    RLS on board_items implicitly filters by user.
+    """
     result = await conn.execute(
         text("""
             SELECT DISTINCT ta.indexed_asset_id
             FROM twelvelabs_assets ta
-            JOIN media_assets ma ON ta.media_asset_id = ma.id
-            JOIN content_items ci ON ma.content_item_id = ci.id
-            JOIN board_items bi ON ci.id = bi.content_item_id
-            JOIN boards b ON bi.board_id = b.id
             WHERE ta.indexed_asset_id IS NOT NULL
+              AND ta.media_asset_id IN (
+                  SELECT ma.id
+                  FROM media_assets ma
+                  JOIN board_items bi ON ma.content_item_id = bi.content_item_id
+              )
         """)
     )
     rows = result.fetchall()
@@ -137,14 +143,17 @@ async def get_board_twelvelabs_assets(
     conn: AsyncConnection,
     board_id: UUID,
 ) -> List[str]:
-    """Get TwelveLabs indexed asset IDs for a specific board (RLS implicit)."""
+    """
+    Get TwelveLabs indexed asset IDs for a specific board.
+    
+    Optimized: Removed content_items JOIN (not needed for this query).
+    """
     result = await conn.execute(
         text("""
             SELECT DISTINCT ta.indexed_asset_id
             FROM twelvelabs_assets ta
             JOIN media_assets ma ON ta.media_asset_id = ma.id
-            JOIN content_items ci ON ma.content_item_id = ci.id
-            JOIN board_items bi ON ci.id = bi.content_item_id
+            JOIN board_items bi ON ma.content_item_id = bi.content_item_id
             WHERE bi.board_id = :board_id
               AND ta.indexed_asset_id IS NOT NULL
         """),

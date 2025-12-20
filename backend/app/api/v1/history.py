@@ -36,8 +36,9 @@ async def list_searches(
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     async with get_db_connection() as conn:
-        # Get or create user
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        # Get cached user UUID
+        from app.services.user_cache import get_cached_user_uuid
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         
         # Set RLS context
         await set_rls_user(conn, user_uuid)
@@ -81,40 +82,69 @@ async def get_search_detail(
     
     async with get_db_connection() as conn:
         t0 = time.time()
-        # Get or create user
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
-        logger.info(f"get_search_detail: get_or_create_user took {(time.time()-t0)*1000:.2f}ms")
+        # Get cached user UUID (avoids DB hit if cached)
+        from app.services.user_cache import get_cached_user_uuid
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
+        logger.info(f"get_search_detail: get_cached_user_uuid took {(time.time()-t0)*1000:.2f}ms")
         
         t0 = time.time()
         # Set RLS context
         await set_rls_user(conn, user_uuid)
         logger.info(f"get_search_detail: set_rls_user took {(time.time()-t0)*1000:.2f}ms")
+
+        # Fetch detailed search data in ONE query
+        search_data = await queries.get_full_search_detail(conn, search_id)
+        logger.info(f"get_search_detail: get_full_search_detail took {(time.time()-t0)*1000:.2f}ms")
         
-        t0 = time.time()
-        # Get search (RLS will filter)
-        search = await queries.get_search_by_id(conn, search_id)
-        logger.info(f"get_search_detail: get_search_by_id took {(time.time()-t0)*1000:.2f}ms")
-        
-        if not search:
+        if not search_data:
             raise HTTPException(status_code=404, detail="Search not found")
-        
-        t0 = time.time()
-        # Get platform calls
-        platform_calls = await queries.get_platform_calls_for_search(conn, search_id)
-        logger.info(f"get_search_detail: get_platform_calls took {(time.time()-t0)*1000:.2f}ms")
-        
-        t0 = time.time()
-        # Get results with content and assets
-        results = await queries.get_search_results_with_content(conn, search_id)
-        logger.info(f"get_search_detail: get_search_results took {(time.time()-t0)*1000:.2f}ms")
     
+    # Sign URLs for assets (this is CPU bound, fast)
+    response_results = []
+    for r in search_data.get("results", []):
+        assets = []
+        for a in r.get("assets", []):
+            source_url = a.get("source_url")
+            if a.get("status") in ("stored", "downloaded") and a.get("gcs_uri"):
+                source_url = generate_signed_url(a["gcs_uri"])
+                
+            assets.append(AssetDetail(
+                id=a["id"],
+                asset_type=a["asset_type"],
+                status=a["status"],
+                source_url=source_url,
+                gcs_uri=a["gcs_uri"],
+                sha256=a["sha256"],
+                mime_type=a["mime_type"],
+                bytes=a["bytes"],
+            ))
+            
+        ci = r["content_item"]
+        response_results.append(SearchResultDetail(
+            rank=r["rank"],
+            content_item=ContentItemDetail(
+                id=ci["id"],
+                platform=ci["platform"],
+                external_id=ci["external_id"],
+                content_type=ci["content_type"],
+                canonical_url=ci["canonical_url"],
+                title=ci["title"],
+                primary_text=ci["primary_text"],
+                published_at=ci["published_at"],
+                creator_handle=ci["creator_handle"],
+                metrics=ci["metrics"] or {},
+                payload=ci["payload"] or {},
+            ),
+            assets=assets
+        ))
+
     response = SearchDetailResponse(
-        id=search["id"],
-        query=search["query"],
-        inputs=search["inputs"],
-        mode=search["mode"],
-        status=search.get("status", "completed"),
-        created_at=search["created_at"],
+        id=search_data["id"],
+        query=search_data["query"],
+        inputs=search_data["inputs"],
+        mode=search_data["mode"],
+        status=search_data.get("status", "completed"),
+        created_at=search_data["created_at"],
         platform_calls=[
             PlatformCallInfo(
                 id=pc["id"],
@@ -126,44 +156,9 @@ async def get_search_detail(
                 next_cursor=pc["next_cursor"],
                 response_meta=pc["response_meta"] or {},
             )
-            for pc in platform_calls
+            for pc in search_data.get("platform_calls", [])
         ],
-        results=[
-            SearchResultDetail(
-                rank=r["rank"],
-                content_item=ContentItemDetail(
-                    id=r["content_item"]["id"],
-                    platform=r["content_item"]["platform"],
-                    external_id=r["content_item"]["external_id"],
-                    content_type=r["content_item"]["content_type"],
-                    canonical_url=r["content_item"]["canonical_url"],
-                    title=r["content_item"]["title"],
-                    primary_text=r["content_item"]["primary_text"],
-                    published_at=r["content_item"]["published_at"],
-                    creator_handle=r["content_item"]["creator_handle"],
-                    metrics=r["content_item"]["metrics"] or {},
-                    payload=r["content_item"]["payload"] or {},
-                ),
-                assets=[
-                    AssetDetail(
-                        id=a["id"],
-                        asset_type=a["asset_type"],
-                        status=a["status"],
-                        source_url=(
-                            generate_signed_url(a["gcs_uri"])
-                            if a["status"] in ("stored", "downloaded") and a["gcs_uri"]
-                            else a["source_url"]
-                        ),
-                        gcs_uri=a["gcs_uri"],
-                        sha256=a["sha256"],
-                        mime_type=a["mime_type"],
-                        bytes=a["bytes"],
-                    )
-                    for a in r["assets"]
-                ],
-            )
-            for r in results
-        ],
+        results=response_results
     )
     
     duration = (time.time() - req_start) * 1000

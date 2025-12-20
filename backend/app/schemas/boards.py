@@ -22,6 +22,10 @@ class BoardResponse(BaseModel):
 class BoardItemCreate(BaseModel):
     content_item_id: UUID
 
+class BoardItemBatchCreate(BaseModel):
+    """Batch add multiple content items to a board."""
+    content_item_ids: List[UUID] = Field(..., min_length=1, max_length=100)
+
 class BoardItemResponse(BaseModel):
     board_id: UUID
     content_item: ContentItemResponse

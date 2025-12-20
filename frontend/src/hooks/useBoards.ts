@@ -77,7 +77,7 @@ export function useBoards() {
         },
     });
 
-    // POST /v1/boards/:id/items - Add item(s) to board
+    // POST /v1/boards/:id/items/batch - Add multiple items to board (single request)
     const addToBoardMutation = useMutation({
         mutationFn: async ({
             boardId,
@@ -86,16 +86,11 @@ export function useBoards() {
             boardId: string;
             contentItemIds: string[];
         }) => {
-            // Add each item sequentially (backend accepts one at a time)
-            const results = [];
-            for (const contentItemId of contentItemIds) {
-                const result = await fetchWithAuth(`${API_BASE}/boards/${boardId}/items`, {
-                    method: "POST",
-                    body: JSON.stringify({ content_item_id: contentItemId }),
-                });
-                results.push(result);
-            }
-            return results;
+            // Use batch endpoint for efficiency
+            return fetchWithAuth(`${API_BASE}/boards/${boardId}/items/batch`, {
+                method: "POST",
+                body: JSON.stringify({ content_item_ids: contentItemIds }),
+            });
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ["boards"] }); // Update item counts

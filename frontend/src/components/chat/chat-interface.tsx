@@ -77,9 +77,6 @@ export function ChatInterface({ chatState, onClose }: ChatInterfaceProps) {
             <div className="flex-none flex items-center justify-between p-4 border-b border-border/40">
                 <div className="flex items-center gap-2">
                     <span className="font-semibold text-lg">Agent</span>
-                    {isStreaming && (
-                        <TextShimmer className="text-xs">Thinking...</TextShimmer>
-                    )}
                 </div>
                 <div className="flex items-center gap-1">
                     <Button

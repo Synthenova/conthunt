@@ -8,7 +8,7 @@ from app.db import get_db_connection, get_or_create_user, set_rls_user, queries
 from app.db.queries.content import get_video_media_asset_for_content_item
 from app.schemas.boards import (
     BoardCreate, BoardResponse,
-    BoardItemCreate, BoardItemResponse
+    BoardItemCreate, BoardItemBatchCreate, BoardItemResponse
 )
 from app.api.v1.analysis import run_gemini_analysis
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
@@ -194,6 +194,60 @@ async def add_item_to_board(
     background_tasks.add_task(process_twelvelabs_indexing_by_media_asset, media_asset_id)
              
     return {"status": "added"}
+
+
+@router.post("/{board_id}/items/batch", status_code=status.HTTP_201_CREATED)
+async def batch_add_items_to_board(
+    board_id: UUID,
+    items_in: BoardItemBatchCreate,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Add multiple content items to a board in a single request.
+    
+    More efficient than calling the single-item endpoint multiple times.
+    Triggers Gemini analysis for each video in the background.
+    """
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user")
+    
+    media_asset_ids = []
+        
+    async with get_db_connection() as conn:
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
+        
+        # Verify board exists
+        board = await queries.get_board_by_id(conn, board_id)
+        if not board:
+            raise HTTPException(status_code=404, detail="Board not found")
+        
+        try:
+            inserted_count = await queries.batch_add_items_to_board(
+                conn, board_id, items_in.content_item_ids
+            )
+            await conn.commit()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not add items: {str(e)}")
+        
+        # Collect media_asset_ids for background processing
+        for content_item_id in items_in.content_item_ids:
+            media_asset = await get_video_media_asset_for_content_item(conn, content_item_id)
+            if media_asset:
+                media_asset_ids.append(media_asset.get("id"))
+    
+    # Trigger background analysis for each video
+    for media_asset_id in media_asset_ids:
+        await run_gemini_analysis(media_asset_id, background_tasks)
+        background_tasks.add_task(process_twelvelabs_indexing_by_media_asset, media_asset_id)
+    
+    return {
+        "status": "added",
+        "items_added": inserted_count,
+        "total_requested": len(items_in.content_item_ids),
+    }
 
 
 @router.delete("/{board_id}/items/{content_item_id}", status_code=status.HTTP_204_NO_CONTENT)
