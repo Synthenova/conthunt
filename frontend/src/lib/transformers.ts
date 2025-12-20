@@ -13,6 +13,7 @@ export interface FlatMediaItem {
     share_count: number;
     published_at?: string;
     creator?: string;
+    assets?: any[];  // Raw assets array for API calls (ContentDrawer)
 }
 
 /**
@@ -69,6 +70,9 @@ export function transformToMediaItem(backendResult: any): FlatMediaItem {
         // Metadata
         published_at: content.published_at,
         creator: content.creator_handle || content.author,
+
+        // Raw assets for API calls
+        assets: assets,
     };
 }
 

@@ -6,26 +6,26 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 
-async def get_video_analysis_by_content_item(
+async def get_video_analysis_by_media_asset(
     conn: AsyncConnection,
-    content_item_id: UUID,
+    media_asset_id: UUID,
 ) -> dict | None:
-    """Get cached video analysis for a content item."""
+    """Get cached video analysis for a media asset."""
     result = await conn.execute(
         text("""
-            SELECT id, content_item_id, twelvelabs_asset_id, prompt,
+            SELECT id, media_asset_id, twelvelabs_asset_id, prompt,
                    analysis_result, token_usage, created_at, status, error
             FROM video_analyses
-            WHERE content_item_id = :content_item_id
+            WHERE media_asset_id = :media_asset_id
         """),
-        {"content_item_id": content_item_id}
+        {"media_asset_id": media_asset_id}
     )
     row = result.fetchone()
     if not row:
         return None
     return {
         "id": row[0],
-        "content_item_id": row[1],
+        "media_asset_id": row[1],
         "twelvelabs_asset_id": row[2],
         "prompt": row[3],
         "analysis_result": row[4],
@@ -38,7 +38,7 @@ async def get_video_analysis_by_content_item(
 
 async def create_pending_analysis(
     conn: AsyncConnection,
-    content_item_id: UUID,
+    media_asset_id: UUID,
     prompt: str,
 ) -> UUID:
     """Create a pending analysis record (status='processing')."""
@@ -46,13 +46,13 @@ async def create_pending_analysis(
     await conn.execute(
         text("""
             INSERT INTO video_analyses (
-                id, content_item_id, prompt, status, analysis_result
+                id, media_asset_id, prompt, status, analysis_result
             )
-            VALUES (:id, :content_item_id, :prompt, 'processing', :analysis_result)
+            VALUES (:id, :media_asset_id, :prompt, 'processing', :analysis_result)
         """),
         {
             "id": analysis_id,
-            "content_item_id": content_item_id,
+            "media_asset_id": media_asset_id,
             "prompt": prompt,
             "analysis_result": "{}",  # Empty JSON to satisfy NOT NULL
         }
@@ -94,7 +94,7 @@ async def update_analysis_status(
 
 async def insert_video_analysis(
     conn: AsyncConnection,
-    content_item_id: UUID,
+    media_asset_id: UUID,
     twelvelabs_asset_id: UUID | None,
     prompt: str,
     analysis_result: dict,
@@ -106,17 +106,17 @@ async def insert_video_analysis(
     await conn.execute(
         text("""
             INSERT INTO video_analyses (
-                id, content_item_id, twelvelabs_asset_id, prompt,
+                id, media_asset_id, twelvelabs_asset_id, prompt,
                 analysis_result, token_usage, raw_gcs_uri, status
             )
             VALUES (
-                :id, :content_item_id, :twelvelabs_asset_id, :prompt,
+                :id, :media_asset_id, :twelvelabs_asset_id, :prompt,
                 :analysis_result, :token_usage, :raw_gcs_uri, 'completed'
             )
         """),
         {
             "id": analysis_id,
-            "content_item_id": content_item_id,
+            "media_asset_id": media_asset_id,
             "twelvelabs_asset_id": twelvelabs_asset_id,
             "prompt": prompt,
             "analysis_result": json.dumps(analysis_result),
@@ -125,4 +125,3 @@ async def insert_video_analysis(
         }
     )
     return analysis_id
-

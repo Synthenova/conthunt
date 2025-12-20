@@ -17,7 +17,8 @@ class CreateChatRequest(BaseModel):
     title: Optional[str] = None
 
 class SendMessageRequest(BaseModel):
-    message: str 
+    message: str
+    board_id: Optional[str] = None  # Current board context for agent 
 
 class Message(BaseModel):
     type: str

@@ -63,14 +63,14 @@ export const api = {
         if (!res.ok) throw new Error("Failed to delete chat");
     },
 
-    sendMessage: async (chatId: string, message: string) => {
+    sendMessage: async (chatId: string, message: string, boardId?: string | null) => {
         const headers = await getAuthHeaders();
         if (!headers.Authorization) throw new Error("Please log in to send messages");
 
         const res = await fetch(`${API_URL}/v1/chats/${chatId}/send`, {
             method: "POST",
             headers: { ...headers, "Content-Type": "application/json" },
-            body: JSON.stringify({ message }),
+            body: JSON.stringify({ message, board_id: boardId }),
         });
         // This is fire-and-forget/optimistic often, but good to check OK
         if (!res.ok) throw new Error("Failed to send message");

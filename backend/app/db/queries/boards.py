@@ -222,6 +222,46 @@ async def get_board_items(
     return items
 
 
+async def get_board_items_summary(
+    conn: AsyncConnection,
+    board_id: UUID,
+) -> List[dict]:
+    """
+    Get board items for agent consumption - minimal text data + video media_asset_id only.
+    No URLs, thumbnails, or other non-essential data.
+    """
+    result = await conn.execute(
+        text("""
+            SELECT 
+                ci.title,
+                ci.platform,
+                ci.creator_handle,
+                ci.content_type,
+                ci.primary_text,
+                ma.id as media_asset_id
+            FROM board_items bi
+            JOIN content_items ci ON bi.content_item_id = ci.id
+            LEFT JOIN media_assets ma ON ma.content_item_id = ci.id AND ma.asset_type = 'video'
+            WHERE bi.board_id = :board_id
+            ORDER BY bi.added_at DESC
+        """),
+        {"board_id": board_id}
+    )
+    
+    items = []
+    for row in result.fetchall():
+        items.append({
+            "title": row[0],
+            "platform": row[1],
+            "creator_handle": row[2],
+            "content_type": row[3],
+            "primary_text": row[4],
+            "media_asset_id": str(row[5]) if row[5] else None,
+        })
+        
+    return items
+
+
 async def search_user_boards(
     conn: AsyncConnection,
     user_id: UUID,

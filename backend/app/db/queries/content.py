@@ -69,3 +69,79 @@ async def get_content_item_by_id(
         "video_url": video_url,
         "video_gcs_uri": asset_row[1] if asset_row else None,
     }
+
+
+async def get_video_media_asset_for_content_item(
+    conn: AsyncConnection,
+    content_item_id: UUID,
+) -> dict | None:
+    """
+    Get the video media asset for a content item.
+    Returns the media asset dict (with id, gcs_uri, source_url) or None.
+    """
+    result = await conn.execute(
+        text("""
+            SELECT id, source_url, gcs_uri, status, asset_type
+            FROM media_assets
+            WHERE content_item_id = :content_item_id AND asset_type = 'video'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """),
+        {"content_item_id": content_item_id}
+    )
+    row = result.fetchone()
+    if not row:
+        return None
+    
+    video_url = None
+    if row[2]:  # gcs_uri
+        video_url = generate_signed_url(row[2])
+    else:
+        video_url = row[1]  # source_url
+    
+    return {
+        "id": row[0],
+        "source_url": row[1],
+        "gcs_uri": row[2],
+        "status": row[3],
+        "asset_type": row[4],
+        "video_url": video_url,
+    }
+
+
+async def get_media_asset_by_id(
+    conn: AsyncConnection,
+    media_asset_id: UUID,
+) -> dict | None:
+    """
+    Get a media asset by its ID.
+    Returns the media asset dict (with gcs_uri, source_url, video_url) or None.
+    """
+    result = await conn.execute(
+        text("""
+            SELECT id, source_url, gcs_uri, status, asset_type, content_item_id
+            FROM media_assets
+            WHERE id = :media_asset_id
+        """),
+        {"media_asset_id": media_asset_id}
+    )
+    row = result.fetchone()
+    if not row:
+        return None
+    
+    video_url = None
+    if row[2]:  # gcs_uri
+        video_url = generate_signed_url(row[2])
+    else:
+        video_url = row[1]  # source_url
+    
+    return {
+        "id": row[0],
+        "source_url": row[1],
+        "gcs_uri": row[2],
+        "status": row[3],
+        "asset_type": row[4],
+        "content_item_id": row[5],
+        "video_url": video_url,
+    }
+

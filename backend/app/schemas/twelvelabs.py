@@ -1,9 +1,10 @@
-"""Pydantic schemas for TwelveLabs video analysis."""
+"""Pydantic schemas for TwelveLabs search."""
 from pydantic import BaseModel
-from typing import Optional, List, Any, Literal
+from typing import Optional, List, Literal
 from uuid import UUID
 from datetime import datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import validator
+
 
 class TwelveLabsSearchRequest(BaseModel):
     """Request to search 12Labs index."""
@@ -11,7 +12,9 @@ class TwelveLabsSearchRequest(BaseModel):
     index_id: Optional[str] = None # Optional override, else use env default
     search_options: List[Literal["visual", "audio", "transcription"]] = ["visual", "audio", "transcription"]
     filter: Optional[dict] = None  # Generic filter object
-    twelvelabs_asset_id: Optional[str] = None  # Specific video filter (TwelveLabs ID)
+    board_id: Optional[str] = None  # Filter to videos in this board (uses RLS)
+    media_asset_id: Optional[str] = None  # Agent uses this - resolved to TwelveLabs ID
+    twelvelabs_asset_id: Optional[str] = None  # Direct TwelveLabs ID (for frontend)
     
     @validator("search_options")
     def validate_search_options(cls, v):
@@ -36,33 +39,6 @@ class TwelveLabsSearchResponse(BaseModel):
     data: List[TwelveLabsSearchResponseItem]
 
 
-class VideoAnalysisRequest(BaseModel):
-    """Request to analyze a video (body is empty, content_item_id is path param)."""
-    pass
-
-
-class VideoAnalysisResult(BaseModel):
-    """Structured analysis result from 12Labs."""
-    hook: Optional[str] = None
-    call_to_action: Optional[str] = None
-    on_screen_texts: List[str] = []
-    key_topics: List[str] = []
-    summary: str
-    hashtags: List[str] = []
-    # Raw data from API in case we need more
-    raw: Optional[dict] = None
-
-
-class VideoAnalysisResponse(BaseModel):
-    """Response from video analysis endpoint."""
-    id: Optional[UUID] = None
-    content_item_id: UUID
-    status: str = "processing"  # processing, completed, failed
-    analysis: Optional[VideoAnalysisResult] = None
-    created_at: Optional[datetime] = None
-    cached: bool = False
-
-
 class TwelvelabsIndexInfo(BaseModel):
     """Info about a 12Labs index."""
     id: UUID
@@ -75,7 +51,7 @@ class TwelvelabsIndexInfo(BaseModel):
 class TwelvelabsAssetInfo(BaseModel):
     """Info about a 12Labs asset."""
     id: UUID
-    content_item_id: UUID
+    media_asset_id: UUID
     asset_id: str
     indexed_asset_id: Optional[str]
     asset_status: str

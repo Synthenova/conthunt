@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useBoards } from "@/hooks/useBoards";
 import { useSearchStore } from "@/lib/store";
+import { useChatUI } from "@/hooks/use-chat-ui";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
 import {
     Dialog,
     DialogContent,
@@ -36,6 +38,13 @@ export default function BoardDetailPage() {
     const params = useParams();
     const router = useRouter();
     const boardId = params.id as string;
+    const { setBoardId } = useChatUI();
+
+    // Set board context for chat agent
+    useEffect(() => {
+        setBoardId(boardId);
+        return () => setBoardId(null);  // Clear on unmount
+    }, [boardId, setBoardId]);
 
     const {
         getBoard,
@@ -52,6 +61,7 @@ export default function BoardDetailPage() {
 
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [showRemoveDialog, setShowRemoveDialog] = useState(false);
+    const [drawerItem, setDrawerItem] = useState<any | null>(null);
 
     // Transform board items to flat media format for cards
     const transformedItems = (items || []).map(item => {
@@ -200,8 +210,9 @@ export default function BoardDetailPage() {
                         {transformedItems.map((item, i) => (
                             <div
                                 key={item.id || i}
-                                className="animate-in fade-in zoom-in duration-500"
+                                className="animate-in fade-in zoom-in duration-500 cursor-pointer"
                                 style={{ animationDelay: `${i * 30}ms` }}
+                                onClick={() => setDrawerItem(item)}
                             >
                                 <SelectableMediaCard
                                     item={item}
@@ -266,6 +277,13 @@ export default function BoardDetailPage() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {/* Content Drawer */}
+            <ContentDrawer
+                isOpen={!!drawerItem}
+                onClose={() => setDrawerItem(null)}
+                item={drawerItem}
+            />
         </div>
     );
 }

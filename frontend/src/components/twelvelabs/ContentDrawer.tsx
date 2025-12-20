@@ -56,10 +56,18 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
         const user = auth.currentUser;
         if (!user) return null;
 
+        // Get media_asset_id from the video asset in the assets array
+        const videoAsset = item.assets?.find((a: any) => a.asset_type === 'video');
+        const mediaAssetId = videoAsset?.id;
+
+        if (!mediaAssetId) {
+            throw new Error("No video asset found for this content");
+        }
+
         const token = await user.getIdToken();
         const apiUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
-        const response = await fetch(`${apiUrl}/v1/video-analysis/${item.id}`, {
+        const response = await fetch(`${apiUrl}/v1/video-analysis/${mediaAssetId}`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -240,8 +248,16 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
                             </Button>
 
                             <div className="grid grid-cols-2 gap-3">
-                                <Button variant="outline" className="border-dashed border-zinc-700 hover:bg-zinc-900/50 hover:border-zinc-600 text-zinc-400 hover:text-white h-10">
-                                    <LinkIcon className="mr-2 h-3.5 w-3.5" /> Copy link
+                                <Button
+                                    variant="outline"
+                                    className="border-dashed border-zinc-700 hover:bg-zinc-900/50 hover:border-zinc-600 text-zinc-400 hover:text-white h-10"
+                                    onClick={() => {
+                                        const link = item.url || item.canonical_url;
+                                        if (link) window.open(link, '_blank', 'noopener,noreferrer');
+                                    }}
+                                    disabled={!item.url && !item.canonical_url}
+                                >
+                                    <LinkIcon className="mr-2 h-3.5 w-3.5" /> Open link
                                 </Button>
                                 <Button variant="outline" className="border-dashed border-zinc-700 hover:bg-zinc-900/50 hover:border-zinc-600 text-zinc-400 hover:text-white h-10">
                                     <StickyNote className="mr-2 h-3.5 w-3.5" /> Add note

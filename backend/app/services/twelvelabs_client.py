@@ -283,6 +283,60 @@ class TwelvelabsClient:
         except Exception as e:
             logger.error(f"TwelveLabs API error: {e}")
             raise
+    
+    async def search(
+        self,
+        index_id: str,
+        query_text: str,
+        search_options: list[str] = None,
+        filter: dict = None,
+        group_by: str = "clip",
+        page_limit: int = 10,
+    ) -> list:
+        """
+        Search for video clips matching the query.
+        
+        Args:
+            index_id: The TwelveLabs index ID to search
+            query_text: The search query text
+            search_options: List of modalities to search (visual, audio, transcription)
+            filter: Optional filter dict, e.g. {"id": ["asset_id_1", "asset_id_2"]}
+            group_by: Group results by "clip" or "video"
+            page_limit: Max results per page
+            
+        Returns:
+            List of SearchItem objects from the SDK
+        """
+        import json
+        
+        search_options = search_options or ["visual", "audio", "transcription"]
+        
+        # Convert filter dict to JSON string as required by SDK
+        filter_str = json.dumps(filter) if filter else None
+        
+        logger.info(f"Searching index {index_id} with query: {query_text[:50]}...")
+        
+        loop = asyncio.get_event_loop()
+        
+        results = await loop.run_in_executor(
+            None,
+            lambda: self.client.search.query(
+                index_id=index_id,
+                query_text=query_text,
+                search_options=search_options,
+                filter=filter_str,
+                group_by=group_by,
+                page_limit=page_limit,
+            )
+        )
+        
+        # Collect all results from the paginated iterator
+        all_results = []
+        for item in results:
+            all_results.append(item)
+        
+        logger.info(f"Search returned {len(all_results)} results")
+        return all_results
 
 
 # Singleton instance

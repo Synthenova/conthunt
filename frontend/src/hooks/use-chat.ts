@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { auth } from "@/lib/firebaseClient";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { api } from "@/lib/api/chats";
+import { useChatUI } from "@/hooks/use-chat-ui";
 
 export interface Message {
     id: string;
@@ -160,8 +161,9 @@ export function useChat(): UseChatReturn {
         setIsStreaming(true);
 
         // 2. Send Message via API
+        const boardId = useChatUI.getState().boardId;
         try {
-            await api.sendMessage(activeChatId!, content);
+            await api.sendMessage(activeChatId!, content, boardId);
         } catch (e) {
             setIsStreaming(false);
             toast.error("Failed to send message");

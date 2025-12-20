@@ -5,7 +5,7 @@ All functions are re-exported here for backwards compatibility.
 Import from specific modules for cleaner code:
     from app.db.queries.search import insert_search
     from app.db.queries.boards import create_board
-    from app.db.queries.analysis import get_video_analysis_by_content_item
+    from app.db.queries.analysis import get_video_analysis_by_media_asset
     from app.db.queries.content import get_content_item_by_id
     from app.db.queries.users import get_user_role
 """
@@ -35,20 +35,23 @@ from app.db.queries.boards import (
     add_item_to_board,
     remove_item_from_board,
     get_board_items,
+    get_board_items_summary,
     search_user_boards,
     search_in_board,
 )
 
 # TwelveLabs queries (indexing only)
 from app.db.queries.twelvelabs import (
-    get_twelvelabs_asset_by_content_item,
+    get_twelvelabs_asset_by_media_asset,
     upsert_twelvelabs_asset,
     update_twelvelabs_asset_status,
+    get_user_twelvelabs_assets,
+    get_twelvelabs_id_for_media_asset,
 )
 
 # Analysis queries (Gemini-based)
 from app.db.queries.analysis import (
-    get_video_analysis_by_content_item,
+    get_video_analysis_by_media_asset,
     insert_video_analysis,
     create_pending_analysis,
     update_analysis_status,
@@ -57,6 +60,8 @@ from app.db.queries.analysis import (
 # Content queries (shared)
 from app.db.queries.content import (
     get_content_item_by_id,
+    get_video_media_asset_for_content_item,
+    get_media_asset_by_id,
 )
 
 # User queries
@@ -98,18 +103,21 @@ __all__ = [
     "add_item_to_board",
     "remove_item_from_board",
     "get_board_items",
+    "get_board_items_summary",
     "search_user_boards",
     "search_in_board",
     # TwelveLabs
-    "get_twelvelabs_asset_by_content_item",
+    "get_twelvelabs_asset_by_media_asset",
     "upsert_twelvelabs_asset",
     "update_twelvelabs_asset_status",
-    "get_video_analysis_by_content_item",
+    "get_user_twelvelabs_assets",
+    "get_video_analysis_by_media_asset",
     "insert_video_analysis",
     "create_pending_analysis",
     "update_analysis_status",
     # Content
     "get_content_item_by_id",
+    "get_video_media_asset_for_content_item",
     # Users
     "get_user_role",
     "update_user_role",

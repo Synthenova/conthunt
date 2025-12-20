@@ -38,6 +38,7 @@ async def stream_generator_to_redis(
     chat_id: str,
     thread_id: str,
     inputs: dict,
+    context: dict | None = None,
 ):
     """
     Background task:
@@ -53,11 +54,13 @@ async def stream_generator_to_redis(
     stream_key = f"chat:{chat_id}:stream"
 
     try:
+        config_obj = {"configurable": context} if context else None        
         async for event in lg_client.runs.stream(
             thread_id=thread_id,
             assistant_id="agent",
             input=inputs,
             stream_mode="events",
+            config=config_obj,
         ):
             # logger.info(f"Stream Event: {str(event)[:500]}")
             # Log already added previously
@@ -207,14 +210,22 @@ async def send_message(
     # Trigger Background Task
     inputs = {
         "messages": [{"role": "user", "content": request.message}],
-        "auth_token": auth_token # Pass token to agent state
     }
+    
+    # Runtime context (not in state) - includes auth token for tools
+    context = {
+        "x-auth-token": auth_token,  # Tools read this for API calls
+        "board_id": request.board_id,
+    }
+    
+    print(f"[CHAT] Sending to agent with board_id={request.board_id}, auth_token present: {bool(auth_token)}")
     
     background_tasks.add_task(
         stream_generator_to_redis,
         chat_id=str(chat_id),
         thread_id=thread_id,
-        inputs=inputs
+        inputs=inputs,
+        context=context,
     )
     
     return {"ok": True}

@@ -5,12 +5,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 
 from app.auth import get_current_user
 from app.db import get_db_connection, get_or_create_user, set_rls_user, queries
+from app.db.queries.content import get_video_media_asset_for_content_item
 from app.schemas.boards import (
     BoardCreate, BoardResponse,
     BoardItemCreate, BoardItemResponse
 )
 from app.api.v1.analysis import run_gemini_analysis
-from app.services.twelvelabs_processing import process_twelvelabs_indexing
+from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 
 router = APIRouter()
 
@@ -130,6 +131,32 @@ async def get_board_items(
         return await queries.get_board_items(conn, board_id)
 
 
+@router.get("/{board_id}/items/summary")
+async def get_board_items_summary(
+    board_id: UUID,
+    user: dict = Depends(get_current_user),
+):
+    """Get board items summary for agent - minimal text data + media_asset_id only."""
+    print(f"[BOARD_SUMMARY] Request for board_id={board_id}")
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user")
+        
+    async with get_db_connection() as conn:
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
+        
+        # Verify board exists
+        board = await queries.get_board_by_id(conn, board_id)
+        print(f"[BOARD_SUMMARY] Board found: {board is not None}")
+        if not board:
+            raise HTTPException(status_code=404, detail="Board not found")
+        
+        result = await queries.get_board_items_summary(conn, board_id)
+        print(f"[BOARD_SUMMARY] Returning {len(result) if result else 0} items")
+        return result
+
+
 @router.post("/{board_id}/items", status_code=status.HTTP_201_CREATED)
 async def add_item_to_board(
     board_id: UUID,
@@ -151,12 +178,20 @@ async def add_item_to_board(
             await conn.commit()
         except Exception:
              raise HTTPException(status_code=400, detail="Could not add item (check board/item id)")
+        
+        # Resolve content_item_id to media_asset_id for background tasks
+        media_asset = await get_video_media_asset_for_content_item(conn, item_in.content_item_id)
+        if not media_asset:
+            # No video asset - skip analysis but still return success
+            return {"status": "added"}
+        
+        media_asset_id = media_asset.get("id")
     
-    # Trigger Gemini analysis (non-blocking, internally uses background_tasks)
-    await run_gemini_analysis(item_in.content_item_id, background_tasks)
+    # Trigger Gemini analysis (non-blocking)
+    await run_gemini_analysis(media_asset_id, background_tasks)
 
     # Trigger TwelveLabs Indexing
-    background_tasks.add_task(process_twelvelabs_indexing, item_in.content_item_id)
+    background_tasks.add_task(process_twelvelabs_indexing_by_media_asset, media_asset_id)
              
     return {"status": "added"}
 
