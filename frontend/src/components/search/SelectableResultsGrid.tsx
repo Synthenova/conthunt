@@ -6,9 +6,10 @@ import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
 interface SelectableResultsGridProps {
     results: any[];
     loading: boolean;
+    analysisDisabled?: boolean;
 }
 
-export function SelectableResultsGrid({ results, loading }: SelectableResultsGridProps) {
+export function SelectableResultsGrid({ results, loading, analysisDisabled = false }: SelectableResultsGridProps) {
     const [selectedItem, setSelectedItem] = useState<any | null>(null);
 
     if (loading) {
@@ -59,6 +60,7 @@ export function SelectableResultsGrid({ results, loading }: SelectableResultsGri
                 isOpen={!!selectedItem}
                 onClose={() => setSelectedItem(null)}
                 item={selectedItem}
+                analysisDisabled={analysisDisabled}
             />
         </>
     );

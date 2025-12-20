@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { auth } from "@/lib/firebaseClient";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -26,20 +26,26 @@ const LOADING_MESSAGES = [
     "AI brain at work...",
     "Uncovering hidden gems...",
 ];
+const ANALYSIS_NOT_READY_MESSAGE = "Finalizing search results...";
+const ANALYSIS_POLL_INTERVAL_MS = 2500;
+const ANALYSIS_MAX_NOT_READY_RETRIES = 20;
+const ANALYSIS_NOT_READY_STATUSES = new Set([404, 409, 425]);
 
 interface ContentDrawerProps {
     isOpen: boolean;
     onClose: () => void;
     item: any | null;
+    analysisDisabled?: boolean;
 }
 
-export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
+export function ContentDrawer({ isOpen, onClose, item, analysisDisabled = false }: ContentDrawerProps) {
     const [analyzing, setAnalyzing] = useState(false);
     const [polling, setPolling] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<any>(null);
     const [error, setError] = useState<string | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
+    const analysisNotReadyRetries = useRef(0);
 
     // Board Management
     const [isBoardPopoverOpen, setIsBoardPopoverOpen] = useState(false);
@@ -126,8 +132,13 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
             }
         });
 
+        if (ANALYSIS_NOT_READY_STATUSES.has(response.status)) {
+            return { status: "not_ready" };
+        }
+
         if (!response.ok) {
-            throw new Error(response.status === 401 ? "Unauthorized" : "Analysis failed");
+            const detail = await response.json().catch(() => null);
+            throw new Error(detail?.detail || (response.status === 401 ? "Unauthorized" : "Analysis failed"));
         }
 
         return await response.json();
@@ -135,16 +146,24 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
 
     // Polling effect - poll when status is 'processing'
     useEffect(() => {
-        if (!polling || analysisResult?.status !== 'processing') {
-            setPolling(false);
-            return;
-        }
+        if (!polling) return;
 
         const pollInterval = setInterval(async () => {
             try {
                 const data = await fetchAnalysis();
+                if (!data) return;
                 setAnalysisResult(data);
 
+                if (data?.status === "not_ready") {
+                    analysisNotReadyRetries.current += 1;
+                    if (analysisNotReadyRetries.current >= ANALYSIS_MAX_NOT_READY_RETRIES) {
+                        setPolling(false);
+                        setError("Search is still saving results. Please try again in a moment.");
+                    }
+                    return;
+                }
+
+                analysisNotReadyRetries.current = 0;
                 if (data?.status !== 'processing') {
                     setPolling(false);
                     clearInterval(pollInterval);
@@ -153,10 +172,10 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
                 console.error("Polling error:", err);
                 // Don't stop polling on transient errors
             }
-        }, 4000);  // Poll every 4 seconds
+        }, ANALYSIS_POLL_INTERVAL_MS);
 
         return () => clearInterval(pollInterval);
-    }, [polling, analysisResult?.status, fetchAnalysis]);
+    }, [polling, fetchAnalysis]);
 
     // Reset state when item changes
     useEffect(() => {
@@ -166,22 +185,28 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
             setAnalyzing(false);
             setPolling(false);
             setIsPlaying(false);
+            analysisNotReadyRetries.current = 0;
         }
     }, [isOpen, item]);
 
     const handleAnalyze = async () => {
-        if (!item || analyzing || polling) return;  // Guard against duplicate calls
+        if (!item || analyzing || polling || analysisDisabled) return;  // Guard against duplicate calls
 
         setAnalyzing(true);
         setError(null);
         setLoadingMessage(LOADING_MESSAGES[Math.floor(Math.random() * LOADING_MESSAGES.length)]);
+        analysisNotReadyRetries.current = 0;
 
         try {
             const data = await fetchAnalysis();
             setAnalysisResult(data);
 
-            // If status is processing, start polling
-            if (data?.status === 'processing') {
+            if (data?.status === "not_ready") {
+                setLoadingMessage(ANALYSIS_NOT_READY_MESSAGE);
+            }
+
+            // If status is processing or not_ready, start polling
+            if (data?.status === 'processing' || data?.status === "not_ready") {
                 setPolling(true);
             }
         } catch (err) {
@@ -420,10 +445,11 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
                                     onClick={handleAnalyze}
                                     variant="outline"
                                     className="w-full h-12 border-dashed border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900/30 text-zinc-400 hover:text-zinc-200 transition-all group"
+                                    disabled={analysisDisabled}
                                 >
                                     <Sparkles className="mr-2 h-4 w-4 text-yellow-500 group-hover:scale-110 transition-transform" />
-                                    Analyze with AI
-                                    <span className="ml-2 text-xs text-zinc-600">(1 credit)</span>
+                                    {analysisDisabled ? "Analyze after search completes" : "Analyze with AI"}
+                                    {!analysisDisabled && <span className="ml-2 text-xs text-zinc-600">(1 credit)</span>}
                                 </Button>
                             ) : null}
 
@@ -434,7 +460,7 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
                                         <Sparkles className="h-4 w-4 text-yellow-400 absolute -top-1 -right-1 animate-pulse" />
                                     </div>
                                     <p className="text-sm text-zinc-300 mt-4 text-center font-medium transition-all duration-300">
-                                        {loadingMessage}
+                                        {analysisResult?.status === "not_ready" ? ANALYSIS_NOT_READY_MESSAGE : loadingMessage}
                                     </p>
                                     <p className="text-xs text-zinc-500 mt-1">This may take 10-30 seconds</p>
                                 </div>

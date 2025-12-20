@@ -243,7 +243,11 @@ export default function SearchDetailPage() {
                     Results ({flattenedResults.length})
                     {isStreaming && <Loader2 className="inline-block h-4 w-4 animate-spin ml-2" />}
                 </h2>
-                <SelectableResultsGrid results={flattenedResults} loading={isStreaming && flattenedResults.length === 0} />
+                <SelectableResultsGrid
+                    results={flattenedResults}
+                    loading={isStreaming && flattenedResults.length === 0}
+                    analysisDisabled={isStreaming}
+                />
             </div>
 
             {/* Selection Bar */}
