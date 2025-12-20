@@ -52,6 +52,7 @@ async def list_searches(
                 query=s["query"],
                 inputs=s["inputs"],
                 created_at=s["created_at"],
+                status=s.get("status", "completed"),
             )
             for s in searches
         ]
@@ -112,6 +113,7 @@ async def get_search_detail(
         query=search["query"],
         inputs=search["inputs"],
         mode=search["mode"],
+        status=search.get("status", "completed"),
         created_at=search["created_at"],
         platform_calls=[
             PlatformCallInfo(

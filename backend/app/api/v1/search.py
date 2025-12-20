@@ -1,16 +1,16 @@
-"""Search API endpoint - POST /v1/search."""
+"""Search API endpoint - POST /v1/search with Redis streaming."""
 import asyncio
 import time
 from typing import List
 import uuid
 from uuid import UUID
 import traceback
-from dataclasses import asdict
 
 import httpx
 import json
+import redis.asyncio as redis
 from sse_starlette.sse import EventSourceResponse
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
@@ -19,18 +19,10 @@ from app.platforms import (
     PLATFORM_ADAPTERS,
     get_adapter,
     PlatformCallResult,
-    ParsedPlatformResponse,
 )
 from app.storage import upload_raw_json_gz
 from app.media import download_assets_batch
-from app.schemas import (
-    SearchRequest,
-    SearchResponse,
-    PlatformResult,
-    ContentItemResponse,
-    AssetResponse,
-    ResultItem,
-)
+from app.schemas import SearchRequest
 
 router = APIRouter()
 
@@ -83,44 +75,120 @@ async def call_platform(
         )
 
 
-async def save_search_background(
+def transform_result_to_stream_item(result: PlatformCallResult) -> dict:
+    """Transform a platform result to the format expected by frontend stream."""
+    items_data = []
+    if result.parsed:
+        for item in result.parsed.items:
+            # Generate deterministic ID for content item
+            content_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
+
+            # Construct assets list
+            assets_data = []
+            for media in item.media_urls:
+                asset_seed = f"{content_id}:{media.asset_type.value}:{media.source_url}"
+                asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, asset_seed))
+
+                assets_data.append({
+                    "id": asset_id, 
+                    "asset_type": media.asset_type.value,
+                    "status": "pending",
+                    "source_url": media.source_url,
+                    "gcs_uri": None
+                })
+
+            items_data.append({
+                "rank": 0,
+                "content_item": {
+                    "id": content_id,
+                    "platform": item.platform,
+                    "external_id": item.external_id,
+                    "content_type": item.content_type,
+                    "canonical_url": item.canonical_url,
+                    "title": item.title,
+                    "primary_text": item.primary_text,
+                    "published_at": item.published_at,
+                    "creator_handle": item.creator_handle,
+                    "metrics": item.metrics,
+                },
+                "assets": assets_data
+            })
+
+    return {
+        "type": "platform_result",
+        "platform": result.platform,
+        "success": result.success,
+        "duration_ms": result.duration_ms,
+        "count": len(result.parsed.items) if result.parsed else 0,
+        "items": items_data,
+        "error": result.error,
+        "next_cursor": result.parsed.next_cursor if result.parsed else None,
+    }
+
+
+async def search_worker(
+    search_id: UUID,
     user_uuid: UUID,
     query: str,
     inputs: dict,
-    platform_results: List[PlatformCallResult],
-    new_media_assets: List[dict] = None
 ):
-    """Background task to save search history and results."""
+    """
+    Background worker that:
+    1. Fetches all platforms and pushes results to Redis
+    2. Immediately pushes "done" to Redis (frontend stops loading)
+    3. Saves to DB and updates status
+    4. Fire-and-forget: uploads and media downloads
+    """
+    settings = get_settings()
+    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    stream_key = f"search:{search_id}:stream"
+    
+    collected_results: List[PlatformCallResult] = []
+    
     try:
+        # Push start event
+        await r.xadd(stream_key, {"data": json.dumps({
+            "type": "start", 
+            "platforms": list(inputs.keys()),
+            "search_id": str(search_id),
+        })})
+        
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            # Create all platform tasks
+            tasks = [
+                call_platform(client, slug, query, params)
+                for slug, params in inputs.items()
+            ]
+            
+            # Process as they complete
+            for coro in asyncio.as_completed(tasks):
+                result: PlatformCallResult = await coro
+                collected_results.append(result)
+                
+                # Transform and push to Redis
+                event_data = transform_result_to_stream_item(result)
+                await r.xadd(stream_key, {"data": json.dumps(event_data, default=str)})
+        
+        # ========== IMMEDIATELY AFTER PLATFORM CALLS ==========
+        # Push done event - frontend stops loading here
+        await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
+        # Expire stream 60 seconds from now
+        await r.expire(stream_key, 300)
+        await r.close()
+        
+        # ========== DB WORK (happens after frontend is done) ==========
+        assets_to_download = []
+        upload_tasks = []  # For fire-and-forget GCS uploads
+        
         async with get_db_connection() as conn:
-            # Set RLS context
             await set_rls_user(conn, user_uuid)
             
-            # Insert search
-            search_id = await queries.insert_search(
-                conn=conn,
-                user_id=user_uuid,
-                query=query,
-                inputs=inputs,
-                mode="live",
-            )
-            
             rank = 0
-            assets_to_download = []
             
-            for result in platform_results:
+            for result in collected_results:
                 slug = result.platform
                 
-                # Upload raw response to GCS if successful
-                response_gcs_uri = None
-                if result.success and result.parsed:
-                    response_gcs_uri = await upload_raw_json_gz(
-                        platform=slug,
-                        search_id=search_id,
-                        raw_json=result.parsed.raw_response,
-                    )
-                
-                # Insert platform call record
+                # Insert platform call record (without GCS URI for now)
                 await queries.insert_platform_call(
                     conn=conn,
                     search_id=search_id,
@@ -131,19 +199,25 @@ async def save_search_background(
                     error=result.error,
                     duration_ms=result.duration_ms,
                     next_cursor=result.parsed.next_cursor if result.parsed else None,
-                    response_gcs_uri=response_gcs_uri,
+                    response_gcs_uri=None,  # Will be updated by background task if needed
                     response_meta=result.parsed.response_meta if result.parsed else {},
                 )
+                
+                # Queue GCS upload as fire-and-forget
+                if result.success and result.parsed:
+                    upload_tasks.append(upload_raw_json_gz(
+                        platform=slug,
+                        search_id=search_id,
+                        raw_json=result.parsed.raw_response,
+                    ))
                 
                 # Process items if successful
                 if result.success and result.parsed:
                     for item in result.parsed.items:
                         rank += 1
                         
-                        # Upsert content item
                         content_id, was_inserted = await queries.upsert_content_item(conn, item)
                         
-                        # Insert search result link
                         await queries.insert_search_result(
                             conn=conn,
                             search_id=search_id,
@@ -152,7 +226,6 @@ async def save_search_background(
                             rank=rank,
                         )
                         
-                        # Only create media assets for newly inserted content
                         if was_inserted:
                             for media_url in item.media_urls:
                                 asset_id = await queries.insert_media_asset(
@@ -160,39 +233,74 @@ async def save_search_background(
                                     content_item_id=content_id,
                                     media_url=media_url,
                                 )
-                                # Track for download
                                 assets_to_download.append({
                                     "id": asset_id,
                                     "platform": item.platform,
                                     "external_id": item.external_id,
                                 })
-
+            
+            # Update status to completed
+            await queries.update_search_status(conn, search_id, "completed")
             await conn.commit()
             logger.info(f"Saved search {search_id} with {rank} results")
-
-            # Trigger media downloads
-            if assets_to_download:
-                # We can call the download function directly as we are already in a background task
-                # logic here, or spawn another task if we want.
-                # Since the download function is async, we can just await it or create_task
-                await download_assets_batch(assets_to_download)
-
+        
+        # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
+        # GCS uploads (don't await)
+        for task in upload_tasks:
+            asyncio.create_task(task)
+        
+        # Media downloads (don't await)
+        if assets_to_download:
+            asyncio.create_task(download_assets_batch(assets_to_download))
+        
     except Exception as e:
-        logger.error(f"Failed to save search history: {e}")
+        logger.error(f"Search worker failed for {search_id}: {e}", exc_info=True)
+        # Update status to failed
+        try:
+            async with get_db_connection() as conn:
+                await set_rls_user(conn, user_uuid)
+                await queries.update_search_status(conn, search_id, "failed")
+                await conn.commit()
+        except Exception as db_err:
+            logger.error(f"Failed to update search status to failed: {db_err}")
+        
+        # Try to push error to Redis (may already be closed)
+        try:
+            r2 = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            await r2.xadd(stream_key, {"data": json.dumps({"type": "error", "error": str(e)})})
+            await r2.expire(stream_key, 300)
+            await r2.close()
+        except:
+            pass
 
 
-@router.post("/search", response_class=EventSourceResponse)
+# --- Redis Dependency ---
+
+async def get_redis():
+    """Get Redis client instance."""
+    settings = get_settings()
+    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        yield client
+    finally:
+        await client.close()
+
+
+# --- Endpoints ---
+
+@router.post("/search")
 async def create_search(
     request: SearchRequest,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
     """
-    Execute a multi-platform search with Streaming Response (SSE).
-    Results are yielded as they arrive. Database operations happen in background.
-    """
-    settings = get_settings()
-    firebase_uid = user.get("uid")
+    Create a new search.
     
+    Returns search_id immediately, runs search in background.
+    Frontend should connect to /search/{id}/stream for results.
+    """
+    firebase_uid = user.get("uid")
     if not firebase_uid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
@@ -204,102 +312,110 @@ async def create_search(
                 detail=f"Unknown platform: {slug}. Available: {list(PLATFORM_ADAPTERS.keys())}"
             )
     
-    # Get user UUID (needed for background task)
+    # Get user UUID and create search entry
     async with get_db_connection() as conn:
-         user_uuid, _ = await get_or_create_user(conn, firebase_uid)
-
-    async def event_generator():
-        # Clean inputs
-        platform_tasks = []
-        collected_results: List[PlatformCallResult] = []
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
         
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            # Create tasks
-            for slug, params in request.inputs.items():
-                platform_tasks.append(call_platform(client, slug, request.query, params))
-            
-            # Yield initial event
-            yield {
-                "event": "start",
-                "data": json.dumps({"message": f"Starting search on {len(platform_tasks)} platforms"})
-            }
-            
-            # Use as_completed to yield results as they finish
-            for task in asyncio.as_completed(platform_tasks):
-                result: PlatformCallResult = await task
-                collected_results.append(result)
-                
-                # Transform to lightweight response
-                
-                # We need to map the raw NormalizedItem to the expected schema (ResultItem)
-                # This matches what the frontend expects (nested content_item and assets)
-                items_data = []
-                if result.parsed:
-                    for item in result.parsed.items:
-                        # Generate deterministic ID for content item
-                        content_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
-
-                        # Construct assets list
-                        assets_data = []
-                        for media in item.media_urls:
-                            # Generate deterministic ID for asset
-                            # using content_id + asset_type + source_url (or just type if one per type)
-                            # To be safe against multiple assets of same type, use source_url
-                            asset_seed = f"{content_id}:{media.asset_type.value}:{media.source_url}"
-                            asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, asset_seed))
-
-                            assets_data.append({
-                                "id": asset_id, 
-                                "asset_type": media.asset_type.value,
-                                "status": "pending",
-                                "source_url": media.source_url,
-                                "gcs_uri": None
-                            })
-
-                        items_data.append({
-                            "rank": 0, # Not relevant for stream
-                            "content_item": {
-                                "id": content_id,
-                                "platform": item.platform,
-                                "external_id": item.external_id,
-                                "content_type": item.content_type,
-                                "canonical_url": item.canonical_url,
-                                "title": item.title,
-                                "primary_text": item.primary_text,
-                                "published_at": item.published_at,
-                                "creator_handle": item.creator_handle,
-                                "metrics": item.metrics,
-                            },
-                            "assets": assets_data
-                        })
-
-                data = {
-                    "platform": result.platform,
-                    "success": result.success,
-                    "duration_ms": result.duration_ms,
-                    "count": len(result.parsed.items) if result.parsed else 0,
-                    "items": items_data,
-                    "error": result.error
-                }
-                
-                yield {
-                    "event": "platform_result",
-                    "data": json.dumps(data, default=str)
-                }
-
-        # Verification: All done
-        yield {
-            "event": "done",
-            "data": json.dumps({"message": "All platforms finished"})
-        }
-        
-        # Spawn background task to save to DB
-        # We use asyncio.create_task to ensure it runs after the generator finishes/returns
-        asyncio.create_task(save_search_background(
-            user_uuid=user_uuid,
+        search_id = await queries.insert_search(
+            conn=conn,
+            user_id=user_uuid,
             query=request.query,
             inputs=request.inputs,
-            platform_results=collected_results
-        ))
+            mode="live",
+            status="running",
+        )
+        await conn.commit()
+    
+    # Spawn background worker
+    background_tasks.add_task(
+        search_worker,
+        search_id=search_id,
+        user_uuid=user_uuid,
+        query=request.query,
+        inputs=request.inputs,
+    )
+    
+    return {"search_id": str(search_id)}
 
+
+@router.get("/search/{search_id}/stream")
+async def stream_search(
+    search_id: UUID,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """
+    SSE endpoint to stream search results from Redis.
+    
+    If search is already completed, returns JSON with results from DB.
+    If search is running, streams from Redis.
+    """
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+    
+    # Verify user owns this search and get status
+    async with get_db_connection() as conn:
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
+        search = await queries.get_search_by_id(conn, search_id)
+        
+        if not search:
+            raise HTTPException(status_code=404, detail="Search not found")
+        
+        # If already completed, return results from DB
+        if search["status"] == "completed":
+            results = await queries.get_search_results_with_content(conn, search_id)
+            return {
+                "status": "completed",
+                "results": results,
+            }
+        
+        if search["status"] == "failed":
+            return {
+                "status": "failed",
+                "error": "Search failed",
+            }
+    
+    # Status is 'running' - stream from Redis
+    stream_key = f"search:{search_id}:stream"
+    
+    async def event_generator():
+        last_id = "0-0"
+        
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                
+                streams = await redis_client.xread(
+                    {stream_key: last_id},
+                    count=50,
+                    block=10000  # 10 second timeout
+                )
+                
+                if not streams:
+                    yield {"event": "ping", "data": ""}
+                    continue
+                
+                for _, messages in streams:
+                    for msg_id, data_map in messages:
+                        last_id = msg_id
+                        payload_str = data_map.get("data")
+                        yield {
+                            "id": msg_id,
+                            "event": "message",
+                            "data": payload_str
+                        }
+                        
+                        # Check if done
+                        if payload_str and '"type": "done"' in payload_str:
+                            return
+                        if payload_str and '"type": "error"' in payload_str:
+                            return
+        except asyncio.CancelledError:
+            pass
+    
     return EventSourceResponse(event_generator())

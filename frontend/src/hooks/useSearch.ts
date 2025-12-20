@@ -4,11 +4,11 @@ import { auth } from "@/lib/firebaseClient";
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
 // Define response types
 export interface SearchResponse {
     search_id: string;
-    platforms: Record<string, any>;
-    results: any[];
 }
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {
@@ -35,18 +35,13 @@ export function useSearch() {
     const router = useRouter();
     const queryClient = useQueryClient();
 
-    // State for pagination and results
-    const [results, setResults] = useState<any[]>([]);
+    // State for pagination and results (used by detail page now)
     const [cursors, setCursors] = useState<Record<string, any>>({});
 
     const getParams = (platform: string, cursor?: any) => {
         const platformFilters = store.filters[platform] || {};
         const sortValue = store.sortBy[platform];
 
-        // Base params: filters + default amount (backend handles default)
-        // We only send amount for Instagram really, but store.limit is legacy now effectively
-        // unless we want to keep using it for initial request? User said remove it. 
-        // We'll just pass filters.
         const params: any = { ...platformFilters };
 
         // Add Sort
@@ -58,21 +53,15 @@ export function useSearch() {
 
         // Add Cursor if loading more
         if (cursor) {
-            // different platforms have different cursor keys in request?
-            // Base adapter usually expects just passed params.
-            // Let's check schemas... next_cursor is a dict like {cursor: "..."} or {continuationToken: "..."}
-            // So we can just spread it.
             Object.assign(params, cursor);
         }
 
         return params;
     };
 
-    // 1. Search Mutation (POST /v1/search)
-    const [controller, setController] = useState<AbortController | null>(null);
-
+    // 1. Search Mutation (POST /v1/search) - Now returns search_id and redirects
     const searchMutation = useMutation({
-        mutationFn: async ({ isLoadMore = false }: { isLoadMore?: boolean } = {}) => {
+        mutationFn: async () => {
             const body = {
                 query: store.query,
                 inputs: {} as any
@@ -83,20 +72,8 @@ export function useSearch() {
             const platformKeys = Object.keys(store.platformInputs) as Array<keyof typeof store.platformInputs>;
             const activeKeys = platformKeys.filter(k => store.platformInputs[k]);
 
-            let platformsToFetch = activeKeys;
-
-            if (isLoadMore) {
-                platformsToFetch = activeKeys.filter(key => {
-                    if (key === 'instagram_reels') return false;
-                    return !!cursors[key];
-                });
-
-                if (platformsToFetch.length === 0) return null;
-            }
-
-            platformsToFetch.forEach(key => {
-                const cursor = isLoadMore ? cursors[key] : undefined;
-                inputs[key] = getParams(key, cursor);
+            activeKeys.forEach(key => {
+                inputs[key] = getParams(key);
             });
 
             body.inputs = inputs;
@@ -106,68 +83,27 @@ export function useSearch() {
             if (!user) throw new Error("User not authenticated");
             const token = await user.getIdToken();
 
-            // Abort previous request if any
-            if (controller) controller.abort();
-            const newController = new AbortController();
-            setController(newController);
+            const res = await fetch(`${BACKEND_URL}/v1/search`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(body),
+            });
 
-            // If new search, clear results immediately
-            if (!isLoadMore) {
-                setResults([]);
-                setCursors({});
+            if (!res.ok) {
+                const error = await res.json().catch(() => ({ detail: res.statusText }));
+                throw new Error(error.detail || "Search failed");
             }
 
-            await import("@microsoft/fetch-event-source").then(({ fetchEventSource }) => {
-                return fetchEventSource("http://localhost:8000/v1/search", {
-                    method: "POST",
-                    headers: {
-                        "Authorization": `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify(body),
-                    signal: newController.signal,
-                    onmessage(msg) {
-                        try {
-                            const data = JSON.parse(msg.data);
-
-                            if (msg.event === "start") {
-                                // console.log("Search started:", data);
-                            } else if (msg.event === "platform_result") {
-                                const result = data;
-                                if (result.success && result.items) {
-                                    setResults(prev => {
-                                        // Deduplicate based on content_item.id
-                                        const existingIds = new Set(prev.map(p => p.content_item?.id));
-                                        const uniqueNew = result.items.filter((item: any) => !existingIds.has(item.content_item?.id));
-                                        return [...prev, ...uniqueNew];
-                                    });
-
-                                    // Update Cursor
-                                    if (result.next_cursor) {
-                                        setCursors(prev => ({ ...prev, [result.platform]: result.next_cursor }));
-                                    } else {
-                                        setCursors(prev => {
-                                            const next = { ...prev };
-                                            delete next[result.platform];
-                                            return next;
-                                        });
-                                    }
-                                }
-                            } else if (msg.event === "done") {
-                                // console.log("Search done");
-                                queryClient.invalidateQueries({ queryKey: ["searchHistory"] });
-                            }
-                        } catch (e) {
-                            console.error("Error parsing SSE message", e);
-                        }
-                    },
-                    onerror(err) {
-                        console.error("SSE Error", err);
-                        throw err; // Rethrow to trigger mutation error
-                    }
-                });
-            });
-        }
+            return res.json() as Promise<SearchResponse>;
+        },
+        onSuccess: (data) => {
+            // Redirect to search detail page
+            queryClient.invalidateQueries({ queryKey: ["searchHistory"] });
+            router.push(`/app/searches/${data.search_id}`);
+        },
     });
 
     const hasMore = useMemo(() => {
@@ -181,37 +117,27 @@ export function useSearch() {
     // 2. History Query (GET /v1/searches)
     const historyQuery = useQuery({
         queryKey: ["searchHistory"],
-        queryFn: () => fetchWithAuth("http://localhost:8000/v1/searches"),
+        queryFn: () => fetchWithAuth(`${BACKEND_URL}/v1/searches`),
     });
 
     // 3. Get Single Search (GET /v1/searches/:id)
     const getSearch = (id: string) => useQuery({
         queryKey: ["search", id],
-        queryFn: () => fetchWithAuth(`http://localhost:8000/v1/searches/${id}`),
+        queryFn: () => fetchWithAuth(`${BACKEND_URL}/v1/searches/${id}`),
         enabled: !!id,
     });
-
-    // Track load type
-    const [isLoadMoreRequest, setIsLoadMoreRequest] = useState(false);
 
     return {
         ...store,
         search: () => {
-            setIsLoadMoreRequest(false);
-            searchMutation.mutate({ isLoadMore: false });
+            searchMutation.mutate();
         },
-        loadMore: () => {
-            setIsLoadMoreRequest(true);
-            searchMutation.mutate({ isLoadMore: true });
-        },
-        isSearching: searchMutation.isPending, // Global loading state
-        isInitialLoading: searchMutation.isPending && !isLoadMoreRequest, // For full page skeleton
-        isLoadingMore: searchMutation.isPending && isLoadMoreRequest, // For bottom spinner
-        searchResults: { results },
+        isSearching: searchMutation.isPending,
         searchError: searchMutation.error,
         history: historyQuery.data?.searches || [],
         isLoadingHistory: historyQuery.isLoading,
         getSearch,
         hasMore,
+        setCursors,
     };
 }

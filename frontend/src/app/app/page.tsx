@@ -1,42 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
-
 import { useSearch } from "@/hooks/useSearch";
-import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { SearchHeader } from "@/components/search/SearchHeader";
 import { FilterBar } from "@/components/search/FilterBar";
-import { Button } from "@/components/ui/button";
-import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
-import { ClientResultControls } from "@/components/search/ClientResultControls";
 import { SelectionBar } from "@/components/boards/SelectionBar";
-
 import { LogoutButton } from "@/components/logout-button";
 
 export default function SearchPage() {
-    const {
-        search,
-        isSearching,
-        isInitialLoading,
-        isLoadingMore,
-        searchResults,
-        searchError,
-        sortBy,
-        loadMore,
-        hasMore
-    } = useSearch();
+    const { search, isSearching, searchError } = useSearch();
 
     const handleSearch = () => {
         search();
     };
-
-    const {
-        flatResults,
-        clientSort,
-        setClientSort,
-        clientDateFilter,
-        setClientDateFilter
-    } = useClientResultSort(searchResults?.results || []);
 
     return (
         <div className="min-h-screen bg-background relative selection:bg-primary/30">
@@ -50,15 +25,8 @@ export default function SearchPage() {
                 {/* Header Section */}
                 <div className="flex flex-col items-center gap-6 pt-10 sticky top-0 z-50 py-4 bg-background/80 backdrop-blur-xl -mx-4 px-4 border-b border-white/5">
                     <div className="w-full max-w-4xl flex flex-col gap-6 items-center">
-                        <SearchHeader onSearch={handleSearch} isLoading={isInitialLoading || isLoadingMore} />
+                        <SearchHeader onSearch={handleSearch} isLoading={isSearching} />
                         <FilterBar />
-                        <ClientResultControls
-                            sort={clientSort}
-                            onSortChange={setClientSort}
-                            dateFilter={clientDateFilter}
-                            onDateFilterChange={setClientDateFilter}
-                            totalResults={flatResults.length}
-                        />
                     </div>
                 </div>
 
@@ -69,28 +37,17 @@ export default function SearchPage() {
                     </div>
                 )}
 
-                {/* Main Content */}
-                <main className="flex-1 w-full flex flex-col gap-8">
-                    <SelectableResultsGrid results={flatResults} loading={isInitialLoading} />
-
-                    {hasMore && !isLoadingMore && (
-                        <div className="flex justify-center pb-8">
-                            <Button
-                                variant="outline"
-                                size="lg"
-                                onClick={loadMore}
-                                className="bg-white/5 border-white/10 hover:bg-white/10 text-white min-w-[200px]"
-                            >
-                                Load More Results
-                            </Button>
-                        </div>
-                    )}
-
-                    {isLoadingMore && (
-                        <div className="flex justify-center pb-8">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
-                        </div>
-                    )}
+                {/* Main Content - Now just shows instructions since results are on detail page */}
+                <main className="flex-1 w-full flex flex-col gap-8 items-center justify-center">
+                    <div className="text-center text-muted-foreground max-w-md">
+                        <h2 className="text-2xl font-semibold text-white mb-4">Start Hunting</h2>
+                        <p className="mb-4">
+                            Enter a search query above and select the platforms you want to search.
+                        </p>
+                        <p className="text-sm">
+                            After you search, you'll be redirected to the results page where content streams in as it's found.
+                        </p>
+                    </div>
                 </main>
 
                 {/* Footer / Utils */}

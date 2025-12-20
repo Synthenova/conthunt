@@ -77,9 +77,22 @@ export default function HistoryPage() {
                                         <Badge variant="secondary" className="text-[10px] h-5 bg-white/5 border-white/10">
                                             {getPlatformCount(item.inputs)} platforms
                                         </Badge>
-                                        <Badge variant="outline" className="text-[10px] h-5 border-white/10">
-                                            {item.total_results || 0} results
-                                        </Badge>
+                                        {item.status === "running" && (
+                                            <Badge variant="secondary" className="text-[10px] h-5 flex items-center gap-1">
+                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                                Running
+                                            </Badge>
+                                        )}
+                                        {item.status === "completed" && (
+                                            <Badge variant="default" className="text-[10px] h-5">
+                                                Completed
+                                            </Badge>
+                                        )}
+                                        {item.status === "failed" && (
+                                            <Badge variant="destructive" className="text-[10px] h-5">
+                                                Failed
+                                            </Badge>
+                                        )}
                                     </div>
                                 </div>
                             </div>

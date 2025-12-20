@@ -24,6 +24,7 @@ async def insert_search(
     query: str,
     inputs: dict,
     mode: str = "live",
+    status: str = "running",
 ) -> UUID:
     """
     Insert a new search record.
@@ -35,8 +36,8 @@ async def insert_search(
     
     await conn.execute(
         text("""
-            INSERT INTO searches (id, user_id, query, inputs, search_hash, mode)
-            VALUES (:id, :user_id, :query, :inputs, :search_hash, :mode)
+            INSERT INTO searches (id, user_id, query, inputs, search_hash, mode, status)
+            VALUES (:id, :user_id, :query, :inputs, :search_hash, :mode, :status)
         """),
         {
             "id": search_id,
@@ -45,9 +46,22 @@ async def insert_search(
             "inputs": json.dumps(inputs),
             "search_hash": search_hash,
             "mode": mode,
+            "status": status,
         }
     )
     return search_id
+
+
+async def update_search_status(
+    conn: AsyncConnection,
+    search_id: UUID,
+    status: str,
+) -> None:
+    """Update search status (running -> completed/failed)."""
+    await conn.execute(
+        text("UPDATE searches SET status = :status WHERE id = :id"),
+        {"id": search_id, "status": status}
+    )
 
 
 async def insert_platform_call(
@@ -214,7 +228,7 @@ async def get_search_by_id(
     
     result = await conn.execute(
         text("""
-            SELECT id, user_id, query, inputs, search_hash, mode, created_at
+            SELECT id, user_id, query, inputs, search_hash, mode, status, created_at
             FROM searches
             WHERE id = :id
         """),
@@ -235,7 +249,8 @@ async def get_search_by_id(
         "inputs": row[3],
         "search_hash": row[4],
         "mode": row[5],
-        "created_at": row[6],
+        "status": row[6],
+        "created_at": row[7],
     }
 
 
@@ -246,7 +261,7 @@ async def get_user_searches(
     """Get user's searches, newest first (RLS will filter by user)."""
     result = await conn.execute(
         text("""
-            SELECT id, query, inputs, created_at
+            SELECT id, query, inputs, status, created_at
             FROM searches
             ORDER BY created_at DESC
             LIMIT :limit
@@ -259,7 +274,8 @@ async def get_user_searches(
             "id": row[0],
             "query": row[1],
             "inputs": row[2],
-            "created_at": row[3],
+            "status": row[3],
+            "created_at": row[4],
         }
         for row in rows
     ]

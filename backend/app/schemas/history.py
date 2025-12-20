@@ -12,6 +12,7 @@ class SearchHistoryItem(BaseModel):
     query: str
     inputs: Dict[str, Any]
     created_at: datetime
+    status: str = "completed"  # running, completed, failed
 
 
 class SearchHistoryResponse(BaseModel):
@@ -71,6 +72,7 @@ class SearchDetailResponse(BaseModel):
     query: str
     inputs: Dict[str, Any]
     mode: str
+    status: str = "completed"  # running, completed, failed
     created_at: datetime
     platform_calls: List[PlatformCallInfo]
     results: List[SearchResultDetail]

@@ -23,6 +23,7 @@ from app.db.queries.search import (
     get_platform_calls_for_search,
     get_search_results_with_content,
     get_media_asset_with_access_check,
+    update_search_status,
 )
 
 # Board queries
@@ -88,6 +89,7 @@ __all__ = [
     "get_platform_calls_for_search",
     "get_search_results_with_content",
     "get_media_asset_with_access_check",
+    "update_search_status",
     # Boards
     "create_board",
     "get_user_boards",
