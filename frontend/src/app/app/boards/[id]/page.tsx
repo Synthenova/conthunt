@@ -5,7 +5,6 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useBoards } from "@/hooks/useBoards";
 import { useSearchStore } from "@/lib/store";
-import { useChatUI } from "@/hooks/use-chat-ui";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,13 +37,6 @@ export default function BoardDetailPage() {
     const params = useParams();
     const router = useRouter();
     const boardId = params.id as string;
-    const { setBoardId } = useChatUI();
-
-    // Set board context for chat agent
-    useEffect(() => {
-        setBoardId(boardId);
-        return () => setBoardId(null);  // Clear on unmount
-    }, [boardId, setBoardId]);
 
     const {
         getBoard,

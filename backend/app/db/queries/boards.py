@@ -1,5 +1,5 @@
 """Database query functions for boards."""
-from typing import List
+from typing import List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -26,6 +26,7 @@ async def create_board(
 async def get_user_boards(
     conn: AsyncConnection,
     user_id: UUID,
+    check_content_item_id: Optional[UUID] = None,
 ) -> List[dict]:
     """
     Get all boards for a user with item counts.
@@ -33,15 +34,17 @@ async def get_user_boards(
     """
     result = await conn.execute(
         text("""
-            SELECT b.id, b.user_id, b.name, b.created_at, b.updated_at,
-                   COUNT(bi.content_item_id) as item_count
+            SELECT 
+                b.id, b.user_id, b.name, b.created_at, b.updated_at,
+                (SELECT COUNT(*) FROM board_items bi WHERE bi.board_id = b.id) as item_count,
+                case when cast(:check_item_id as uuid) is not null then
+                    exists(select 1 from board_items bi where bi.board_id = b.id and bi.content_item_id = :check_item_id)
+                else false end as has_item
             FROM boards b
-            LEFT JOIN board_items bi ON b.id = bi.board_id
             WHERE b.user_id = :user_id
-            GROUP BY b.id
             ORDER BY b.updated_at DESC
         """),
-        {"user_id": user_id}
+        {"user_id": user_id, "check_item_id": check_content_item_id}
     )
     return [
         {
@@ -50,7 +53,8 @@ async def get_user_boards(
             "name": row[2],
             "created_at": row[3],
             "updated_at": row[4],
-            "item_count": row[5]
+            "item_count": row[5],
+            "has_item": row[6]
         }
         for row in result.fetchall()
     ]

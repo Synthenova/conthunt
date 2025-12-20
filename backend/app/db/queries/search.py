@@ -114,6 +114,52 @@ async def insert_platform_call(
     return call_id
 
 
+async def insert_platform_calls_batch(
+    conn: AsyncConnection,
+    calls: List[dict],
+) -> None:
+    """Batch insert platform calls."""
+    if not calls:
+        return
+
+    # Ensure JSON serializable
+    prepared_calls = []
+    for call in calls:
+        prepared_calls.append({
+            "id": str(call.get("id", uuid4())),
+            "search_id": str(call["search_id"]),
+            "platform": call["platform"],
+            "request_params": call["request_params"],
+            "success": call["success"],
+            "http_status": call.get("http_status"),
+            "error": call.get("error"),
+            "duration_ms": call.get("duration_ms", 0),
+            "next_cursor": call.get("next_cursor"),
+            "response_gcs_uri": call.get("response_gcs_uri"),
+            "response_meta": call.get("response_meta", {}),
+        })
+
+    await conn.execute(
+        text("""
+            INSERT INTO platform_calls (
+                id, search_id, platform, request_params, success,
+                http_status, error, duration_ms, next_cursor,
+                response_gcs_uri, response_meta
+            )
+            SELECT 
+                id, search_id, platform, request_params, success,
+                http_status, error, duration_ms, next_cursor,
+                response_gcs_uri, response_meta
+            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                id uuid, search_id uuid, platform text, request_params jsonb, success boolean,
+                http_status int, error text, duration_ms int, next_cursor jsonb,
+                response_gcs_uri text, response_meta jsonb
+            )
+        """),
+        {"data": json.dumps(prepared_calls)}
+    )
+
+
 async def upsert_content_item(
     conn: AsyncConnection,
     item: NormalizedItem,
@@ -160,6 +206,77 @@ async def upsert_content_item(
     )
     row = result.fetchone()
     return row[0], row[1]
+
+
+async def upsert_content_items_batch(
+    conn: AsyncConnection,
+    items: List[NormalizedItem],
+) -> dict:
+    """
+    Batch upsert content items.
+    Returns a dict mapping (platform, external_id) -> (content_item_id, was_inserted).
+    """
+    if not items:
+        return {}
+
+    # Deduplicate items by (platform, external_id) to avoid SQL errors
+    # Last one wins
+    unique_items = {}
+    for item in items:
+        unique_items[(item.platform, item.external_id)] = item
+    
+    item_list = list(unique_items.values())
+    prepared_items = []
+    
+    for item in item_list:
+        prepared_items.append({
+            "platform": item.platform,
+            "external_id": item.external_id,
+            "content_type": item.content_type,
+            "canonical_url": item.canonical_url,
+            "title": item.title,
+            "primary_text": item.primary_text,
+            "published_at": item.published_at.isoformat() if item.published_at else None,
+            "creator_handle": item.creator_handle,
+            "metrics": json.dumps(item.metrics),
+            "payload": json.dumps(item.payload),
+        })
+
+    result = await conn.execute(
+        text("""
+            INSERT INTO content_items (
+                platform, external_id, content_type, canonical_url,
+                title, primary_text, published_at, creator_handle,
+                metrics, payload
+            )
+            SELECT 
+                platform, external_id, content_type, canonical_url,
+                title, primary_text, 
+                CAST(published_at AS TIMESTAMP WITH TIME ZONE), 
+                creator_handle,
+                metrics::jsonb, payload::jsonb
+            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                platform text, external_id text, content_type text, canonical_url text,
+                title text, primary_text text, published_at text, creator_handle text,
+                metrics text, payload text
+            )
+            ON CONFLICT (platform, external_id) DO UPDATE SET
+                metrics = EXCLUDED.metrics,
+                updated_at = now(),
+                title = COALESCE(content_items.title, EXCLUDED.title),
+                primary_text = COALESCE(content_items.primary_text, EXCLUDED.primary_text),
+                canonical_url = COALESCE(content_items.canonical_url, EXCLUDED.canonical_url),
+                published_at = COALESCE(content_items.published_at, EXCLUDED.published_at)
+            RETURNING id, platform, external_id, (xmax = 0) AS inserted
+        """),
+        {"data": json.dumps(prepared_items)}
+    )
+    
+    mapping = {}
+    for row in result.fetchall():
+        mapping[(row[1], row[2])] = (row[0], row[3])
+    
+    return mapping
 
 
 async def insert_search_result(
@@ -213,6 +330,61 @@ async def insert_media_asset(
         }
     )
     return asset_id
+
+
+async def insert_search_results_batch(
+    conn: AsyncConnection,
+    results: List[dict],
+) -> None:
+    """Batch insert search results."""
+    if not results:
+        return
+
+    await conn.execute(
+        text("""
+            INSERT INTO search_results (search_id, content_item_id, platform, rank)
+            SELECT search_id, content_item_id, platform, rank
+            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                search_id uuid, content_item_id uuid, platform text, rank int
+            )
+            ON CONFLICT (search_id, content_item_id) DO NOTHING
+        """),
+        {"data": json.dumps(results, default=str)}
+    )
+
+
+async def insert_media_assets_batch(
+    conn: AsyncConnection,
+    assets: List[dict],
+) -> None:
+    """Batch insert media assets."""
+    if not assets:
+        return
+
+    prepared_assets = []
+    for asset in assets:
+        prepared_assets.append({
+            "id": str(asset["id"]),
+            "content_item_id": str(asset["content_item_id"]),
+            "asset_type": asset["asset_type"],
+            "source_url": asset["source_url"],
+            "source_url_list": json.dumps(asset.get("source_url_list")) if asset.get("source_url_list") else None,
+        })
+
+    await conn.execute(
+        text("""
+            INSERT INTO media_assets (
+                id, content_item_id, asset_type, source_url, source_url_list, status
+            )
+            SELECT 
+                id, content_item_id, asset_type, source_url, source_url_list::jsonb, 'pending'
+            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                id uuid, content_item_id uuid, asset_type text, source_url text, source_url_list text
+            )
+            ON CONFLICT (id) DO NOTHING
+        """),
+        {"data": json.dumps(prepared_assets)}
+    )
 
 
 from app.core import logger
@@ -529,4 +701,3 @@ async def get_full_search_detail(conn: AsyncConnection, search_id: UUID) -> dict
         return None
         
     return dict(row._mapping)
-

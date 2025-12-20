@@ -12,11 +12,13 @@ from app.schemas.boards import (
 )
 from app.api.v1.analysis import run_gemini_analysis
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
+from app.services.cdn_signer import generate_signed_url
 
 router = APIRouter()
 
 @router.get("/", response_model=List[BoardResponse])
 async def list_boards(
+    check_item_id: Optional[UUID] = Query(None),
     user: dict = Depends(get_current_user),
 ):
     """List all boards for the current user."""
@@ -27,7 +29,7 @@ async def list_boards(
     async with get_db_connection() as conn:
         user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
-        return await queries.get_user_boards(conn, user_uuid)
+        return await queries.get_user_boards(conn, user_uuid, check_content_item_id=check_item_id)
 
 
 @router.post("/", response_model=BoardResponse, status_code=status.HTTP_201_CREATED)
@@ -128,7 +130,15 @@ async def get_board_items(
         if not board:
             raise HTTPException(status_code=404, detail="Board not found")
             
-        return await queries.get_board_items(conn, board_id)
+        items = await queries.get_board_items(conn, board_id)
+        
+        # Sign URLs for stored assets
+        for item in items:
+            for asset in item.get("assets", []):
+                if asset.get("status") in ("stored", "downloaded") and asset.get("gcs_uri"):
+                    asset["source_url"] = generate_signed_url(asset["gcs_uri"])
+                    
+        return items
 
 
 @router.get("/{board_id}/items/summary")
@@ -290,4 +300,12 @@ async def search_in_board(
         if not board:
             raise HTTPException(status_code=404, detail="Board not found")
             
-        return await queries.search_in_board(conn, board_id, q)
+        items = await queries.search_in_board(conn, board_id, q)
+        
+        # Sign URLs for stored assets
+        for item in items:
+            for asset in item.get("assets", []):
+                if asset.get("status") in ("stored", "downloaded") and asset.get("gcs_uri"):
+                    asset["source_url"] = generate_signed_url(asset["gcs_uri"])
+                    
+        return items

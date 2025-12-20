@@ -169,39 +169,36 @@ async def search_worker(
                 event_data = transform_result_to_stream_item(result)
                 await r.xadd(stream_key, {"data": json.dumps(event_data, default=str)})
         
-        # ========== IMMEDIATELY AFTER PLATFORM CALLS ==========
-        # Push done event - frontend stops loading here
-        await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
-        # Expire stream 60 seconds from now
-        await r.expire(stream_key, 300)
-        await r.close()
-        
         # ========== DB WORK (happens after frontend is done) ==========
         assets_to_download = []
         upload_tasks = []  # For fire-and-forget GCS uploads
         
         async with get_db_connection() as conn:
             await set_rls_user(conn, user_uuid)
+            pass
             
+            # Prepare batch data
+            platform_calls_batch = []
+            all_content_items = []
+            items_with_rank = []  # List of (item, rank)
             rank = 0
             
             for result in collected_results:
                 slug = result.platform
                 
-                # Insert platform call record (without GCS URI for now)
-                await queries.insert_platform_call(
-                    conn=conn,
-                    search_id=search_id,
-                    platform=slug,
-                    request_params=result.request_params,
-                    success=result.success,
-                    http_status=result.http_status,
-                    error=result.error,
-                    duration_ms=result.duration_ms,
-                    next_cursor=result.parsed.next_cursor if result.parsed else None,
-                    response_gcs_uri=None,  # Will be updated by background task if needed
-                    response_meta=result.parsed.response_meta if result.parsed else {},
-                )
+                # Collect platform call
+                platform_calls_batch.append({
+                    "search_id": search_id,
+                    "platform": slug,
+                    "request_params": result.request_params,
+                    "success": result.success,
+                    "http_status": result.http_status,
+                    "error": result.error,
+                    "duration_ms": result.duration_ms,
+                    "next_cursor": result.parsed.next_cursor if result.parsed else None,
+                    "response_gcs_uri": None,
+                    "response_meta": result.parsed.response_meta if result.parsed else {},
+                })
                 
                 # Queue GCS upload as fire-and-forget
                 if result.success and result.parsed:
@@ -211,38 +208,76 @@ async def search_worker(
                         raw_json=result.parsed.raw_response,
                     ))
                 
-                # Process items if successful
+                # Collect items
                 if result.success and result.parsed:
                     for item in result.parsed.items:
                         rank += 1
-                        
-                        content_id, was_inserted = await queries.upsert_content_item(conn, item)
-                        
-                        await queries.insert_search_result(
-                            conn=conn,
-                            search_id=search_id,
-                            content_item_id=content_id,
-                            platform=item.platform,
-                            rank=rank,
-                        )
-                        
-                        if was_inserted:
-                            for media_url in item.media_urls:
-                                asset_id = await queries.insert_media_asset(
-                                    conn=conn,
-                                    content_item_id=content_id,
-                                    media_url=media_url,
-                                )
-                                assets_to_download.append({
-                                    "id": asset_id,
-                                    "platform": item.platform,
-                                    "external_id": item.external_id,
-                                })
+                        all_content_items.append(item)
+                        items_with_rank.append((item, rank))
+            
+            # Batch Operations
+            
+            # 1. Insert platform calls
+            if platform_calls_batch:
+                await queries.insert_platform_calls_batch(conn, platform_calls_batch)
+            
+            # 2. Upsert content items
+            # Returns map: (platform, external_id) -> (content_item_id, was_inserted)
+            item_id_map = await queries.upsert_content_items_batch(conn, all_content_items)
+            
+            # 3. Prepare search results and media assets
+            search_results_batch = []
+            media_assets_batch = []
+            
+            for item, item_rank in items_with_rank:
+                key = (item.platform, item.external_id)
+                if key not in item_id_map:
+                    continue
+                    
+                content_item_id, was_inserted = item_id_map[key]
+                
+                search_results_batch.append({
+                    "search_id": search_id,
+                    "content_item_id": content_item_id,
+                    "platform": item.platform,
+                    "rank": item_rank,
+                })
+                
+                # Only insert assets if item was newly inserted
+                if was_inserted:
+                    for media_url in item.media_urls:
+                        asset_id = uuid.uuid4()
+                        media_assets_batch.append({
+                            "id": asset_id,
+                            "content_item_id": content_item_id,
+                            "asset_type": media_url.asset_type.value,
+                            "source_url": media_url.source_url,
+                            "source_url_list": media_url.source_url_list,
+                        })
+                        assets_to_download.append({
+                            "id": str(asset_id),
+                            "platform": item.platform,
+                            "external_id": item.external_id,
+                        })
+
+            # 4. Insert search results and media assets
+            if search_results_batch:
+                await queries.insert_search_results_batch(conn, search_results_batch)
+            
+            if media_assets_batch:
+                await queries.insert_media_assets_batch(conn, media_assets_batch)
             
             # Update status to completed
             await queries.update_search_status(conn, search_id, "completed")
             await conn.commit()
-            logger.info(f"Saved search {search_id} with {rank} results")
+            logger.info(f"Saved search {search_id} with {rank} results (batch mode)")
+
+        # ========== FINISH STREAMING ==========
+        # Push done event - frontend stops loading here
+        await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
+        # Expire stream 5 minutes from now
+        await r.expire(stream_key, 300)
+        await r.close()
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         # GCS uploads (don't await)

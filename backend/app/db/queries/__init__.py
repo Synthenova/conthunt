@@ -25,6 +25,10 @@ from app.db.queries.search import (
     get_media_asset_with_access_check,
     get_full_search_detail,
     update_search_status,
+    insert_platform_calls_batch,
+    upsert_content_items_batch,
+    insert_search_results_batch,
+    insert_media_assets_batch,
 )
 
 # Board queries
@@ -97,6 +101,10 @@ __all__ = [
     "get_search_results_with_content",
     "get_media_asset_with_access_check",
     "update_search_status",
+    "insert_platform_calls_batch",
+    "upsert_content_items_batch",
+    "insert_search_results_batch",
+    "insert_media_assets_batch",
     # Boards
     "create_board",
     "get_user_boards",

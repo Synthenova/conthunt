@@ -21,6 +21,7 @@ class SendMessageRequest(BaseModel):
     board_id: Optional[str] = None  # Current board context for agent 
 
 class Message(BaseModel):
+    id: Optional[str] = None
     type: str
     content: str
     additional_kwargs: Dict[str, Any] = {}

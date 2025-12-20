@@ -29,13 +29,13 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
 /**
  * Hook for all board-related operations.
  */
-export function useBoards() {
+export function useBoards({ checkItemId }: { checkItemId?: string } = {}) {
     const queryClient = useQueryClient();
 
     // GET /v1/boards - List all boards
     const boardsQuery = useQuery<Board[]>({
-        queryKey: ["boards"],
-        queryFn: () => fetchWithAuth(`${API_BASE}/boards`),
+        queryKey: ["boards", checkItemId],
+        queryFn: () => fetchWithAuth(`${API_BASE}/boards${checkItemId ? `?check_item_id=${checkItemId}` : ''}`),
     });
 
     // GET /v1/boards/:id - Get single board

@@ -7,7 +7,10 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Sparkles, Play, Link as LinkIcon, Save, StickyNote, Plus } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Check, Loader2, Sparkles, Play, Link as LinkIcon, Save, StickyNote, Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { useBoards } from "@/hooks/useBoards";
 import { cn } from "@/lib/utils";
 
 // Fun loading messages for AI analysis
@@ -37,6 +40,54 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
     const [error, setError] = useState<string | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
+
+    // Board Management
+    const [isBoardPopoverOpen, setIsBoardPopoverOpen] = useState(false);
+    const [newBoardName, setNewBoardName] = useState("");
+    const [showNewBoardInput, setShowNewBoardInput] = useState(false);
+
+    const {
+        boards,
+        isLoadingBoards,
+        createBoard,
+        addToBoard,
+        isAddingToBoard,
+        isCreatingBoard,
+        refetchBoards
+    } = useBoards({ checkItemId: item?.id });
+
+    const handleCreateBoard = async () => {
+        if (!newBoardName.trim()) return;
+        try {
+            const newBoard = await createBoard({ name: newBoardName.trim() });
+            // Add current item to the new board immediately
+            if (item?.id) {
+                await addToBoard({ boardId: newBoard.id, contentItemIds: [item.id] });
+                // Refetch to update status
+                refetchBoards();
+            }
+            setNewBoardName("");
+            setShowNewBoardInput(false);
+        } catch (error) {
+            console.error("Failed to create board:", error);
+        }
+    };
+
+    const handleToggleBoard = async (board: any) => {
+        if (!item?.id) return;
+
+        // If already has item, maybe we want to allow removing? 
+        // For now, prompt said "dim it out", so we assume add-only or just disable.
+        // But let's support adding if not present.
+        if (board.has_item) return;
+
+        try {
+            await addToBoard({ boardId: board.id, contentItemIds: [item.id] });
+            refetchBoards();
+        } catch (error) {
+            console.error("Failed to add to board:", error);
+        }
+    };
 
     // Rotate loading messages
     useEffect(() => {
@@ -212,42 +263,139 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
                             </h2>
 
                             <div className="flex flex-wrap gap-2 mb-4">
-                                {['#skincare', '#routine', '#glowup', '#beauty'].map(tag => (
-                                    <Badge key={tag} variant="secondary" className="bg-zinc-900 text-zinc-400 hover:bg-zinc-800 border-none font-mono text-xs">
-                                        {tag}
-                                    </Badge>
-                                ))}
+                                {/* Real hashtags from analysis will appear here if available, otherwise we show nothing or maybe platform badge is enough */}
                             </div>
                         </div>
 
                         {/* Metrics Panel */}
                         <div className="grid grid-cols-4 gap-4 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/50">
                             <div className="text-center">
-                                <div className="text-lg font-bold text-white mb-1">{formatMetric(item.views || 0)}</div>
+                                <div className="text-lg font-bold text-white mb-1">{formatMetric(item.view_count || item.views || 0)}</div>
                                 <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono">Views</div>
                             </div>
                             <div className="text-center">
-                                <div className="text-lg font-bold text-white mb-1">{formatMetric(item.likes || 0)}</div>
+                                <div className="text-lg font-bold text-white mb-1">{formatMetric(item.like_count || item.likes || 0)}</div>
                                 <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono">Likes</div>
                             </div>
                             <div className="text-center">
-                                <div className="text-lg font-bold text-white mb-1">{formatMetric(item.comments || 0)}</div>
+                                <div className="text-lg font-bold text-white mb-1">{formatMetric(item.comment_count || item.comments || 0)}</div>
                                 <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono">Comments</div>
                             </div>
                             <div className="text-center">
-                                <div className="text-lg font-bold text-white mb-1">{formatMetric(item.engagement_rate || 0)}%</div>
+                                <div className="text-lg font-bold text-white mb-1">
+                                    {(() => {
+                                        const views = Number(item.view_count || item.views || 0);
+                                        const likes = Number(item.like_count || item.likes || 0);
+                                        const comments = Number(item.comment_count || item.comments || 0);
+                                        const shares = Number(item.share_count || item.shares || 0); // Include shares if available
+
+                                        if (views === 0) return "0%";
+                                        const rate = ((likes + comments + shares) / views) * 100;
+                                        return rate.toFixed(2) + "%";
+                                    })()}
+                                </div>
                                 <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono">Eng.</div>
                             </div>
                         </div>
 
                         {/* Actions */}
                         <div className="space-y-3">
-                            <Button className="w-full bg-[#1E1E1E] hover:bg-[#2A2A2A] text-white border border-[#333] h-12 text-base font-medium transition-all">
-                                <Save className="mr-2 h-4 w-4 text-zinc-400" />
-                                Save to Board
-                            </Button>
+                            <Popover open={isBoardPopoverOpen} onOpenChange={setIsBoardPopoverOpen}>
+                                <PopoverTrigger asChild>
+                                    <Button className="w-full bg-[#1E1E1E] hover:bg-[#2A2A2A] text-white border border-[#333] h-12 text-base font-medium transition-all">
+                                        <Save className="mr-2 h-4 w-4 text-zinc-400" />
+                                        Save to Board
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-72 p-0 bg-zinc-900/95 backdrop-blur-xl border-white/10" align="center" side="top">
+                                    <div className="p-3 border-b border-white/10">
+                                        <h4 className="font-semibold text-sm text-white">Save to Board</h4>
+                                    </div>
+                                    <div className="max-h-60 overflow-y-auto p-2">
+                                        {isLoadingBoards ? (
+                                            <div className="flex items-center justify-center py-8">
+                                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                            </div>
+                                        ) : boards.length === 0 ? (
+                                            <div className="text-center py-6 text-sm text-muted-foreground">
+                                                No boards yet
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-1">
+                                                {boards.map((board) => (
+                                                    <button
+                                                        key={board.id}
+                                                        onClick={() => handleToggleBoard(board)}
+                                                        disabled={board.has_item || isAddingToBoard}
+                                                        className={`
+                                                            w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors
+                                                            ${board.has_item
+                                                                ? 'opacity-50 cursor-not-allowed bg-white/5'
+                                                                : 'hover:bg-white/10 text-white'
+                                                            }
+                                                        `}
+                                                    >
+                                                        <div className={`
+                                                            h-5 w-5 rounded border-2 flex items-center justify-center
+                                                            ${board.has_item
+                                                                ? 'bg-primary border-primary'
+                                                                : 'border-white/30'
+                                                            }
+                                                        `}>
+                                                            {board.has_item && (
+                                                                <Check className="h-3 w-3 text-white" />
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="font-medium truncate text-white">{board.name}</div>
+                                                            <div className="text-xs text-muted-foreground">
+                                                                {board.item_count} items
+                                                            </div>
+                                                        </div>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                    {/* Create New Board */}
+                                    <div className="p-2 border-t border-white/10">
+                                        {showNewBoardInput ? (
+                                            <div className="flex gap-2">
+                                                <Input
+                                                    placeholder="Board name..."
+                                                    value={newBoardName}
+                                                    onChange={(e) => setNewBoardName(e.target.value)}
+                                                    onKeyDown={(e) => e.key === 'Enter' && handleCreateBoard()}
+                                                    className="h-9 bg-white/5 border-white/10 text-white"
+                                                    autoFocus
+                                                />
+                                                <Button
+                                                    size="sm"
+                                                    onClick={handleCreateBoard}
+                                                    disabled={!newBoardName.trim() || isCreatingBoard}
+                                                    className="h-9"
+                                                >
+                                                    {isCreatingBoard ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <Check className="h-4 w-4" />
+                                                    )}
+                                                </Button>
+                                            </div>
+                                        ) : (
+                                            <button
+                                                onClick={() => setShowNewBoardInput(true)}
+                                                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-primary hover:bg-primary/10 transition-colors"
+                                            >
+                                                <Plus className="h-4 w-4" />
+                                                Create new board
+                                            </button>
+                                        )}
+                                    </div>
+                                </PopoverContent>
+                            </Popover>
 
-                            <div className="grid grid-cols-2 gap-3">
+                            {/* <div className="grid grid-cols-2 gap-3">
                                 <Button
                                     variant="outline"
                                     className="border-dashed border-zinc-700 hover:bg-zinc-900/50 hover:border-zinc-600 text-zinc-400 hover:text-white h-10"
@@ -262,7 +410,7 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
                                 <Button variant="outline" className="border-dashed border-zinc-700 hover:bg-zinc-900/50 hover:border-zinc-600 text-zinc-400 hover:text-white h-10">
                                     <StickyNote className="mr-2 h-3.5 w-3.5" /> Add note
                                 </Button>
-                            </div>
+                            </div> */}
                         </div>
 
                         {/* AI Analysis Section */}

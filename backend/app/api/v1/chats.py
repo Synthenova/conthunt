@@ -65,8 +65,8 @@ async def stream_generator_to_redis(
         ):
             # logger.info(f"Stream Event: {str(event)[:500]}")
             # Log already added previously
-            
-            # Unwrap the SDK event wrapper
+            if event.event == "events" and event.data:
+                print(f"[DEBUG] Stream Event Data: {json.dumps(event.data, default=str)}") # Added log for inspection
             # The SDK returns StreamPart(event='events', data={'event': 'on_chat_model_stream', ...})
             if event.event == "events" and event.data:
                 inner_event = event.data
@@ -75,13 +75,33 @@ async def stream_generator_to_redis(
                 
                 payload = None
                 
-                if ev_type == "on_chat_model_stream":
+                if ev_type == "on_chain_start":
+                    # Try to capture the Human Message ID from the input
+                    try:
+                        inp = data.get("input", {})
+                        if isinstance(inp, dict):
+                            msgs = inp.get("messages", [])
+                            if msgs and isinstance(msgs, list):
+                                first_msg = msgs[0]
+                                if isinstance(first_msg, dict) and first_msg.get("type") == "human":
+                                    human_id = first_msg.get("id")
+                                    if human_id:
+                                        payload = {
+                                            "type": "user_message_id",
+                                            "id": human_id
+                                        }
+                    except Exception as e:
+                        logger.warning(f"Error extracting human message ID: {e}")
+
+                elif ev_type == "on_chat_model_stream":
                     chunk = data.get("chunk", {})
                     content = chunk.get("content", "")
+                    msg_id = chunk.get("id")
                     if content:
                         payload = {
                             "type": "content_delta",
-                            "content": content
+                            "content": content,
+                            "id": msg_id
                         }
                         
                 elif ev_type == "on_tool_start":
@@ -340,6 +360,7 @@ async def get_chat_messages(
                 m_type = msg.get("type")
                 if m_type in ["human", "ai"]:
                    messages.append(Message(
+                       id=msg.get("id"),
                        type=m_type,
                        content=msg.get("content", ""),
                        additional_kwargs=msg.get("additional_kwargs", {})

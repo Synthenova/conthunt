@@ -15,6 +15,7 @@ class BoardResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     item_count: Optional[int] = 0
+    has_item: bool = False
     # Optional: We could add preview images here later
 
     model_config = ConfigDict(from_attributes=True)
