@@ -44,9 +44,11 @@ async def create_board(
         await set_rls_user(conn, user_uuid)
         
         board_id = await queries.create_board(conn, user_uuid, board_in.name)
+        
+        board = await queries.get_board_by_id(conn, board_id)
         await conn.commit()
         
-        return await queries.get_board_by_id(conn, board_id)
+        return board
 
 
 @router.get("/search", response_model=List[BoardResponse])

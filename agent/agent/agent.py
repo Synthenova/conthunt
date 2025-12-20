@@ -13,19 +13,15 @@ load_dotenv()
 
 # Define AgentState
 class AgentState(MessagesState):
-    auth_token: str
-
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
-os.environ["LANGCHAIN_PROJECT"] = "conthunt-agent"
+    pass
 
 # Define tools
 tools = [get_user_boards, get_board_items, search_12labs, get_video_analysis]
 
 # Define the model
 llm = ChatOpenAI(
-    model="gpt-4o", # Upgrade to 4o for better tool use if possible, or keep gemini
-    temperature=0, 
+    model="google/gemini-2.5-flash", 
+    temperature=0.5, 
     api_key=os.getenv("OPENAI_API_KEY")
 )
 model = llm.bind_tools(tools)

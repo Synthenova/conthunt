@@ -5,5 +5,15 @@
     "graphs": {
         "agent": "./agent/agent.py:graph"
     },
-    "env": ".env"
+    "env": ".env",
+    "http": {
+        "configurable_headers": {
+            "includes": [
+                "x-auth-token"
+            ],
+            "excludes": [
+                "authorization"
+            ]
+        }
+    }
 }

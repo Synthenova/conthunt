@@ -59,7 +59,7 @@ async def stream_generator_to_redis(
             input=inputs,
             stream_mode="events",
         ):
-            logger.info(f"Stream Event: {str(event)[:500]}")
+            # logger.info(f"Stream Event: {str(event)[:500]}")
             # Log already added previously
             
             # Unwrap the SDK event wrapper

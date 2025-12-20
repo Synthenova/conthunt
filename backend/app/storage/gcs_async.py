@@ -80,46 +80,4 @@ class AsyncGCSClient:
             content_type="application/json",
         )
 
-    def generate_signed_url(
-        self,
-        gcs_uri: str,
-        expiration_seconds: int = 3600,
-    ) -> str:
-        """
-        Generate a signed URL for the given gs:// URI.
-        
-        Args:
-            gcs_uri: Full gs:// URI (e.g., gs://bucket/path/to/file)
-            expiration_seconds: URL validity in seconds (default 1 hour)
-            
-        Returns:
-            Signed URL string
-        """
-        # Lazy import to avoid sync client overhead on module load
-        from google.cloud import storage
-        from datetime import timedelta
-        
-        # Parse gs://bucket/key format
-        if not gcs_uri.startswith("gs://"):
-            raise ValueError(f"Invalid GCS URI: {gcs_uri}")
-        
-        parts = gcs_uri[5:].split("/", 1)
-        if len(parts) != 2:
-            raise ValueError(f"Invalid GCS URI format: {gcs_uri}")
-        
-        bucket_name, key = parts
-        
-        # We instantiate a client just for signing. 
-        # This uses ADC but doesn't necessarily block if we don't make requests.
-        client = storage.Client(project=self.settings.GCP_PROJECT)
-        
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(key)
-        
-        url = blob.generate_signed_url(
-            version="v4",
-            expiration=timedelta(seconds=expiration_seconds),
-            method="GET",
-        )
-        return url# Singleton instance
 async_gcs_client = AsyncGCSClient()
