@@ -15,7 +15,7 @@ from app.db.queries import (
 from app.services.twelvelabs_client import (
     get_twelvelabs_client,
 )
-from app.storage.gcs import gcs_client
+from app.storage.gcs_async import async_gcs_client
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ async def _archive_twelvelabs_response(
     key = f"twelvelabs/{operation}/{now.year}/{now.month:02d}/{now.day:02d}/{content_item_id}.json.gz"
     
     try:
-        uri = gcs_client.upload_json_gz(
+        uri = await async_gcs_client.upload_json_gz(
             bucket_name=settings.GCS_BUCKET_RAW,
             key=key,
             data=raw_response,

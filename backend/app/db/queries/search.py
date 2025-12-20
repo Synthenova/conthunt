@@ -1,6 +1,8 @@
 """Database query functions for search operations."""
 import json
 import hashlib
+import time
+import logging
 from typing import List, Tuple
 from uuid import UUID, uuid4
 
@@ -199,11 +201,17 @@ async def insert_media_asset(
     return asset_id
 
 
+from app.core import logger
+
 async def get_search_by_id(
     conn: AsyncConnection,
     search_id: UUID,
 ) -> dict | None:
     """Get search by ID (RLS will filter by user)."""
+    start_time = time.time()
+    # logger = logging.getLogger("app.db.queries.search") # or generic logger
+    logger.info(f"get_search_by_id: start query for {search_id}")
+    
     result = await conn.execute(
         text("""
             SELECT id, user_id, query, inputs, search_hash, mode, created_at
@@ -213,8 +221,13 @@ async def get_search_by_id(
         {"id": search_id}
     )
     row = result.fetchone()
+    
+    duration = (time.time() - start_time) * 1000
     if not row:
+        logger.warning(f"get_search_by_id: not found or RLS blocked. search_id={search_id} duration={duration:.2f}ms")
         return None
+        
+    logger.info(f"get_search_by_id: found search {search_id} duration={duration:.2f}ms")
     return {
         "id": row[0],
         "user_id": row[1],
@@ -305,33 +318,45 @@ async def get_search_results_with_content(
     )
     rows = result.fetchall()
     
+    if not rows:
+        return []
+        
+    # Collect content_item_ids to fetch assets in bulk
+    content_item_ids = [row[1] for row in rows]
+    
+    # Bulk fetch assets
+    # structure: SELECT ma.* FROM media_assets ma WHERE content_item_id IN (...)
+    # OR join with search_results for safety if list is huge, 
+    # but IN clause with a list is fine for reasonable page sizes (e.g. 100).
+    # Since we paginate searches typically, this is safe.
+    assets_result = await conn.execute(
+        text("""
+            SELECT content_item_id, id, asset_type, source_url, gcs_uri, status, sha256, mime_type, bytes
+            FROM media_assets
+            WHERE content_item_id = ANY(:ids)
+        """),
+        {"ids": content_item_ids}
+    )
+    all_assets = assets_result.fetchall()
+    
+    # Group assets by content_item_id
+    from collections import defaultdict
+    assets_map = defaultdict(list)
+    for a in all_assets:
+        assets_map[a[0]].append({
+            "id": a[1],
+            "asset_type": a[2],
+            "source_url": a[3],
+            "gcs_uri": a[4],
+            "status": a[5],
+            "sha256": a[6],
+            "mime_type": a[7],
+            "bytes": a[8],
+        })
+    
     items = []
     for row in rows:
         content_item_id = row[1]
-        
-        # Get media assets for this content item
-        assets_result = await conn.execute(
-            text("""
-                SELECT id, asset_type, source_url, gcs_uri, status, sha256, mime_type, bytes
-                FROM media_assets
-                WHERE content_item_id = :content_item_id
-            """),
-            {"content_item_id": content_item_id}
-        )
-        assets = [
-            {
-                "id": a[0],
-                "asset_type": a[1],
-                "source_url": a[2],
-                "gcs_uri": a[3],
-                "status": a[4],
-                "sha256": a[5],
-                "mime_type": a[6],
-                "bytes": a[7],
-            }
-            for a in assets_result.fetchall()
-        ]
-        
         items.append({
             "rank": row[0],
             "content_item": {
@@ -347,7 +372,7 @@ async def get_search_results_with_content(
                 "metrics": row[10],
                 "payload": row[11],
             },
-            "assets": assets,
+            "assets": assets_map.get(content_item_id, []),
         })
     
     return items
@@ -384,3 +409,4 @@ async def get_media_asset_with_access_check(
         "asset_type": row[3],
         "mime_type": row[4],
     }
+

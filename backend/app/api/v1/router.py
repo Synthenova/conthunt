@@ -9,7 +9,7 @@ router.include_router(history.router, tags=["history"])
 router.include_router(media.router, prefix="/media", tags=["media"])
 router.include_router(boards.router, prefix="/boards", tags=["boards"])
 router.include_router(twelvelabs.router, prefix="/twelvelabs", tags=["video-analysis"])
-router.include_router(analysis.router, prefix="/analysis", tags=["video-analysis"])
+router.include_router(analysis.router, tags=["video-analysis"])  # No prefix - endpoint is /v1/video-analysis/{id}
 router.include_router(billing_dodo.router, tags=["billing"])
 router.include_router(webhooks.router, tags=["webhooks"])
 router.include_router(chats.router, prefix="/chats", tags=["chats"])

@@ -1,5 +1,6 @@
 """History API endpoints - GET /v1/searches."""
 from uuid import UUID
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -15,6 +16,7 @@ from app.schemas import (
     ContentItemDetail,
     AssetDetail,
 )
+from app.services.cdn_signer import generate_signed_url
 
 router = APIRouter()
 
@@ -67,29 +69,45 @@ async def get_search_detail(
     
     Includes platform calls, content items with payloads, and media assets.
     """
+    req_start = time.time()
+    logger.info(f"get_search_detail: request for search_id={search_id}")
+    
     firebase_uid = user.get("uid")
     if not firebase_uid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
+    logger.info(f"get_search_detail: start request processing")
+    
     async with get_db_connection() as conn:
+        t0 = time.time()
         # Get or create user
         user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        logger.info(f"get_search_detail: get_or_create_user took {(time.time()-t0)*1000:.2f}ms")
         
+        t0 = time.time()
         # Set RLS context
         await set_rls_user(conn, user_uuid)
+        logger.info(f"get_search_detail: set_rls_user took {(time.time()-t0)*1000:.2f}ms")
         
+        t0 = time.time()
         # Get search (RLS will filter)
         search = await queries.get_search_by_id(conn, search_id)
+        logger.info(f"get_search_detail: get_search_by_id took {(time.time()-t0)*1000:.2f}ms")
+        
         if not search:
             raise HTTPException(status_code=404, detail="Search not found")
         
+        t0 = time.time()
         # Get platform calls
         platform_calls = await queries.get_platform_calls_for_search(conn, search_id)
+        logger.info(f"get_search_detail: get_platform_calls took {(time.time()-t0)*1000:.2f}ms")
         
+        t0 = time.time()
         # Get results with content and assets
         results = await queries.get_search_results_with_content(conn, search_id)
+        logger.info(f"get_search_detail: get_search_results took {(time.time()-t0)*1000:.2f}ms")
     
-    return SearchDetailResponse(
+    response = SearchDetailResponse(
         id=search["id"],
         query=search["query"],
         inputs=search["inputs"],
@@ -130,7 +148,7 @@ async def get_search_detail(
                         asset_type=a["asset_type"],
                         status=a["status"],
                         source_url=(
-                            str(request.url_for("get_media_content", asset_id=a["id"]))
+                            generate_signed_url(a["gcs_uri"])
                             if a["status"] in ("stored", "downloaded") and a["gcs_uri"]
                             else a["source_url"]
                         ),
@@ -145,3 +163,7 @@ async def get_search_detail(
             for r in results
         ],
     )
+    
+    duration = (time.time() - req_start) * 1000
+    logger.info(f"get_search_detail: finished search_id={search_id} duration={duration:.2f}ms")
+    return response

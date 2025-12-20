@@ -13,6 +13,10 @@ from app.schemas.twelvelabs import (
 )
 from app.services.twelvelabs_client import get_twelvelabs_client
 
+from app.db.session import get_db_connection
+from app.db.queries.twelvelabs import get_twelvelabs_asset_by_content_item, get_user_twelvelabs_assets
+from app.db import get_or_create_user, set_rls_user
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["video-analysis"])
 
@@ -27,6 +31,7 @@ async def search_twelvelabs(
 ):
     """
     Search the TwelveLabs index for video clips matching the query.
+    Supports filtering by content_item_id to search within a specific video.
     """
     settings = get_settings()
     client = get_twelvelabs_client()
@@ -35,21 +40,37 @@ async def search_twelvelabs(
     if not index_id:
         raise HTTPException(status_code=500, detail="TwelveLabs Index ID not configured")
 
+    search_filter = request.filter or {}
+
+    # Filter by specific TwelveLabs asset ID if provided
+    # This comes directly from the frontend/client so no DB lookup needed
+    if request.twelvelabs_asset_id:
+        # Marengo 3.0 uses 'id' in filter for video IDs
+        search_filter["id"] = [request.twelvelabs_asset_id]
+    else:
+        # Default: Search all user's indexed assets across all boards
+        firebase_uid = _user.get("uid")
+        if not firebase_uid:
+             raise HTTPException(status_code=401, detail="Invalid user")
+        
+        async with get_db_connection() as conn:
+            user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+            await set_rls_user(conn, user_uuid)
+            
+            assets = await get_user_twelvelabs_assets(conn)
+            
+            if not assets:
+                # Return empty response if no videos indexed
+                return TwelveLabsSearchResponse(data=[])
+            
+            search_filter["id"] = assets
+        
     try:
-        # Use the SDK to search
-        # Note: The SDK method signature might vary, verifying based on typical SDK usage
-        # Assuming client.search.query or similar. 
-        # Using the low-level proxy or specific method from our client wrapper if available.
-        # If get_twelvelabs_client returns the raw SDK client:
-        
-        # Adjust based on SDK version 1.1.0
-        # Check if we have a wrapper or raw client. 
-        # backend/app/services/twelvelabs_client.py would tell us, but for now assuming standard SDK usage
-        
         results = client.search.query(
             index_id=index_id,
             query_text=request.query,
-            options=request.search_options
+            options=request.search_options,
+            filter=search_filter if search_filter else None
         )
         
         # Map SDK results to schema

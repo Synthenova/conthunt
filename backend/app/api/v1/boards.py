@@ -1,7 +1,7 @@
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 from app.auth import get_current_user
 from app.db import get_db_connection, get_or_create_user, set_rls_user, queries
@@ -9,6 +9,8 @@ from app.schemas.boards import (
     BoardCreate, BoardResponse,
     BoardItemCreate, BoardItemResponse
 )
+from app.api.v1.analysis import run_gemini_analysis
+from app.services.twelvelabs_processing import process_twelvelabs_indexing
 
 router = APIRouter()
 
@@ -130,9 +132,10 @@ async def get_board_items(
 async def add_item_to_board(
     board_id: UUID,
     item_in: BoardItemCreate,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
-    """Add a content item to a board."""
+    """Add a content item to a board. Triggers Gemini analysis in background."""
     firebase_uid = user.get("uid")
     if not firebase_uid:
         raise HTTPException(status_code=401, detail="Invalid user")
@@ -146,8 +149,14 @@ async def add_item_to_board(
             await conn.commit()
         except Exception:
              raise HTTPException(status_code=400, detail="Could not add item (check board/item id)")
+    
+    # Trigger Gemini analysis (non-blocking, internally uses background_tasks)
+    await run_gemini_analysis(item_in.content_item_id, background_tasks)
+
+    # Trigger TwelveLabs Indexing
+    background_tasks.add_task(process_twelvelabs_indexing, item_in.content_item_id)
              
-        return {"status": "added"}
+    return {"status": "added"}
 
 
 @router.delete("/{board_id}/items/{content_item_id}", status_code=status.HTTP_204_NO_CONTENT)

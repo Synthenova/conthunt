@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { auth } from "@/lib/firebaseClient";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,20 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Sparkles, Play, Link as LinkIcon, Save, StickyNote, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// Fun loading messages for AI analysis
+const LOADING_MESSAGES = [
+    "Watching your video with AI eyes...",
+    "Extracting the good stuff...",
+    "Finding the hooks and CTAs...",
+    "Scanning for on-screen text...",
+    "Analyzing engagement patterns...",
+    "Decoding viral potential...",
+    "Almost there, thinking hard...",
+    "Crunching the content...",
+    "AI brain at work...",
+    "Uncovering hidden gems...",
+];
+
 interface ContentDrawerProps {
     isOpen: boolean;
     onClose: () => void;
@@ -18,63 +32,99 @@ interface ContentDrawerProps {
 
 export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
     const [analyzing, setAnalyzing] = useState(false);
+    const [polling, setPolling] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<any>(null);
     const [error, setError] = useState<string | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
 
-    // Reset analysis state when item changes
+    // Rotate loading messages
+    useEffect(() => {
+        if (!analyzing && !polling) return;
+
+        const interval = setInterval(() => {
+            setLoadingMessage(LOADING_MESSAGES[Math.floor(Math.random() * LOADING_MESSAGES.length)]);
+        }, 2500);
+
+        return () => clearInterval(interval);
+    }, [analyzing, polling]);
+
+    // Fetch analysis status (used for initial call and polling)
+    const fetchAnalysis = useCallback(async () => {
+        if (!item) return null;
+
+        const user = auth.currentUser;
+        if (!user) return null;
+
+        const token = await user.getIdToken();
+        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+
+        const response = await fetch(`${apiUrl}/v1/video-analysis/${item.id}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(response.status === 401 ? "Unauthorized" : "Analysis failed");
+        }
+
+        return await response.json();
+    }, [item]);
+
+    // Polling effect - poll when status is 'processing'
+    useEffect(() => {
+        if (!polling || analysisResult?.status !== 'processing') {
+            setPolling(false);
+            return;
+        }
+
+        const pollInterval = setInterval(async () => {
+            try {
+                const data = await fetchAnalysis();
+                setAnalysisResult(data);
+
+                if (data?.status !== 'processing') {
+                    setPolling(false);
+                    clearInterval(pollInterval);
+                }
+            } catch (err) {
+                console.error("Polling error:", err);
+                // Don't stop polling on transient errors
+            }
+        }, 4000);  // Poll every 4 seconds
+
+        return () => clearInterval(pollInterval);
+    }, [polling, analysisResult?.status, fetchAnalysis]);
+
+    // Reset state when item changes
     useEffect(() => {
         if (isOpen && item) {
             setAnalysisResult(null);
             setError(null);
             setAnalyzing(false);
+            setPolling(false);
             setIsPlaying(false);
-
-            // If item already has analysis data, use it (future optimization)
         }
     }, [isOpen, item]);
 
     const handleAnalyze = async () => {
-        if (!item) return;
+        if (!item || analyzing || polling) return;  // Guard against duplicate calls
 
         setAnalyzing(true);
         setError(null);
+        setLoadingMessage(LOADING_MESSAGES[Math.floor(Math.random() * LOADING_MESSAGES.length)]);
 
         try {
-            const user = auth.currentUser;
-            if (!user) {
-                throw new Error("User not authenticated");
-            }
-            const token = await user.getIdToken();
-
-            // Updated API endpoint based on task documentation
-            const apiUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
-            const response = await fetch(`${apiUrl}/v1/video-analysis/${item.id}`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            if (!response.ok) {
-                if (response.status === 401) throw new Error("Unauthorized");
-                throw new Error('Analysis failed');
-            }
-
-            const data = await response.json();
-
-            // Since the API is async and returns status="processing" initially, 
-            // for the MVP we might just show "Processing" or handle the immediate response.
-            // If the backend returns cached result immediately, we can display it.
-            // For now, let's assume we get the result object or a status.
-
+            const data = await fetchAnalysis();
             setAnalysisResult(data);
 
-            // Use polling or websocket in a real prod scenario if status is processing
-            // For this implementation, we will display what we have or a "Processing started" message
-            // If the data has 'analysis' field, we show it.
-
+            // If status is processing, start polling
+            if (data?.status === 'processing') {
+                setPolling(true);
+            }
         } catch (err) {
             setError("Failed to analyze video. Please try again.");
             console.error(err);
@@ -201,7 +251,7 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
 
                         {/* AI Analysis Section */}
                         <div className="space-y-4">
-                            {!analysisResult && !analyzing ? (
+                            {!analysisResult && !analyzing && !polling ? (
                                 <Button
                                     onClick={handleAnalyze}
                                     variant="outline"
@@ -213,39 +263,77 @@ export function ContentDrawer({ isOpen, onClose, item }: ContentDrawerProps) {
                                 </Button>
                             ) : null}
 
-                            {analyzing && (
-                                <div className="flex flex-col items-center justify-center p-8 border border-dashed border-zinc-800 rounded-xl bg-zinc-900/20 animate-pulse">
-                                    <Loader2 className="h-8 w-8 text-yellow-500 animate-spin mb-3" />
-                                    <p className="text-sm text-zinc-400">Analyzing video content...</p>
+                            {(analyzing || polling) && (
+                                <div className="flex flex-col items-center justify-center p-8 border border-dashed border-yellow-900/50 rounded-xl bg-gradient-to-b from-yellow-900/10 to-zinc-900/30">
+                                    <div className="relative">
+                                        <Loader2 className="h-10 w-10 text-yellow-500 animate-spin" />
+                                        <Sparkles className="h-4 w-4 text-yellow-400 absolute -top-1 -right-1 animate-pulse" />
+                                    </div>
+                                    <p className="text-sm text-zinc-300 mt-4 text-center font-medium transition-all duration-300">
+                                        {loadingMessage}
+                                    </p>
+                                    <p className="text-xs text-zinc-500 mt-1">This may take 10-30 seconds</p>
                                 </div>
                             )}
 
                             {error && (
-                                <div className="p-4 rounded-lg bg-red-900/20 border border-red-900/50 text-red-200 text-sm mb-4">
-                                    {error}
+                                <div className="p-4 rounded-lg bg-red-900/20 border border-red-900/50 text-red-200 text-sm mb-4 flex items-center gap-2">
+                                    <span>⚠️</span> {error}
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={handleAnalyze}
+                                        className="ml-auto text-red-300 hover:text-white hover:bg-red-900/30"
+                                    >
+                                        Retry
+                                    </Button>
                                 </div>
                             )}
 
-                            {analysisResult && (
+                            {analysisResult && analysisResult.status === 'completed' && (
                                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
                                     <div className="flex items-center gap-2 mb-2">
                                         <Sparkles className="h-4 w-4 text-yellow-500" />
                                         <h3 className="font-semibold text-white">AI Extract</h3>
+                                        <Badge variant="outline" className="ml-auto text-[10px] border-green-800 text-green-400">
+                                            Complete
+                                        </Badge>
                                     </div>
 
-                                    {/* Mocking structure if not yet populated from backend fully */}
                                     <div className="space-y-4">
-                                        <AnalysisSection title="HOOK" content={analysisResult.analysis?.hook || analysisResult?.hook} />
-                                        <AnalysisSection title="CTA" content={analysisResult.analysis?.call_to_action || analysisResult?.call_to_action} />
-                                        <AnalysisSection title="KEY CLAIMS" content={analysisResult.analysis?.key_topics?.join(", ")} />
+                                        <AnalysisSection title="HOOK" content={analysisResult.analysis?.hook} />
+                                        <AnalysisSection title="CTA" content={analysisResult.analysis?.call_to_action} />
+                                        <AnalysisSection title="KEY TOPICS" content={analysisResult.analysis?.key_topics?.join(", ")} />
                                         <AnalysisSection title="ON-SCREEN TEXT" content={analysisResult.analysis?.on_screen_texts?.join(", ")} />
+                                        <AnalysisSection title="SUMMARY" content={analysisResult.analysis?.summary} />
+                                        {analysisResult.analysis?.hashtags?.length > 0 && (
+                                            <div className="space-y-1.5">
+                                                <h4 className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">HASHTAGS</h4>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {analysisResult.analysis.hashtags.map((tag: string) => (
+                                                        <Badge key={tag} variant="secondary" className="bg-zinc-900 text-zinc-300 hover:bg-zinc-800 border-none font-mono text-xs">
+                                                            {tag.startsWith('#') ? tag : `#${tag}`}
+                                                        </Badge>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
+                                </div>
+                            )}
 
-                                    {analysisResult.status === 'processing' && (
-                                        <div className="p-3 bg-yellow-900/20 border border-yellow-900/30 rounded text-yellow-200 text-xs mt-2">
-                                            Analysis is processing in background. Results will appear here once ready.
-                                        </div>
-                                    )}
+                            {analysisResult && analysisResult.status === 'failed' && (
+                                <div className="p-4 rounded-lg bg-red-900/20 border border-red-900/50 text-red-200 text-sm">
+                                    <p className="font-medium mb-1">Analysis Failed</p>
+                                    <p className="text-xs text-red-300/70">{analysisResult.error || "Unknown error occurred"}</p>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={handleAnalyze}
+                                        className="mt-3 border-red-800 text-red-300 hover:bg-red-900/30"
+                                    >
+                                        Try Again
+                                    </Button>
                                 </div>
                             )}
                         </div>

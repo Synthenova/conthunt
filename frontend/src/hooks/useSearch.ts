@@ -69,6 +69,8 @@ export function useSearch() {
     };
 
     // 1. Search Mutation (POST /v1/search)
+    const [controller, setController] = useState<AbortController | null>(null);
+
     const searchMutation = useMutation({
         mutationFn: async ({ isLoadMore = false }: { isLoadMore?: boolean } = {}) => {
             const body = {
@@ -78,24 +80,18 @@ export function useSearch() {
 
             // Transform store inputs to API format
             const inputs: Record<string, any> = {};
-
-            // Determine which platforms to include
             const platformKeys = Object.keys(store.platformInputs) as Array<keyof typeof store.platformInputs>;
             const activeKeys = platformKeys.filter(k => store.platformInputs[k]);
 
             let platformsToFetch = activeKeys;
 
             if (isLoadMore) {
-                // If loading more, only include platforms that have a next cursor
-                // AND are NOT instagram (per user request)
                 platformsToFetch = activeKeys.filter(key => {
-                    if (key === 'instagram_reels') return false; // Explicitly exclude Instagram
-                    return !!cursors[key]; // Must have a cursor
+                    if (key === 'instagram_reels') return false;
+                    return !!cursors[key];
                 });
 
-                if (platformsToFetch.length === 0) {
-                    return null; // Nothing to fetch
-                }
+                if (platformsToFetch.length === 0) return null;
             }
 
             platformsToFetch.forEach(key => {
@@ -105,53 +101,72 @@ export function useSearch() {
 
             body.inputs = inputs;
 
-            return fetchWithAuth("http://localhost:8000/v1/search", {
-                method: "POST",
-                body: JSON.stringify(body),
-            });
-        },
-        onSuccess: (data: SearchResponse, variables) => {
-            if (!data) return; // Case where loadMore had nothing to do
+            // Get Token
+            const user = auth.currentUser;
+            if (!user) throw new Error("User not authenticated");
+            const token = await user.getIdToken();
 
-            if (variables.isLoadMore) {
-                // Append results (filter duplicates)
-                setResults(prev => {
-                    const existingIds = new Set(prev.map(item => item.content_item?.id));
-                    const uniqueNew = data.results.filter(item => !existingIds.has(item.content_item?.id));
-                    return [...prev, ...uniqueNew];
-                });
+            // Abort previous request if any
+            if (controller) controller.abort();
+            const newController = new AbortController();
+            setController(newController);
 
-                // Update cursors
-                setCursors(prev => {
-                    const next = { ...prev };
-                    Object.entries(data.platforms).forEach(([key, value]: [string, any]) => {
-                        if (value.success) {
-                            if (value.next_cursor) {
-                                next[key] = value.next_cursor;
-                            } else {
-                                delete next[key]; // No more results for this platform
-                            }
-                        }
-                    });
-                    return next;
-                });
-
-            } else {
-                // New Search
-                setResults(data.results);
-
-                // Set initial cursors
-                const next: Record<string, any> = {};
-                Object.entries(data.platforms).forEach(([key, value]: [string, any]) => {
-                    if (value.success && value.next_cursor) {
-                        next[key] = value.next_cursor;
-                    }
-                });
-                setCursors(next);
+            // If new search, clear results immediately
+            if (!isLoadMore) {
+                setResults([]);
+                setCursors({});
             }
 
-            // Invalidate history query to show new search
-            queryClient.invalidateQueries({ queryKey: ["searchHistory"] });
+            await import("@microsoft/fetch-event-source").then(({ fetchEventSource }) => {
+                return fetchEventSource("http://localhost:8000/v1/search", {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(body),
+                    signal: newController.signal,
+                    onmessage(msg) {
+                        try {
+                            const data = JSON.parse(msg.data);
+
+                            if (msg.event === "start") {
+                                // console.log("Search started:", data);
+                            } else if (msg.event === "platform_result") {
+                                const result = data;
+                                if (result.success && result.items) {
+                                    setResults(prev => {
+                                        // Deduplicate based on content_item.id
+                                        const existingIds = new Set(prev.map(p => p.content_item?.id));
+                                        const uniqueNew = result.items.filter((item: any) => !existingIds.has(item.content_item?.id));
+                                        return [...prev, ...uniqueNew];
+                                    });
+
+                                    // Update Cursor
+                                    if (result.next_cursor) {
+                                        setCursors(prev => ({ ...prev, [result.platform]: result.next_cursor }));
+                                    } else {
+                                        setCursors(prev => {
+                                            const next = { ...prev };
+                                            delete next[result.platform];
+                                            return next;
+                                        });
+                                    }
+                                }
+                            } else if (msg.event === "done") {
+                                // console.log("Search done");
+                                queryClient.invalidateQueries({ queryKey: ["searchHistory"] });
+                            }
+                        } catch (e) {
+                            console.error("Error parsing SSE message", e);
+                        }
+                    },
+                    onerror(err) {
+                        console.error("SSE Error", err);
+                        throw err; // Rethrow to trigger mutation error
+                    }
+                });
+            });
         }
     });
 

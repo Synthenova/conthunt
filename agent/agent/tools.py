@@ -59,18 +59,23 @@ async def get_board_items(
 @tool
 async def search_12labs(
     query: str,
-    auth_token: Annotated[str, InjectedState("auth_token")]
+    auth_token: Annotated[str, InjectedState("auth_token")],
+    search_options: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Search for video clips across the user's indexed videos using 12Labs semantic search.
     Use this when the user asks a broad question or wants to find specific moments in videos.
-    Returns a list of matching clips with timestamps and video IDs.
+    
+    Args:
+        query: The search query string.
+        search_options: Optional types of data to search. Allowed: ["visual", "audio", "transcription"].
+                       Default is all three. Use specifics if user asks e.g. "show me X" (visual) vs "who said Y" (transcription).
     """
     url = f"{API_BASE_URL}/twelvelabs/search"
     headers = await _get_headers(auth_token)
     payload = {
         "query": query,
-        "search_options": ["visual", "conversation", "text_in_video"]
+        "search_options": search_options if search_options else ["visual", "audio", "transcription"]
     }
     
     async with httpx.AsyncClient() as client:
@@ -93,7 +98,7 @@ async def get_video_analysis(
     This includes summary, key topics, and hashtags.
     Use this when the user asks for "analysis" or "summary" of a specific video they found.
     """
-    url = f"{API_BASE_URL}/twelvelabs/video-analysis/{content_item_id}"
+    url = f"{API_BASE_URL}/video-analysis/{content_item_id}"
     headers = await _get_headers(auth_token)
     
     async with httpx.AsyncClient() as client:

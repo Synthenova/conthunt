@@ -4,7 +4,7 @@ from uuid import UUID
 from typing import Optional
 
 from app.core import get_settings, logger
-from app.storage.gcs import gcs_client
+from app.storage.gcs_async import async_gcs_client
 
 
 async def upload_raw_json_gz(
@@ -29,7 +29,7 @@ async def upload_raw_json_gz(
     key = f"raw/{platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
     
     try:
-        uri = gcs_client.upload_json_gz(
+        uri = await async_gcs_client.upload_json_gz(
             bucket_name=settings.GCS_BUCKET_RAW,
             key=key,
             data=raw_json,

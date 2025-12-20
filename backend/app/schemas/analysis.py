@@ -16,7 +16,9 @@ class VideoAnalysisResponse(BaseModel):
     """Response from video analysis endpoint."""
     id: Optional[UUID] = None
     content_item_id: UUID
-    status: str = "completed"
+    status: str = "processing"  # processing, completed, failed
     analysis: Optional[VideoAnalysisResult] = None
+    error: Optional[str] = None
     created_at: Optional[datetime] = None
     cached: bool = False
+

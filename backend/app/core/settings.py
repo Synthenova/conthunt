@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     GCS_BUCKET_RAW: str = "conthunt-dev-raw"
     GCS_BUCKET_MEDIA: str = "conthunt-dev-media"
 
+    # Cloud CDN
+    CDN_SIGNING_KEY_NAME: str = "my-cdn-signing-key"
+    CDN_SIGNING_KEY_VALUE: str = ""
+    CDN_URL_PREFIX: str = "http://34.120.120.120/" # Placeholder, user must set in env
+
     # Media download behavior
     MEDIA_DOWNLOAD_ENABLED: bool = True
     MEDIA_MAX_CONCURRENCY: int = 4

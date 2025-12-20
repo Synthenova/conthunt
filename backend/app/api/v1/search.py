@@ -3,9 +3,13 @@ import asyncio
 import time
 from typing import List
 from uuid import UUID
+import traceback
+from dataclasses import asdict
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+import json
+from sse_starlette.sse import EventSourceResponse
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
@@ -66,6 +70,7 @@ async def call_platform(
             request_params=request_params,
         )
     except Exception as e:
+        print(traceback.format_exc())
         duration_ms = int((time.time() - start_time) * 1000)
         logger.error(f"Platform {slug} error: {e}")
         return PlatformCallResult(
@@ -77,17 +82,112 @@ async def call_platform(
         )
 
 
-@router.post("/search", response_model=SearchResponse)
+async def save_search_background(
+    user_uuid: UUID,
+    query: str,
+    inputs: dict,
+    platform_results: List[PlatformCallResult],
+    new_media_assets: List[dict] = None
+):
+    """Background task to save search history and results."""
+    try:
+        async with get_db_connection() as conn:
+            # Set RLS context
+            await set_rls_user(conn, user_uuid)
+            
+            # Insert search
+            search_id = await queries.insert_search(
+                conn=conn,
+                user_id=user_uuid,
+                query=query,
+                inputs=inputs,
+                mode="live",
+            )
+            
+            rank = 0
+            assets_to_download = []
+            
+            for result in platform_results:
+                slug = result.platform
+                
+                # Upload raw response to GCS if successful
+                response_gcs_uri = None
+                if result.success and result.parsed:
+                    response_gcs_uri = await upload_raw_json_gz(
+                        platform=slug,
+                        search_id=search_id,
+                        raw_json=result.parsed.raw_response,
+                    )
+                
+                # Insert platform call record
+                await queries.insert_platform_call(
+                    conn=conn,
+                    search_id=search_id,
+                    platform=slug,
+                    request_params=result.request_params,
+                    success=result.success,
+                    http_status=result.http_status,
+                    error=result.error,
+                    duration_ms=result.duration_ms,
+                    next_cursor=result.parsed.next_cursor if result.parsed else None,
+                    response_gcs_uri=response_gcs_uri,
+                    response_meta=result.parsed.response_meta if result.parsed else {},
+                )
+                
+                # Process items if successful
+                if result.success and result.parsed:
+                    for item in result.parsed.items:
+                        rank += 1
+                        
+                        # Upsert content item
+                        content_id, was_inserted = await queries.upsert_content_item(conn, item)
+                        
+                        # Insert search result link
+                        await queries.insert_search_result(
+                            conn=conn,
+                            search_id=search_id,
+                            content_item_id=content_id,
+                            platform=item.platform,
+                            rank=rank,
+                        )
+                        
+                        # Only create media assets for newly inserted content
+                        if was_inserted:
+                            for media_url in item.media_urls:
+                                asset_id = await queries.insert_media_asset(
+                                    conn=conn,
+                                    content_item_id=content_id,
+                                    media_url=media_url,
+                                )
+                                # Track for download
+                                assets_to_download.append({
+                                    "id": asset_id,
+                                    "platform": item.platform,
+                                    "external_id": item.external_id,
+                                })
+
+            await conn.commit()
+            logger.info(f"Saved search {search_id} with {rank} results")
+
+            # Trigger media downloads
+            if assets_to_download:
+                # We can call the download function directly as we are already in a background task
+                # logic here, or spawn another task if we want.
+                # Since the download function is async, we can just await it or create_task
+                await download_assets_batch(assets_to_download)
+
+    except Exception as e:
+        logger.error(f"Failed to save search history: {e}")
+
+
+@router.post("/search", response_class=EventSourceResponse)
 async def create_search(
     request: SearchRequest,
-    background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
     """
-    Execute a multi-platform search.
-    
-    Calls all requested platforms concurrently, stores results,
-    and schedules background media downloads.
+    Execute a multi-platform search with Streaming Response (SSE).
+    Results are yielded as they arrive. Database operations happen in background.
     """
     settings = get_settings()
     firebase_uid = user.get("uid")
@@ -103,144 +203,98 @@ async def create_search(
                 detail=f"Unknown platform: {slug}. Available: {list(PLATFORM_ADAPTERS.keys())}"
             )
     
-    # Call all platforms concurrently
-    async with httpx.AsyncClient(
-        timeout=30.0,
-        follow_redirects=True,
-    ) as client:
-        tasks = [
-            call_platform(client, slug, request.query, params)
-            for slug, params in request.inputs.items()
-        ]
-        platform_results: List[PlatformCallResult] = await asyncio.gather(*tasks)
-    
-    # Now do database operations in a transaction
+    # Get user UUID (needed for background task)
     async with get_db_connection() as conn:
-        # Get or create user
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+         user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+
+    async def event_generator():
+        # Clean inputs
+        platform_tasks = []
+        collected_results: List[PlatformCallResult] = []
         
-        # Set RLS context
-        await set_rls_user(conn, user_uuid)
-        
-        # Insert search
-        search_id = await queries.insert_search(
-            conn=conn,
-            user_id=user_uuid,
-            query=request.query,
-            inputs=request.inputs,
-            mode="live",
-        )
-        
-        # Process each platform result
-        platforms_response = {}
-        all_results = []
-        new_media_assets = []  # For background download
-        rank = 0
-        
-        for result in platform_results:
-            slug = result.platform
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            # Create tasks
+            for slug, params in request.inputs.items():
+                platform_tasks.append(call_platform(client, slug, request.query, params))
             
-            # Upload raw response to GCS if successful
-            response_gcs_uri = None
-            if result.success and result.parsed:
-                response_gcs_uri = await upload_raw_json_gz(
-                    platform=slug,
-                    search_id=search_id,
-                    raw_json=result.parsed.raw_response,
-                )
+            # Yield initial event
+            yield {
+                "event": "start",
+                "data": json.dumps({"message": f"Starting search on {len(platform_tasks)} platforms"})
+            }
             
-            # Insert platform call record
-            await queries.insert_platform_call(
-                conn=conn,
-                search_id=search_id,
-                platform=slug,
-                request_params=result.request_params,
-                success=result.success,
-                http_status=result.http_status,
-                error=result.error,
-                duration_ms=result.duration_ms,
-                next_cursor=result.parsed.next_cursor if result.parsed else None,
-                response_gcs_uri=response_gcs_uri,
-                response_meta=result.parsed.response_meta if result.parsed else {},
-            )
-            
-            # Build platform result for response
-            platforms_response[slug] = PlatformResult(
-                success=result.success,
-                next_cursor=result.parsed.next_cursor if result.parsed else None,
-                error=result.error,
-                meta=result.parsed.response_meta if result.parsed else {},
-                duration_ms=result.duration_ms,
-                items_count=len(result.parsed.items) if result.parsed else 0,
-            )
-            
-            # Process items if successful
-            if result.success and result.parsed:
-                for item in result.parsed.items:
-                    rank += 1
-                    
-                    # Upsert content item
-                    content_id, was_inserted = await queries.upsert_content_item(conn, item)
-                    
-                    # Insert search result link
-                    await queries.insert_search_result(
-                        conn=conn,
-                        search_id=search_id,
-                        content_item_id=content_id,
-                        platform=item.platform,
-                        rank=rank,
-                    )
-                    
-                    # Only create media assets for newly inserted content
-                    assets = []
-                    if was_inserted:
-                        for media_url in item.media_urls:
-                            asset_id = await queries.insert_media_asset(
-                                conn=conn,
-                                content_item_id=content_id,
-                                media_url=media_url,
-                            )
-                            assets.append(AssetResponse(
-                                id=asset_id,
-                                asset_type=media_url.asset_type.value,
-                                status="pending",
-                                source_url=media_url.source_url,
-                            ))
-                            # Track for background download
-                            new_media_assets.append({
-                                "id": asset_id,
+            # Use as_completed to yield results as they finish
+            for task in asyncio.as_completed(platform_tasks):
+                result: PlatformCallResult = await task
+                collected_results.append(result)
+                
+                # Transform to lightweight response
+                
+                # We need to map the raw NormalizedItem to the expected schema (ResultItem)
+                # This matches what the frontend expects (nested content_item and assets)
+                items_data = []
+                if result.parsed:
+                    for item in result.parsed.items:
+                        # Construct assets list
+                        assets_data = []
+                        for media in item.media_urls:
+                            # We don't have DB IDs yet, so we use a placeholder or None
+                            # The frontend keys off content_item.id usually, but assets might need IDs
+                            # Let's generate a temporary ID if needed, or just leave it empty if frontend tolerates it
+                            # Actually, frontend likely needs some unique key. But since this is a stream, 
+                            # we can't give real DB IDs.
+                            assets_data.append({
+                                "id": None, # Will be ignored or handled by frontend keys
+                                "asset_type": media.asset_type.value,
+                                "status": "pending",
+                                "source_url": media.source_url,
+                                "gcs_uri": None
+                            })
+
+                        items_data.append({
+                            "rank": 0, # Not relevant for stream
+                            "content_item": {
+                                "id": None, # No DB ID yet
                                 "platform": item.platform,
                                 "external_id": item.external_id,
-                            })
-                    
-                    # Build result item
-                    all_results.append(ResultItem(
-                        rank=rank,
-                        content_item=ContentItemResponse(
-                            id=content_id,
-                            platform=item.platform,
-                            external_id=item.external_id,
-                            content_type=item.content_type,
-                            canonical_url=item.canonical_url,
-                            title=item.title,
-                            primary_text=item.primary_text,
-                            published_at=item.published_at,
-                            creator_handle=item.creator_handle,
-                            metrics=item.metrics,
-                        ),
-                        assets=assets,
-                    ))
+                                "content_type": item.content_type,
+                                "canonical_url": item.canonical_url,
+                                "title": item.title,
+                                "primary_text": item.primary_text,
+                                "published_at": item.published_at,
+                                "creator_handle": item.creator_handle,
+                                "metrics": item.metrics,
+                            },
+                            "assets": assets_data
+                        })
+
+                data = {
+                    "platform": result.platform,
+                    "success": result.success,
+                    "duration_ms": result.duration_ms,
+                    "count": len(result.parsed.items) if result.parsed else 0,
+                    "items": items_data,
+                    "error": result.error
+                }
+                
+                yield {
+                    "event": "platform_result",
+                    "data": json.dumps(data, default=str)
+                }
+
+        # Verification: All done
+        yield {
+            "event": "done",
+            "data": json.dumps({"message": "All platforms finished"})
+        }
         
-        # Commit transaction
-        await conn.commit()
-    
-    # Schedule background media downloads
-    if new_media_assets:
-        background_tasks.add_task(download_assets_batch, new_media_assets)
-        logger.info(f"Scheduled {len(new_media_assets)} media assets for background download")
-    
-    return SearchResponse(
-        search_id=search_id,
-        platforms=platforms_response,
-        results=all_results,
-    )
+        # Spawn background task to save to DB
+        # We use asyncio.create_task to ensure it runs after the generator finishes/returns
+        asyncio.create_task(save_search_background(
+            user_uuid=user_uuid,
+            query=request.query,
+            inputs=request.inputs,
+            platform_results=collected_results
+        ))
+
+    return EventSourceResponse(event_generator())

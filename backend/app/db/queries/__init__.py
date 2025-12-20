@@ -5,7 +5,8 @@ All functions are re-exported here for backwards compatibility.
 Import from specific modules for cleaner code:
     from app.db.queries.search import insert_search
     from app.db.queries.boards import create_board
-    from app.db.queries.twelvelabs import get_video_analysis_by_content_item
+    from app.db.queries.analysis import get_video_analysis_by_content_item
+    from app.db.queries.content import get_content_item_by_id
     from app.db.queries.users import get_user_role
 """
 
@@ -37,13 +38,23 @@ from app.db.queries.boards import (
     search_in_board,
 )
 
-# TwelveLabs queries
+# TwelveLabs queries (indexing only)
 from app.db.queries.twelvelabs import (
     get_twelvelabs_asset_by_content_item,
     upsert_twelvelabs_asset,
     update_twelvelabs_asset_status,
+)
+
+# Analysis queries (Gemini-based)
+from app.db.queries.analysis import (
     get_video_analysis_by_content_item,
     insert_video_analysis,
+    create_pending_analysis,
+    update_analysis_status,
+)
+
+# Content queries (shared)
+from app.db.queries.content import (
     get_content_item_by_id,
 )
 
@@ -93,6 +104,9 @@ __all__ = [
     "update_twelvelabs_asset_status",
     "get_video_analysis_by_content_item",
     "insert_video_analysis",
+    "create_pending_analysis",
+    "update_analysis_status",
+    # Content
     "get_content_item_by_id",
     # Users
     "get_user_role",

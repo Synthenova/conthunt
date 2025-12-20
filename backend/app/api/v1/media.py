@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from app.auth import get_current_user
 from app.core import logger
 from app.db import get_db_connection, get_or_create_user, set_rls_user, queries
-from app.storage import gcs_client
+from app.services.cdn_signer import generate_signed_url
 from app.schemas import SignedUrlResponse
 
 router = APIRouter()
@@ -48,9 +48,10 @@ async def get_signed_url(
         )
     
     try:
+        # generate_signed_url is synchronous, so no await
         expiration = 3600  # 1 hour
-        signed_url = gcs_client.generate_signed_url(
-            gcs_uri=asset["gcs_uri"],
+        signed_url = generate_signed_url(
+            gcs_filename=asset["gcs_uri"],
             expiration_seconds=expiration,
         )
         
@@ -92,11 +93,13 @@ async def get_media_content(
     
     try:
         # Generate short-lived signed URL
-        signed_url = gcs_client.generate_signed_url(
-            gcs_uri=asset["gcs_uri"],
+        signed_url = generate_signed_url(
+            gcs_filename=asset["gcs_uri"],
             expiration_seconds=3600, # 1 hour
         )
         return RedirectResponse(url=signed_url, status_code=307)
     except Exception as e:
         logger.error(f"Failed to generate redirect for asset {asset_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to serve media content")
+
+

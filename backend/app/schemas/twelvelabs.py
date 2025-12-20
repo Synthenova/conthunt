@@ -1,18 +1,23 @@
 """Pydantic schemas for TwelveLabs video analysis."""
 from pydantic import BaseModel
-from typing import Optional, List, Any
-from datetime import datetime
+from typing import Optional, List, Any, Literal
 from uuid import UUID
 from datetime import datetime
-from uuid import UUID
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 class TwelveLabsSearchRequest(BaseModel):
     """Request to search 12Labs index."""
     query: str
     index_id: Optional[str] = None # Optional override, else use env default
-    search_options: List[str] = ["visual", "conversation", "text_in_video", "logo"]
+    search_options: List[Literal["visual", "audio", "transcription"]] = ["visual", "audio", "transcription"]
+    filter: Optional[dict] = None  # Generic filter object
+    twelvelabs_asset_id: Optional[str] = None  # Specific video filter (TwelveLabs ID)
+    
+    @validator("search_options")
+    def validate_search_options(cls, v):
+        if not v:
+            return ["visual", "audio", "transcription"]
+        return list(set(v))  # Remove duplicates
 
 
 class TwelveLabsSearchResponseItem(BaseModel):
@@ -24,6 +29,7 @@ class TwelveLabsSearchResponseItem(BaseModel):
     confidence: str
     thumbnail_url: Optional[str] = None
     metadata: Optional[dict] = None
+
 
 class TwelveLabsSearchResponse(BaseModel):
     """Response for search request."""

@@ -22,6 +22,8 @@ google-auth==2.43.0
 google-cloud-core==2.5.0
 google-cloud-firestore==2.21.0
 google-cloud-storage==3.7.0
+gcloud-aio-storage==9.3.0
+aiofiles==24.1.0
 google-crc32c==1.7.1
 google-resumable-media==2.8.0
 googleapis-common-protos==1.72.0

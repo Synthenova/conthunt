@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.core import get_settings, logger
-from app.storage.gcs import gcs_client
+from app.storage.gcs_async import async_gcs_client
 from app.media.extractor import get_file_extension
 
 
@@ -149,7 +149,7 @@ async def download_single_asset(
             gcs_key = f"media/{platform}/{external_id}/{asset_type}/{sha256_hash}.{ext}"
             
             # Upload to GCS
-            gcs_uri = gcs_client.upload_blob(
+            gcs_uri = await async_gcs_client.upload_blob(
                 bucket_name=settings.GCS_BUCKET_MEDIA,
                 key=gcs_key,
                 data=content,

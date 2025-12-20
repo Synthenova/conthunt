@@ -1,5 +1,6 @@
 """Database query functions for TwelveLabs video analysis."""
 import json
+from typing import List
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -177,44 +178,20 @@ async def insert_video_analysis(
     return analysis_id
 
 
-async def get_content_item_by_id(
+async def get_user_twelvelabs_assets(
     conn: AsyncConnection,
-    content_item_id: UUID,
-) -> dict | None:
-    """Get a content item by ID with its video asset URL."""
+) -> List[str]:
+    """Get all TwelveLabs indexed asset IDs for a user's boards (RLS implicit)."""
     result = await conn.execute(
         text("""
-            SELECT ci.id, ci.platform, ci.external_id, ci.content_type,
-                   ci.canonical_url, ci.title, ci.payload
-            FROM content_items ci
-            WHERE ci.id = :id
-        """),
-        {"id": content_item_id}
+            SELECT DISTINCT ta.indexed_asset_id
+            FROM twelvelabs_assets ta
+            JOIN content_items ci ON ta.content_item_id = ci.id
+            JOIN board_items bi ON ci.id = bi.content_item_id
+            JOIN boards b ON bi.board_id = b.id
+            WHERE ta.indexed_asset_id IS NOT NULL
+        """)
     )
-    row = result.fetchone()
-    if not row:
-        return None
-    
-    # Get video asset
-    assets_result = await conn.execute(
-        text("""
-            SELECT source_url, gcs_uri, status
-            FROM media_assets
-            WHERE content_item_id = :id AND asset_type = 'video'
-            LIMIT 1
-        """),
-        {"id": content_item_id}
-    )
-    asset_row = assets_result.fetchone()
-    
-    return {
-        "id": row[0],
-        "platform": row[1],
-        "external_id": row[2],
-        "content_type": row[3],
-        "canonical_url": row[4],
-        "title": row[5],
-        "payload": row[6],
-        "video_url": asset_row[0] if asset_row else None,
-        "video_gcs_uri": asset_row[1] if asset_row else None,
-    }
+    rows = result.fetchall()
+    return [row[0] for row in rows]
+
