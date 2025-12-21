@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     
     # Cloud Tasks
     CLOUD_TASKS_SA_EMAIL: str = "tasks-invoker@conthunt-dev.iam.gserviceaccount.com"
-    API_BASE_URL: str = "https://api.conthunt.com" 
+    API_BASE_URL: str = "https://api.conthunt.com"
+    
+    # CORS - comma-separated list of allowed origins
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
     
     # queues
     QUEUE_MEDIA_DOWNLOAD: str = "media-download-queue"
