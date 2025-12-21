@@ -3,7 +3,7 @@ import { useSearchStore } from "@/lib/store";
 import { auth } from "@/lib/firebaseClient";
 import { useState, useMemo } from "react";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+import { BACKEND_URL } from '@/lib/api';
 
 // Define response types
 export interface SearchResponse {

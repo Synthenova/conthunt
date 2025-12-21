@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { auth } from "@/lib/firebaseClient";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+import { BACKEND_URL } from '@/lib/api';
 
 export function useSearchStream(searchId?: string | null) {
     const [search, setSearch] = useState<any>(null);

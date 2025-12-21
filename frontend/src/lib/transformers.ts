@@ -1,4 +1,6 @@
 
+import { BACKEND_URL } from '@/lib/api';
+
 // Types for what the UI expects (Flat)
 export interface FlatMediaItem {
     id: string;
@@ -42,8 +44,7 @@ export function transformToMediaItem(backendResult: any): FlatMediaItem {
     if (thumbnailUrl && (thumbnailUrl.includes("cdninstagram.com") || thumbnailUrl.includes("fbcdn.net"))) {
         // Use environment variable, fallback to localhost only if missing but warn? 
         // Better to assume env var is there as per user request.
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
-        thumbnailUrl = `${backendUrl}/v1/media/proxy?url=${encodeURIComponent(thumbnailUrl)}`;
+        thumbnailUrl = `${BACKEND_URL}/v1/media/proxy?url=${encodeURIComponent(thumbnailUrl)}`;
     }
 
     // 2. Metrics Resolution

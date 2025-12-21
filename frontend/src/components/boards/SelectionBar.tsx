@@ -93,7 +93,8 @@ export function SelectionBar({ itemsById = {}, downloadDisabled = false }: Selec
                 throw new Error("User not authenticated");
             }
             const token = await user.getIdToken();
-            const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+            const { BACKEND_URL } = await import('@/lib/api');
+            const backendUrl = BACKEND_URL;
             const JSZip = (await import("jszip")).default;
             const zip = new JSZip();
 

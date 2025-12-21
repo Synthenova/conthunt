@@ -122,9 +122,9 @@ export function ContentDrawer({ isOpen, onClose, item, analysisDisabled = false 
         }
 
         const token = await user.getIdToken();
-        const apiUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+        const { BACKEND_URL } = await import('@/lib/api');
 
-        const response = await fetch(`${apiUrl}/v1/video-analysis/${mediaAssetId}`, {
+        const response = await fetch(`${BACKEND_URL}/v1/video-analysis/${mediaAssetId}`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,

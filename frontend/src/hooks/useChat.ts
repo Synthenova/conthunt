@@ -5,16 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { auth } from '@/lib/firebaseClient';
 import { useChatStore, Chat, ChatMessage } from '@/lib/chatStore';
-
-const getBackendUrl = () => {
-    let url = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
-    console.log(url);
-    if (url.includes('run.app') && url.startsWith('http:')) {
-        url = url.replace('http:', 'https:');
-    }
-    return url;
-};
-const BACKEND_URL = getBackendUrl();
+import { BACKEND_URL } from '@/lib/api';
 
 async function getAuthToken(): Promise<string> {
     const user = auth.currentUser;
