@@ -1,5 +1,8 @@
 "use client";
 
+// Skip prerendering - Firebase auth requires runtime environment variables
+export const dynamic = 'force-dynamic';
+
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { auth } from "@/lib/firebaseClient";

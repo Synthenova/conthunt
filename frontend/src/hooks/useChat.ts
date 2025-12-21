@@ -129,9 +129,13 @@ export function useSendMessage() {
     const sendMessage = useCallback(async (
         message: string,
         boardId?: string,
-        abortController?: AbortController
+        abortController?: AbortController,
+        chatId?: string  // Optional: pass directly to avoid race condition
     ) => {
-        if (!activeChatId) {
+        // Use passed chatId or fall back to activeChatId from store
+        const targetChatId = chatId || activeChatId;
+
+        if (!targetChatId) {
             throw new Error('No active chat');
         }
 
@@ -150,7 +154,7 @@ export function useSendMessage() {
 
         try {
             // 1. Send message to start background streaming
-            const sendRes = await fetch(`${BACKEND_URL}/v1/chats/${activeChatId}/send`, {
+            const sendRes = await fetch(`${BACKEND_URL}/v1/chats/${targetChatId}/send`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -165,7 +169,7 @@ export function useSendMessage() {
             }
 
             // 2. Stream the response
-            await fetchEventSource(`${BACKEND_URL}/v1/chats/${activeChatId}/stream`, {
+            await fetchEventSource(`${BACKEND_URL}/v1/chats/${targetChatId}/stream`, {
                 headers: { 'Authorization': `Bearer ${token}` },
                 signal: controller.signal,
                 onmessage(msg) {

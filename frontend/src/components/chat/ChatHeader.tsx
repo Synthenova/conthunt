@@ -3,18 +3,18 @@
 import { Plus, History, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useChatStore } from '@/lib/chatStore';
-import { useCreateChat } from '@/hooks/useChat';
 
 interface ChatHeaderProps {
     title?: string;
 }
 
 export function ChatHeader({ title = "Agent" }: ChatHeaderProps) {
-    const { closeSidebar, toggleHistory, showHistory } = useChatStore();
-    const createChat = useCreateChat();
+    const { closeSidebar, toggleHistory, showHistory, resetToNewChat } = useChatStore();
 
     const handleNewChat = () => {
-        createChat.mutate(undefined);
+        // Just reset to default state - no API call
+        // Chat will be created when user sends first message
+        resetToNewChat();
     };
 
     return (
@@ -26,7 +26,6 @@ export function ChatHeader({ title = "Agent" }: ChatHeaderProps) {
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:text-foreground"
                     onClick={handleNewChat}
-                    disabled={createChat.isPending}
                     title="New Chat"
                 >
                     <Plus className="h-4 w-4" />

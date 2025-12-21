@@ -30,21 +30,19 @@ export function ChatInput({ boardId }: ChatInputProps) {
         const messageText = message.trim();
         setMessage('');
 
-        // If no active chat, create one first
+        abortControllerRef.current = new AbortController();
+
+        // If no active chat, create one first then send with the returned chat id
         if (!activeChatId) {
             try {
                 const chat = await createChat.mutateAsync(messageText.slice(0, 50));
-                // After chat is created, the activeChatId will be set
-                // Wait a tick for state to update, then send
-                setTimeout(async () => {
-                    abortControllerRef.current = new AbortController();
-                    await sendMessage(messageText, boardId, abortControllerRef.current);
-                }, 50);
+                // Pass chat.id directly to avoid race condition with Zustand state
+                await sendMessage(messageText, boardId, abortControllerRef.current, chat.id);
             } catch (err) {
                 console.error('Failed to create chat:', err);
+                resetStreaming();
             }
         } else {
-            abortControllerRef.current = new AbortController();
             await sendMessage(messageText, boardId, abortControllerRef.current);
         }
     };

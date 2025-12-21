@@ -29,6 +29,7 @@ interface ChatState {
     // Active chat
     activeChatId: string | null;
     setActiveChatId: (id: string | null) => void;
+    resetToNewChat: () => void;
 
     // Messages for active chat
     messages: ChatMessage[];
@@ -75,6 +76,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Active chat
     activeChatId: null,
     setActiveChatId: (id) => set({ activeChatId: id, messages: [], showHistory: false }),
+    resetToNewChat: () => set({ activeChatId: null, messages: [], showHistory: false }),
 
     // Messages
     messages: [],
