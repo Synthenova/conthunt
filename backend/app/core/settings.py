@@ -11,6 +11,18 @@ class Settings(BaseSettings):
     # GCP / Firebase
     GCLOUD_PROJECT: str = "conthunt-dev"
     GCP_PROJECT: str = "conthunt-dev"
+    GCP_REGION: str = "us-central1"
+    
+    # Cloud Tasks
+    CLOUD_TASKS_SA_EMAIL: str = "conthunt-dev@conthunt-dev.iam.gserviceaccount.com"
+    API_BASE_URL: str = "https://api.conthunt.com" 
+    
+    # queues
+    QUEUE_MEDIA_DOWNLOAD: str = "media-download-queue"
+    QUEUE_TWELVELABS: str = "twelvelabs-queue"
+    QUEUE_GEMINI: str = "gemini-queue"
+    QUEUE_RAW_ARCHIVE: str = "raw-archive-queue"
+
 
     # ScrapeCreators API
     SCRAPECREATORS_API_KEY: str

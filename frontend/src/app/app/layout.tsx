@@ -1,7 +1,7 @@
-"use client";
-
 import { ChatSidebar, ChatToggleButton } from "@/components/chat";
 import { Toaster } from "@/components/ui/sonner";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/layout/AppSidebar";
 
 export default function AppLayout({
     children,
@@ -9,20 +9,25 @@ export default function AppLayout({
     children: React.ReactNode;
 }) {
     return (
-        <div className="flex h-screen overflow-hidden">
-            {/* Main content area - shrinks when chat is open on desktop */}
-            <main className="flex-1 min-w-0 overflow-auto scrollbar-none transition-all duration-300">
-                {children}
-            </main>
+        <SidebarProvider>
+            <div className="flex h-screen w-full overflow-hidden">
+                {/* Left Sidebar */}
+                <AppSidebar />
 
-            {/* Chat Sidebar */}
-            <ChatSidebar />
+                {/* Main content area */}
+                <main className="flex-1 min-w-0 overflow-auto scrollbar-none transition-all duration-300 relative">
+                    {children}
+                </main>
 
-            {/* Floating toggle button */}
-            <ChatToggleButton />
+                {/* Right Chat Sidebar */}
+                <ChatSidebar />
 
-            {/* Toast notifications */}
-            <Toaster />
-        </div>
+                {/* Floating toggle button */}
+                <ChatToggleButton />
+
+                {/* Toast notifications */}
+                <Toaster />
+            </div>
+        </SidebarProvider>
     );
 }

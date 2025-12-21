@@ -18,6 +18,10 @@ from app.db.queries.analysis import (
 from app.db.queries.content import get_media_asset_by_id
 from app.schemas.analysis import VideoAnalysisResponse, VideoAnalysisResult
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
+from app.services.cloud_tasks import cloud_tasks
+from app.core import get_settings
+
+settings = get_settings()
 
 load_dotenv()
 
@@ -111,7 +115,12 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
             logger.error(f"[ANALYSIS] Failed to update status to 'failed': {db_err}")
 
 
-async def run_gemini_analysis(media_asset_id: UUID, background_tasks: BackgroundTasks) -> VideoAnalysisResponse:
+
+async def run_gemini_analysis(
+    media_asset_id: UUID, 
+    background_tasks: BackgroundTasks | None = None,
+    use_cloud_tasks: bool = False
+) -> VideoAnalysisResponse:
     """
     Non-blocking Gemini analysis - returns immediately.
     Creates 'processing' record and spawns background task.
@@ -160,9 +169,28 @@ async def run_gemini_analysis(media_asset_id: UUID, background_tasks: Background
 
         # 4. Spawn background task for LLM processing
         print(f"[ANALYSIS] Spawning background task for analysis_id={analysis_id}")
-        import asyncio
-        asyncio.create_task(_execute_gemini_analysis(analysis_id, media_asset_id, video_uri))
-        print(f"[ANALYSIS] Background task spawned successfully")
+        
+        if use_cloud_tasks:
+             # Use Cloud Tasks
+             print(f"[ANALYSIS] Using Cloud Tasks (queue={settings.QUEUE_GEMINI}) for analysis {analysis_id}")
+             await cloud_tasks.create_http_task(
+                 queue_name=settings.QUEUE_GEMINI,
+                 relative_uri="/v1/tasks/gemini/analyze",
+                 payload={
+                     "analysis_id": str(analysis_id),
+                     "media_asset_id": str(media_asset_id),
+                     "video_uri": video_uri
+                 }
+             )
+        elif background_tasks:
+             # Legacy/Local mode
+             import asyncio
+             asyncio.create_task(_execute_gemini_analysis(analysis_id, media_asset_id, video_uri))
+             print(f"[ANALYSIS] Background task spawned successfully (local asyncio)")
+        else:
+             print(f"[ANALYSIS] WARNING: No execution method provided, task detached")
+             import asyncio
+             asyncio.create_task(_execute_gemini_analysis(analysis_id, media_asset_id, video_uri))
         
         # 5. Return immediately with processing status
         return VideoAnalysisResponse(
@@ -190,8 +218,12 @@ async def analyze_video(
     Returns immediately with 'processing' status. Poll to check completion.
     Also triggers 12Labs indexing in the background.
     """
-    # Trigger 12Labs Indexing in Background
-    background_tasks.add_task(process_twelvelabs_indexing_by_media_asset, media_asset_id)
+    # Trigger 12Labs Indexing in Background (via Cloud Tasks)
+    await cloud_tasks.create_http_task(
+        queue_name=settings.QUEUE_TWELVELABS,
+        relative_uri="/v1/tasks/twelvelabs/index",
+        payload={"media_asset_id": str(media_asset_id)}
+    )
     
-    # Run non-blocking Gemini analysis
-    return await run_gemini_analysis(media_asset_id, background_tasks)
+    # Run non-blocking Gemini analysis (via Cloud Tasks)
+    return await run_gemini_analysis(media_asset_id, background_tasks=background_tasks, use_cloud_tasks=True)

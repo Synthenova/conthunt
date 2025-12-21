@@ -36,12 +36,6 @@ export default function HistoryPage() {
                         Review your past content hunts
                     </p>
                 </div>
-                <Button variant="outline" asChild>
-                    <Link href="/app">
-                        <ArrowRight className="mr-2 h-4 w-4" />
-                        Back to Search
-                    </Link>
-                </Button>
             </div>
 
             {isLoadingHistory ? (

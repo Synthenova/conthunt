@@ -122,9 +122,6 @@ export default function SearchPage() {
                 {/* Footer / Utils */}
                 <footer className="py-6 border-t border-white/5 flex justify-between items-center text-xs text-muted-foreground">
                     <p>Conthunt © 2025</p>
-                    <div className="flex items-center gap-4">
-                        <LogoutButton />
-                    </div>
                 </footer>
             </div>
 

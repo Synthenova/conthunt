@@ -23,6 +23,7 @@ from app.platforms import (
 from app.storage import upload_raw_json_gz
 from app.media import download_assets_batch
 from app.schemas import SearchRequest
+from app.services.cloud_tasks import cloud_tasks
 
 router = APIRouter()
 
@@ -200,13 +201,18 @@ async def search_worker(
                     "response_meta": result.parsed.response_meta if result.parsed else {},
                 })
                 
-                # Queue GCS upload as fire-and-forget
+                # Queue GCS upload as task (one per platform)
                 if result.success and result.parsed:
-                    upload_tasks.append(upload_raw_json_gz(
-                        platform=slug,
-                        search_id=search_id,
-                        raw_json=result.parsed.raw_response,
-                    ))
+                    # CLOUD TASKS MIGRATION: 1 Task Per Platform
+                    await cloud_tasks.create_http_task(
+                        queue_name=settings.QUEUE_RAW_ARCHIVE,
+                        relative_uri="/v1/tasks/raw/archive",
+                        payload={
+                            "platform": slug,
+                            "search_id": str(search_id),
+                            "raw_json": result.parsed.raw_response
+                        }
+                    )
                 
                 # Collect items
                 if result.success and result.parsed:
@@ -280,13 +286,21 @@ async def search_worker(
         await r.close()
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
-        # GCS uploads (don't await)
-        for task in upload_tasks:
-            asyncio.create_task(task)
+        # GCS uploads handled via Cloud Tasks above
         
-        # Media downloads (don't await)
+        # Media downloads: Fan-out via Cloud Tasks
         if assets_to_download:
-            asyncio.create_task(download_assets_batch(assets_to_download))
+            logger.info(f"Dispatching {len(assets_to_download)} media download tasks to Cloud Tasks...")
+            for asset_info in assets_to_download:
+                await cloud_tasks.create_http_task(
+                    queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
+                    relative_uri="/v1/tasks/media/download",
+                    payload={
+                        "asset_id": str(asset_info["id"]),
+                        "platform": asset_info["platform"],
+                        "external_id": asset_info["external_id"]
+                    }
+                )
         
     except Exception as e:
         logger.error(f"Search worker failed for {search_id}: {e}", exc_info=True)
