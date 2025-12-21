@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     GCP_REGION: str = "us-central1"
     
     # Cloud Tasks
-    CLOUD_TASKS_SA_EMAIL: str = "conthunt-dev@conthunt-dev.iam.gserviceaccount.com"
+    CLOUD_TASKS_SA_EMAIL: str = "tasks-invoker@conthunt-dev.iam.gserviceaccount.com"
     API_BASE_URL: str = "https://api.conthunt.com" 
     
     # queues
