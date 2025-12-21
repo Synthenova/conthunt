@@ -80,4 +80,22 @@ class AsyncGCSClient:
             content_type="application/json",
         )
 
+    async def upload_compressed_gz(
+        self,
+        bucket_name: str,
+        key: str,
+        compressed_data: bytes,
+    ) -> str:
+        """
+        Upload already-compressed gzip data directly.
+        
+        Returns the gs:// URI.
+        """
+        return await self.upload_blob(
+            bucket_name=bucket_name,
+            key=key,
+            data=compressed_data,
+            content_type="application/json",
+        )
+
 async_gcs_client = AsyncGCSClient()

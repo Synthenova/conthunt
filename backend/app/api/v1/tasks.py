@@ -1,4 +1,6 @@
-
+import base64
+import gzip
+import json
 from uuid import UUID
 import httpx
 
@@ -31,7 +33,7 @@ class MediaDownloadTaskPayload(BaseModel):
 class RawArchiveTaskPayload(BaseModel):
     platform: str
     search_id: UUID
-    raw_json: dict
+    raw_json_compressed: str  # base64-encoded gzip data
 
 @router.post("/gemini/analyze")
 async def handle_gemini_analysis_task(payload: AnalysisTaskPayload):
@@ -74,11 +76,18 @@ async def handle_media_download_task(payload: MediaDownloadTaskPayload):
 async def handle_raw_archive_task(payload: RawArchiveTaskPayload):
     """
     Handle background raw archive task.
+    Uploads already-compressed data directly to GCS.
     """
+    from app.storage.raw_archive import upload_raw_compressed
+    
     logger.info(f"Received raw archive task for search {payload.search_id} platform {payload.platform}")
-    await upload_raw_json_gz(
+    
+    # Decode base64 to get compressed bytes (already gzipped)
+    compressed_bytes = base64.b64decode(payload.raw_json_compressed)
+    
+    await upload_raw_compressed(
         platform=payload.platform,
         search_id=payload.search_id,
-        raw_json=payload.raw_json
+        compressed_data=compressed_bytes
     )
     return {"status": "ok"}

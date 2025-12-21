@@ -1,5 +1,7 @@
 """Search API endpoint - POST /v1/search with Redis streaming."""
 import asyncio
+import base64
+import gzip
 import time
 from typing import List
 import uuid
@@ -203,14 +205,18 @@ async def search_worker(
                 
                 # Queue GCS upload as task (one per platform)
                 if result.success and result.parsed:
-                    # CLOUD TASKS MIGRATION: 1 Task Per Platform
+                    # Compress raw JSON to stay under Cloud Tasks' 100KB limit
+                    raw_json_bytes = json.dumps(result.parsed.raw_response).encode('utf-8')
+                    compressed = gzip.compress(raw_json_bytes)
+                    compressed_b64 = base64.b64encode(compressed).decode('ascii')
+                    
                     await cloud_tasks.create_http_task(
                         queue_name=settings.QUEUE_RAW_ARCHIVE,
                         relative_uri="/v1/tasks/raw/archive",
                         payload={
                             "platform": slug,
                             "search_id": str(search_id),
-                            "raw_json": result.parsed.raw_response
+                            "raw_json_compressed": compressed_b64
                         }
                     )
                 

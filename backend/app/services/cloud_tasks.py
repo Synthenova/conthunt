@@ -103,12 +103,17 @@ class CloudTasksService:
                     )
             
             elif uri == "/v1/tasks/raw/archive":
-                from app.storage.raw_archive import upload_raw_json_gz
+                from app.storage.raw_archive import upload_raw_compressed
                 from uuid import UUID
-                await upload_raw_json_gz(
+                import base64
+                
+                # Decode base64 to get compressed bytes (already gzipped)
+                compressed_bytes = base64.b64decode(payload["raw_json_compressed"])
+                
+                await upload_raw_compressed(
                     platform=payload["platform"],
                     search_id=UUID(payload["search_id"]),
-                    raw_json=payload["raw_json"]
+                    compressed_data=compressed_bytes
                 )
                 
             else:
