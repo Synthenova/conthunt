@@ -8,6 +8,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import END, START, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.runtime import Runtime
+from langgraph.checkpoint.postgres import PostgresSaver
 
 from agent.tools import get_user_boards, get_board_items, search_videos, get_video_analysis
 
@@ -20,6 +21,15 @@ class ContextSchema:
 
 # Define tools
 tools = [get_user_boards, get_board_items, get_video_analysis]#, search_videos]
+
+# Define checkpointer
+postgres_url = os.getenv("POSTGRES_URL")
+checkpointer = PostgresSaver.from_conn_string(postgres_url)
+with PostgresSaver.from_conn_string(postgres_url) as checkpointer:
+    # call .setup() the first time you're using the checkpointer
+    checkpointer.setup()
+    
+
 
 # Define the model
 llm = ChatOpenAI(
@@ -79,4 +89,4 @@ workflow.add_conditional_edges("agent", tools_condition)
 workflow.add_edge("tools", "agent")
 
 # Compile
-graph = workflow.compile()
+graph = workflow.compile(checkpointer=checkpointer)

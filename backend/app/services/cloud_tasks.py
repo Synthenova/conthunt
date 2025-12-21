@@ -29,7 +29,10 @@ class CloudTasksService:
         Create a secure HTTP task on Cloud Tasks.
         """
         if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:
-            logger.warning(f"[LOCAL] Skipping Cloud Task creation for {relative_uri} in queue {queue_name}")
+            # Local development: Dispatch directly to background function
+            logger.info(f"[LOCAL] Dispatching background task for {relative_uri} in queue {queue_name}")
+            import asyncio
+            asyncio.create_task(self._run_local_task(relative_uri, payload))
             return "local-task-id"
 
         url = f"{self.settings.API_BASE_URL}{relative_uri}"
@@ -61,6 +64,58 @@ class CloudTasksService:
         except Exception as e:
             logger.error(f"Failed to create cloud task: {e}")
             raise e
+
+    async def _run_local_task(self, uri: str, payload: dict | None):
+        """
+        Execute task logic locally (mirroring app/api/v1/tasks.py).
+        """
+        try:
+            if not payload:
+                 payload = {}
+                 
+            if uri == "/v1/tasks/gemini/analyze":
+                from app.api.v1.analysis import _execute_gemini_analysis
+                from uuid import UUID
+                await _execute_gemini_analysis(
+                    analysis_id=UUID(payload["analysis_id"]),
+                    media_asset_id=UUID(payload["media_asset_id"]),
+                    video_uri=payload["video_uri"]
+                )
+                
+            elif uri == "/v1/tasks/twelvelabs/index":
+                from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
+                from uuid import UUID
+                await process_twelvelabs_indexing_by_media_asset(
+                    media_asset_id=UUID(payload["media_asset_id"])
+                )
+                
+            elif uri == "/v1/tasks/media/download":
+                from app.media.downloader import download_asset_with_claim
+                from uuid import UUID
+                import httpx
+                
+                async with httpx.AsyncClient(timeout=self.settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
+                    await download_asset_with_claim(
+                        http_client=client,
+                        asset_id=UUID(payload["asset_id"]),
+                        platform=payload["platform"],
+                        external_id=payload["external_id"]
+                    )
+            
+            elif uri == "/v1/tasks/raw/archive":
+                from app.storage.raw_archive import upload_raw_json_gz
+                from uuid import UUID
+                await upload_raw_json_gz(
+                    platform=payload["platform"],
+                    search_id=UUID(payload["search_id"]),
+                    raw_json=payload["raw_json"]
+                )
+                
+            else:
+                logger.warning(f"[LOCAL] Unknown task URI: {uri}")
+                
+        except Exception as e:
+            logger.error(f"[LOCAL] Background task failed for {uri}: {e}", exc_info=True)
 
 # Global instance
 cloud_tasks = CloudTasksService()

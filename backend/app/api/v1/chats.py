@@ -65,8 +65,8 @@ async def stream_generator_to_redis(
         ):
             # logger.info(f"Stream Event: {str(event)[:500]}")
             # Log already added previously
-            if event.event == "events" and event.data:
-                print(f"[DEBUG] Stream Event Data: {json.dumps(event.data, default=str)}") # Added log for inspection
+            # if event.event == "events" and event.data:
+            #     print(f"[DEBUG] Stream Event Data: {json.dumps(event.data, default=str)}") # Added log for inspection
             # The SDK returns StreamPart(event='events', data={'event': 'on_chat_model_stream', ...})
             if event.event == "events" and event.data:
                 inner_event = event.data
