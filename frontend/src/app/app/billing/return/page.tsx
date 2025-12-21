@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { auth } from "@/lib/firebaseClient";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import {
 import { Check } from "lucide-react";
 import { toast } from "sonner";
 
-export default function BillingReturnPage() {
+function BillingReturnContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const [loading, setLoading] = useState<string | null>(null);
@@ -192,5 +192,13 @@ export default function BillingReturnPage() {
                 </Card>
             </div>
         </div>
+    );
+}
+
+export default function BillingReturnPage() {
+    return (
+        <Suspense fallback={<div>Loading subscription details...</div>}>
+            <BillingReturnContent />
+        </Suspense>
     );
 }
