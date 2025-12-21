@@ -12,6 +12,7 @@ interface SearchState {
     query: string;
     limit: number;
     platformInputs: SearchInputs;
+    activeSearchId: string | null;
 
     // keys: platform name (e.g. 'tiktok_top'). values: object with filterKey: value
     filters: Record<string, Record<string, string>>;
@@ -32,11 +33,13 @@ interface SearchState {
 
     setFilter: (platform: string, key: string, value: string) => void;
     setSort: (platform: string, sortKey: string) => void;
+    setActiveSearchId: (id: string | null) => void;
 }
 
 export const useSearchStore = create<SearchState>((set, get) => ({
     query: '',
     limit: 5,
+    activeSearchId: null,
     platformInputs: {
         instagram_reels: true,
         tiktok_keyword: true,
@@ -89,5 +92,6 @@ export const useSearchStore = create<SearchState>((set, get) => ({
             ...state.sortBy,
             [platform]: sortKey
         }
-    }))
+    })),
+    setActiveSearchId: (id) => set({ activeSearchId: id }),
 }));

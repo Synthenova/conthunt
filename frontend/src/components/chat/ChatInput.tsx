@@ -78,7 +78,7 @@ export function ChatInput({ boardId }: ChatInputProps) {
             >
                 <PromptInputTextarea
                     placeholder="Message agent..."
-                    className="text-sm min-h-[40px]"
+                    className="text-sm min-h-[40px] text-foreground"
                 />
                 <PromptInputActions className="justify-end px-2 pb-2">
                     {isStreaming ? (

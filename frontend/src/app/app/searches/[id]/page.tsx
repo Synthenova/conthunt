@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
-import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
+import { useMemo, useState } from "react";
+import { ClientFilteredResults } from "@/components/search/ClientFilteredResults";
 import { SelectionBar } from "@/components/boards/SelectionBar";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Calendar, Search, Loader2 } from "lucide-react";
@@ -11,157 +11,26 @@ import { formatDistanceToNow } from "date-fns";
 import { useParams } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { transformSearchResults, transformToMediaItem } from "@/lib/transformers";
-import { auth } from "@/lib/firebaseClient";
-import { fetchEventSource } from "@microsoft/fetch-event-source";
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+import { FlatMediaItem } from "@/lib/transformers";
+import { useSearchStream } from "@/hooks/useSearchStream";
 
 export default function SearchDetailPage() {
     const params = useParams();
     const id = params.id as string;
 
-    const [search, setSearch] = useState<any>(null);
-    const [results, setResults] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isStreaming, setIsStreaming] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [platformCalls, setPlatformCalls] = useState<any[]>([]);
+    const { search, results, platformCalls, isLoading, isStreaming, error } = useSearchStream(id);
+    const [flatResults, setFlatResults] = useState<FlatMediaItem[]>([]);
+    const [allFlatResults, setAllFlatResults] = useState<FlatMediaItem[]>([]);
 
-    // Fetch search data or stream
-    const loadSearch = useCallback(async (abortController: AbortController) => {
-        if (!id) return;
-
-        const user = auth.currentUser;
-        if (!user) {
-            setError("User not authenticated");
-            setIsLoading(false);
-            return;
-        }
-
-        const token = await user.getIdToken();
-
-        try {
-            // First check search status from the main endpoint
-            const statusRes = await fetch(`${BACKEND_URL}/v1/searches/${id}`, {
-                headers: { "Authorization": `Bearer ${token}` },
-                signal: abortController.signal,
-            });
-
-            if (!statusRes.ok) {
-                if (statusRes.status === 404) {
-                    // Search might still be initializing, try stream
-                } else {
-                    throw new Error("Failed to fetch search");
-                }
-            }
-
-            const searchData = statusRes.ok ? await statusRes.json() : null;
-
-            if (searchData?.status === "completed") {
-                // Already completed - use data from DB
-                setSearch(searchData);
-                setPlatformCalls(searchData.platform_calls || []);
-                setResults(searchData.results || []);
-                setIsStreaming(false);
-                setIsLoading(false);
-                return;
-            }
-
-            if (searchData?.status === "failed") {
-                setError("Search failed");
-                setIsLoading(false);
-                return;
-            }
-
-            // Status is 'running' - stream from Redis
-            setIsStreaming(true);
-            setIsLoading(false);
-            if (searchData) {
-                setSearch(searchData);
-            }
-
-            // Use fetchEventSource for streaming
-            await fetchEventSource(`${BACKEND_URL}/v1/search/${id}/stream`, {
-                headers: { "Authorization": `Bearer ${token}` },
-                signal: abortController.signal,
-                onmessage(msg) {
-                    try {
-                        if (!msg.data) return;
-                        const data = JSON.parse(msg.data);
-
-                        if (data.type === "platform_result") {
-                            if (data.success && data.items) {
-                                setResults(prev => {
-                                    const existingIds = new Set(prev.map((p: any) => p.content_item?.id));
-                                    const uniqueNew = data.items.filter((item: any) => !existingIds.has(item.content_item?.id));
-                                    return [...prev, ...uniqueNew];
-                                });
-                            }
-                        } else if (data.type === "done") {
-                            setIsStreaming(false);
-                            // Fetch full search details from DB
-                            fetchSearchDetails(token);
-                        } else if (data.type === "error") {
-                            setError(data.error || "Search failed");
-                            setIsStreaming(false);
-                        }
-                    } catch (e) {
-                        console.error("Error parsing SSE message", e);
-                    }
-                },
-                onerror(err) {
-                    if (!abortController.signal.aborted) {
-                        console.error("SSE Error", err);
-                        setIsStreaming(false);
-                    }
-                },
-            });
-        } catch (err: any) {
-            if (err.name === 'AbortError') return; // Ignore abort errors
-            console.error("Failed to load search", err);
-            setError(err.message || "Failed to load search");
-            setIsLoading(false);
-        }
-    }, [id]);
-
-    const fetchSearchDetails = async (token: string) => {
-        try {
-            const res = await fetch(`${BACKEND_URL}/v1/searches/${id}`, {
-                headers: { "Authorization": `Bearer ${token}` },
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setSearch(data);
-                setPlatformCalls(data.platform_calls || []);
-                // Update results from DB for consistency (has DB IDs now)
-                if (data.results) {
-                    setResults(data.results);
-                }
-            }
-        } catch (e) {
-            console.error("Failed to fetch search details", e);
-        }
-    };
-
-    useEffect(() => {
-        const abortController = new AbortController();
-        loadSearch(abortController);
-        return () => abortController.abort();
-    }, [loadSearch]);
-
-    // Transform results for grid
-    const flattenedResults = transformSearchResults(results);
     const itemsById = useMemo(() => {
-        const map: Record<string, any> = {};
-        for (const item of flattenedResults) {
+        const map: Record<string, FlatMediaItem> = {};
+        for (const item of allFlatResults) {
             if (item?.id) {
                 map[item.id] = item;
             }
         }
         return map;
-    }, [flattenedResults]);
-
+    }, [allFlatResults]);
 
     if (isLoading) {
         return (
@@ -249,13 +118,15 @@ export default function SearchDetailPage() {
             {/* Results */}
             <div className="space-y-4">
                 <h2 className="text-xl font-semibold border-b border-white/10 pb-2">
-                    Results ({flattenedResults.length})
+                    Results ({flatResults.length})
                     {isStreaming && <Loader2 className="inline-block h-4 w-4 animate-spin ml-2" />}
                 </h2>
-                <SelectableResultsGrid
-                    results={flattenedResults}
-                    loading={isStreaming && flattenedResults.length === 0}
+                <ClientFilteredResults
+                    results={results}
+                    loading={isStreaming && results.length === 0}
                     analysisDisabled={isStreaming}
+                    onFlatResultsChange={setFlatResults}
+                    onAllResultsChange={setAllFlatResults}
                 />
             </div>
 

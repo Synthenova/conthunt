@@ -1,15 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useBoards } from "@/hooks/useBoards";
 import { useSearchStore } from "@/lib/store";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
+import { ClientFilteredResults } from "@/components/search/ClientFilteredResults";
 import {
     Dialog,
     DialogContent,
@@ -28,7 +27,6 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { SelectableMediaCard } from "@/components/search/SelectableMediaCard";
 import { ArrowLeft, Trash2, Plus, Loader2, FolderOpen, Video, Download } from "lucide-react";
 import { transformToMediaItem } from "@/lib/transformers";
 import { formatDistanceToNow } from "date-fns";
@@ -53,7 +51,6 @@ export default function BoardDetailPage() {
 
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [showRemoveDialog, setShowRemoveDialog] = useState(false);
-    const [drawerItem, setDrawerItem] = useState<any | null>(null);
     const [isDownloading, setIsDownloading] = useState(false);
 
     // Transform board items to flat media format for cards
@@ -274,21 +271,11 @@ export default function BoardDetailPage() {
                         </Button>
                     </GlassCard>
                 ) : (
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                        {transformedItems.map((item, i) => (
-                            <div
-                                key={item.id || i}
-                                className="animate-in fade-in zoom-in duration-500 cursor-pointer"
-                                style={{ animationDelay: `${i * 30}ms` }}
-                                onClick={() => setDrawerItem(item)}
-                            >
-                                <SelectableMediaCard
-                                    item={item}
-                                    platform={item.platform || 'unknown'}
-                                />
-                            </div>
-                        ))}
-                    </div>
+                    <ClientFilteredResults
+                        results={transformedItems}
+                        loading={false}
+                        resultsAreFlat
+                    />
                 )}
             </div>
 
@@ -346,12 +333,6 @@ export default function BoardDetailPage() {
                 </AlertDialogContent>
             </AlertDialog>
 
-            {/* Content Drawer */}
-            <ContentDrawer
-                isOpen={!!drawerItem}
-                onClose={() => setDrawerItem(null)}
-                item={drawerItem}
-            />
         </div>
     );
 }

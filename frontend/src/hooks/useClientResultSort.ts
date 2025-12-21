@@ -1,13 +1,24 @@
 import { useState, useMemo } from "react";
-import { transformSearchResults } from "@/lib/transformers";
+import { FlatMediaItem, transformSearchResults } from "@/lib/transformers";
 import { ClientSortOption, ClientDateFilter } from "@/components/search/ClientResultControls";
 
-export function useClientResultSort(rawResults: any[]) {
+interface UseClientResultSortOptions {
+    resultsAreFlat?: boolean;
+}
+
+export function useClientResultSort(rawResults: any[], options: UseClientResultSortOptions = {}) {
     const [clientSort, setClientSort] = useState<ClientSortOption>("default");
     const [clientDateFilter, setClientDateFilter] = useState<ClientDateFilter>("all");
+    const { resultsAreFlat = false } = options;
+
+    const baseResults = useMemo(() => {
+        return resultsAreFlat
+            ? [...(rawResults || [])]
+            : transformSearchResults(rawResults || []);
+    }, [rawResults, resultsAreFlat]);
 
     const flatResults = useMemo(() => {
-        let results = transformSearchResults(rawResults || []);
+        let results: FlatMediaItem[] = [...baseResults];
 
         // 1. Client-Side Filtering (Date)
         if (clientDateFilter !== "all") {
@@ -61,9 +72,10 @@ export function useClientResultSort(rawResults: any[]) {
         }
 
         return results;
-    }, [rawResults, clientSort, clientDateFilter]);
+    }, [baseResults, clientSort, clientDateFilter]);
 
     return {
+        baseResults,
         flatResults,
         clientSort,
         setClientSort,

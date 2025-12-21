@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchStore } from "@/lib/store";
 import { auth } from "@/lib/firebaseClient";
 import { useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
@@ -32,8 +31,8 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
 
 export function useSearch() {
     const store = useSearchStore();
-    const router = useRouter();
     const queryClient = useQueryClient();
+    const { setActiveSearchId } = store;
 
     // State for pagination and results (used by detail page now)
     const [cursors, setCursors] = useState<Record<string, any>>({});
@@ -61,6 +60,9 @@ export function useSearch() {
 
     // 1. Search Mutation (POST /v1/search) - Now returns search_id and redirects
     const searchMutation = useMutation({
+        onMutate: () => {
+            setActiveSearchId(null);
+        },
         mutationFn: async () => {
             const body = {
                 query: store.query,
@@ -100,9 +102,8 @@ export function useSearch() {
             return res.json() as Promise<SearchResponse>;
         },
         onSuccess: (data) => {
-            // Redirect to search detail page
             queryClient.invalidateQueries({ queryKey: ["searchHistory"] });
-            router.push(`/app/searches/${data.search_id}`);
+            setActiveSearchId(data.search_id);
         },
     });
 
