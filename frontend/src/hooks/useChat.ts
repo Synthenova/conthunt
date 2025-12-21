@@ -6,7 +6,15 @@ import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { auth } from '@/lib/firebaseClient';
 import { useChatStore, Chat, ChatMessage } from '@/lib/chatStore';
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+const getBackendUrl = () => {
+    let url = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+    console.log(url);
+    if (url.includes('run.app') && url.startsWith('http:')) {
+        url = url.replace('http:', 'https:');
+    }
+    return url;
+};
+const BACKEND_URL = getBackendUrl();
 
 async function getAuthToken(): Promise<string> {
     const user = auth.currentUser;
