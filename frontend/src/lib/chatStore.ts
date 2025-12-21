@@ -107,8 +107,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     finalizeMessage: () => {
         const state = get();
         if (state.streamingContent && state.streamingMessageId) {
+            // Check if message already exists to avoid duplicates
+            const exists = state.messages.some(m => m.id === state.streamingMessageId);
+
             set((s) => ({
-                messages: [...s.messages, {
+                messages: exists ? s.messages : [...s.messages, {
                     id: s.streamingMessageId!,
                     type: 'ai' as const,
                     content: s.streamingContent,

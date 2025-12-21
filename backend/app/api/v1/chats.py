@@ -1,12 +1,17 @@
+"""Chat API endpoints - POST /v1/chats with Redis streaming.
+
+Uses direct LangGraph graph calls instead of the LangGraph SDK,
+with AsyncPostgresSaver for thread-based persistence.
+"""
 import asyncio
 import json
 import uuid
-from typing import List, Optional, Any, Dict
+from typing import List, Optional
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, BackgroundTasks
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as redis
-from langgraph_sdk import get_client
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
@@ -33,9 +38,11 @@ async def get_redis():
     finally:
         await client.close()
 
+
 # --- Background Task Logic ---
 
 async def stream_generator_to_redis(
+    graph,  # The compiled graph from app.state
     chat_id: str,
     thread_id: str,
     inputs: dict,
@@ -43,7 +50,7 @@ async def stream_generator_to_redis(
 ):
     """
     Background task:
-    1. Stream from LangGraph.
+    1. Stream from LangGraph using direct graph.astream_events().
     2. Filter Assistant deltas.
     3. Push to Redis Stream `chat:{id}:stream`.
     4. Cleanup Redis key on finish.
@@ -51,74 +58,60 @@ async def stream_generator_to_redis(
     logger.info(f"Starting background stream for chat {chat_id}")
     
     r = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    lg_client = get_client(url=settings.LANGGRAPH_URL)
     stream_key = f"chat:{chat_id}:stream"
 
     try:
-        config_obj = {"configurable": context} if context else None        
-        async for event in lg_client.runs.stream(
-            thread_id=thread_id,
-            assistant_id="agent",
-            input=inputs,
-            stream_mode="events",
-            config=config_obj,
-        ):
-            # logger.info(f"Stream Event: {str(event)[:500]}")
-            # Log already added previously
-            # if event.event == "events" and event.data:
-            #     print(f"[DEBUG] Stream Event Data: {json.dumps(event.data, default=str)}") # Added log for inspection
-            # The SDK returns StreamPart(event='events', data={'event': 'on_chat_model_stream', ...})
-            if event.event == "events" and event.data:
-                inner_event = event.data
-                ev_type = inner_event.get("event")
-                data = inner_event.get("data", {})
-                
-                payload = None
-                
-                if ev_type == "on_chain_start":
-                    # Try to capture the Human Message ID from the input
-                    try:
-                        inp = data.get("input", {})
-                        if isinstance(inp, dict):
-                            msgs = inp.get("messages", [])
-                            if msgs and isinstance(msgs, list):
-                                first_msg = msgs[0]
-                                if isinstance(first_msg, dict) and first_msg.get("type") == "human":
-                                    human_id = first_msg.get("id")
-                                    if human_id:
-                                        payload = {
-                                            "type": "user_message_id",
-                                            "id": human_id
-                                        }
-                    except Exception as e:
-                        logger.warning(f"Error extracting human message ID: {e}")
+        # Build config with thread_id for persistence and context for tools
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "x-auth-token": (context or {}).get("x-auth-token"),
+                "board_id": (context or {}).get("board_id"),
+            }
+        }
+        
+        async for ev in graph.astream_events(inputs, config=config, version="v2"):
+            ev_type = ev.get("event")
+            data = ev.get("data", {}) or {}
+            
+            payload = None
+            
+            if ev_type == "on_chain_start":
+                # ... existing code ...
+                pass
 
-                elif ev_type == "on_chat_model_stream":
-                    chunk = data.get("chunk", {})
-                    content = chunk.get("content", "")
-                    msg_id = chunk.get("id")
+            elif ev_type == "on_chat_model_stream":
+                chunk = data.get("chunk")
+                if chunk:
+                    # chunk might be an AIMessageChunk object
+                    content = getattr(chunk, "content", "") if hasattr(chunk, "content") else chunk.get("content", "")
+                    msg_id = getattr(chunk, "id", None) if hasattr(chunk, "id") else chunk.get("id")
+                    
                     if content:
                         payload = {
                             "type": "content_delta",
                             "content": content,
                             "id": msg_id
                         }
+                    else:
+                        # Sometimes empty chunks come through e.g. at start/end
+                        pass
                         
-                elif ev_type == "on_tool_start":
-                    payload = {
-                        "type": "tool_start",
-                        "tool": data.get("name"),
-                        "input": data.get("input")
-                    }
-                    
-                elif ev_type == "on_tool_end":
-                    payload = {
-                        "type": "tool_end",
-                        "tool": data.get("name")
-                    }
+            elif ev_type == "on_tool_start":
+                payload = {
+                    "type": "tool_start",
+                    "tool": data.get("name"),
+                    "input": data.get("input")
+                }
+                
+            elif ev_type == "on_tool_end":
+                payload = {
+                    "type": "tool_end",
+                    "tool": data.get("name")
+                }
 
-                if payload:
-                    await r.xadd(stream_key, {"data": json.dumps(payload)})
+            if payload:
+                await r.xadd(stream_key, {"data": json.dumps(payload, default=str)})
 
         await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
 
@@ -130,6 +123,7 @@ async def stream_generator_to_redis(
         await r.expire(stream_key, 60)
         await r.close()
         logger.info(f"Background stream finished for {chat_id}")
+
 
 # --- Endpoints ---
 
@@ -143,15 +137,10 @@ async def create_chat(
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid user")
     
-    # 1. Create LangGraph thread
-    lg_client = get_client(url=settings.LANGGRAPH_URL)
-    try:
-        thread = await lg_client.threads.create()
-    except Exception as e:
-        logger.error(f"Failed to create LangGraph thread: {e}")
-        raise HTTPException(status_code=503, detail="Chat service unavailable")
+    # Thread ID is just a UUID - the checkpointer uses it as the key
+    thread_id = str(uuid.uuid4())
 
-    # 2. Insert into DB
+    # Insert into DB
     async with get_db_connection() as conn:
         user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
@@ -163,7 +152,7 @@ async def create_chat(
             conn=conn,
             chat_id=chat_id,
             user_id=user_uuid,
-            thread_id=thread["thread_id"],
+            thread_id=thread_id,
             title=title
         )
         await conn.commit()
@@ -171,15 +160,13 @@ async def create_chat(
         return Chat(
             id=chat_id,
             user_id=user_uuid,
-            thread_id=thread["thread_id"],
+            thread_id=thread_id,
             title=title,
             status="idle",
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
-    return Chat(...) # Logic helper for typing if needed, but return above covers it
 
-from datetime import datetime
 
 @router.get("/", response_model=List[Chat])
 async def list_chats(
@@ -195,12 +182,13 @@ async def list_chats(
         await set_rls_user(conn, user_uuid)
         return await queries.get_user_chats(conn, user_uuid)
 
+
 @router.post("/{chat_id}/send")
 async def send_message(
     chat_id: uuid.UUID,
     request: SendMessageRequest,
     background_tasks: BackgroundTasks,
-    req_obj: Request, # Need Request object to get headers
+    req_obj: Request,
     user: dict = Depends(get_current_user),
 ):
     """Send a message (triggers background stream)."""
@@ -211,14 +199,14 @@ async def send_message(
     # Extract auth token from header
     auth_header = req_obj.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-         # Should ideally not happen if get_current_user passed, but specific token needed
-         # In Firebase auth, the token is reused. 
-         # get_current_user verifies it but doesn't return the raw token string usually?
-         # Depends on implementation. We grab it from header to be safe.
          raise HTTPException(status_code=401, detail="Missing Bearer token")
     
     auth_token = auth_header.split(" ")[1]
 
+    # Get graph from app state
+    graph = req_obj.app.state.agent_graph
+    if not graph:
+        raise HTTPException(status_code=503, detail="Agent service unavailable")
     
     async with get_db_connection() as conn:
         user_uuid = await get_cached_user_uuid(conn, user_id)
@@ -233,16 +221,24 @@ async def send_message(
         "messages": [{"role": "user", "content": request.message}],
     }
     
-    # Runtime context (not in state) - includes auth token for tools
+    # Runtime context (not persisted) - includes auth token for tools
     context = {
-        "x-auth-token": auth_token,  # Tools read this for API calls
+        "x-auth-token": auth_token,
         "board_id": request.board_id,
     }
     
-    print(f"[CHAT] Sending to agent with board_id={request.board_id}, auth_token present: {bool(auth_token)}")
+    logger.info(f"[CHAT] Sending to agent with board_id={request.board_id}, auth_token present: {bool(auth_token)}")
+    
+    # Clear previous stream data to prevent replaying old messages within 60s window
+    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        await r.delete(f"chat:{str(chat_id)}:stream")
+    finally:
+        await r.close()
     
     background_tasks.add_task(
         stream_generator_to_redis,
+        graph=graph,
         chat_id=str(chat_id),
         thread_id=thread_id,
         inputs=inputs,
@@ -250,6 +246,7 @@ async def send_message(
     )
     
     return {"ok": True}
+
 
 @router.delete("/{chat_id}")
 async def delete_chat(
@@ -273,6 +270,7 @@ async def delete_chat(
         await conn.commit()
         
     return {"ok": True}
+
 
 @router.get("/{chat_id}/stream")
 async def stream_chat(
@@ -333,12 +331,14 @@ async def stream_chat(
 
     return EventSourceResponse(event_generator())
 
+
 @router.get("/{chat_id}/messages", response_model=ChatHistory)
 async def get_chat_messages(
     chat_id: uuid.UUID,
+    request: Request,
     user: dict = Depends(get_current_user),
 ):
-    """Get confirmed history from LangGraph."""
+    """Get confirmed history from the checkpointer."""
     user_id = user.get("uid")
     if not user_id:
          raise HTTPException(status_code=401, detail="Invalid user")
@@ -351,20 +351,37 @@ async def get_chat_messages(
         if not thread_id:
             raise HTTPException(status_code=404, detail="Chat not found")
 
-    lg_client = get_client(url=settings.LANGGRAPH_URL)
+    # Get graph from app state
+    graph = request.app.state.agent_graph
+    if not graph:
+        raise HTTPException(status_code=503, detail="Agent service unavailable")
+
     try:
-        current_state = await lg_client.threads.get_state(thread_id)
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = await graph.aget_state(config)
+        
         messages = []
-        if "messages" in current_state["values"]:
-            for msg in current_state["values"]["messages"]:
+        vals = snapshot.values or {}
+        for msg in vals.get("messages", []):
+            # Handle both dict and object formats
+            if hasattr(msg, "type"):
+                m_type = msg.type
+                content = getattr(msg, "content", "")
+                msg_id = getattr(msg, "id", None)
+                additional_kwargs = getattr(msg, "additional_kwargs", {})
+            else:
                 m_type = msg.get("type")
-                if m_type in ["human", "ai"]:
-                   messages.append(Message(
-                       id=msg.get("id"),
-                       type=m_type,
-                       content=msg.get("content", ""),
-                       additional_kwargs=msg.get("additional_kwargs", {})
-                   ))
+                content = msg.get("content", "")
+                msg_id = msg.get("id")
+                additional_kwargs = msg.get("additional_kwargs", {})
+            
+            if m_type in ["human", "ai"]:
+               messages.append(Message(
+                   id=msg_id,
+                   type=m_type,
+                   content=content,
+                   additional_kwargs=additional_kwargs
+               ))
         return ChatHistory(messages=messages)
     except Exception as e:
         logger.error(f"Error fetching state: {e}")

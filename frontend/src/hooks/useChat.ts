@@ -106,7 +106,15 @@ export function useChatMessages(chatId: string | null) {
                 type: m.type as 'human' | 'ai',
                 content: m.content,
             }));
-            setMessages(messages);
+
+            // Preserve optimistic messages that haven't been saved yet
+            const currentMsgs = useChatStore.getState().messages;
+            const tempMsgs = currentMsgs.filter(m => m.id.startsWith('temp-'));
+
+            // If we have temp messages, ensure we don't duplicate if they are already in fetched
+            // (Simple duplication check based on content/timestamp could be added if needed, 
+            // but for now assume temp ID means not yet in backend)
+            setMessages([...messages, ...tempMsgs]);
             return { messages };
         },
         enabled: !!chatId,

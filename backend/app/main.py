@@ -12,6 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core import get_settings, logger
 from app.db import init_db, close_db
 from app.api import v1_router
+from app.agent.runtime import create_agent_graph
+
+settings = get_settings()
 
 
 @asynccontextmanager
@@ -22,14 +25,23 @@ async def lifespan(app: FastAPI):
     try:
         await init_db()
         logger.info("Database connection verified")
+        
+        # Initialize agent graph with Postgres checkpointer
+        graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
+        app.state.agent_graph = graph
+        app.state._agent_saver_cm = saver_cm
+        logger.info("Agent graph initialized with Postgres checkpointer")
     except Exception as e:
-        logger.error(f"Failed to connect to database: {e}")
+        logger.error(f"Failed to start: {e}")
         raise
     
     yield
     
     # Shutdown
     logger.info("Shutting down Conthunt backend...")
+    if hasattr(app.state, '_agent_saver_cm'):
+        await app.state._agent_saver_cm.__aexit__(None, None, None)
+        logger.info("Agent checkpointer closed")
     await close_db()
     logger.info("Database connections closed")
 

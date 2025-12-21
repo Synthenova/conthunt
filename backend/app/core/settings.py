@@ -66,7 +66,8 @@ class Settings(BaseSettings):
     FRONTEND_RETURN_URL: str = "http://localhost:3000/app/billing/return"
 
     # LangGraph & Redis
-    LANGGRAPH_URL: str
+    # LANGGRAPH_URL is no longer required - we use direct graph calls now
+    LANGGRAPH_URL: str = ""  # Deprecated - kept for backward compatibility
     REDIS_URL: str = "redis://localhost:6379"
 
     class Config:
