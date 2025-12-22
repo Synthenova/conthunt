@@ -22,6 +22,7 @@ router = APIRouter()
 
 
 @router.get("/searches", response_model=SearchHistoryResponse)
+@router.get("/searches/", response_model=SearchHistoryResponse)
 async def list_searches(
     limit: int = Query(default=20, ge=1, le=100),
     user: dict = Depends(get_current_user),
@@ -61,6 +62,7 @@ async def list_searches(
 
 
 @router.get("/searches/{search_id}", response_model=SearchDetailResponse)
+@router.get("/searches/{search_id}/", response_model=SearchDetailResponse)
 async def get_search_detail(
     search_id: UUID,
     request: Request,

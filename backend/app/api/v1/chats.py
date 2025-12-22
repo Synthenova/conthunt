@@ -155,6 +155,7 @@ async def _get_agent_graph(request: Request):
         return graph
     return await _refresh_agent_graph(request)
 
+@router.post("", response_model=Chat)
 @router.post("/", response_model=Chat)
 async def create_chat(
     request: CreateChatRequest,
@@ -196,6 +197,7 @@ async def create_chat(
         )
 
 
+@router.get("", response_model=List[Chat])
 @router.get("/", response_model=List[Chat])
 async def list_chats(
     user: dict = Depends(get_current_user),

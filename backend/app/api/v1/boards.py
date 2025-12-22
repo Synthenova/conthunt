@@ -20,6 +20,7 @@ settings = get_settings()
 
 router = APIRouter()
 
+@router.get("", response_model=List[BoardResponse])
 @router.get("/", response_model=List[BoardResponse])
 async def list_boards(
     check_item_id: Optional[UUID] = Query(None),
@@ -36,6 +37,7 @@ async def list_boards(
         return await queries.get_user_boards(conn, user_uuid, check_content_item_id=check_item_id)
 
 
+@router.post("", response_model=BoardResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=BoardResponse, status_code=status.HTTP_201_CREATED)
 async def create_board(
     board_in: BoardCreate,
