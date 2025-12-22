@@ -53,7 +53,7 @@ async def call_model(state: MessagesState, config: RunnableConfig):
     # Using Vertex AI via ChatGoogleGenerativeAI to match analysis.py pattern
     # Native support without creating a separate ChatVertexAI instance if this works well
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp", # Using latest flash model or match analysis.py
+        model="gemini-3-flash-preview",
         temperature=0.5,
         project=settings.GCLOUD_PROJECT,
         vertexai=True,
