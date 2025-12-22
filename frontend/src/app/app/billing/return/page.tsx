@@ -70,7 +70,8 @@ function BillingReturnContent() {
             }
 
             const idToken = await user.getIdToken();
-            const res = await fetch("http://localhost:8000/v1/billing/dodo/checkout-session", {
+            const { BACKEND_URL } = await import('@/lib/api');
+            const res = await fetch(`${BACKEND_URL}/v1/billing/dodo/checkout-session`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",

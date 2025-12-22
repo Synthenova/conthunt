@@ -12,11 +12,16 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, BackgroundTasks
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as redis
+try:
+    from psycopg.errors import OperationalError
+except Exception:  # pragma: no cover - fallback if psycopg isn't available
+    OperationalError = Exception
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
 from app.db import get_db_connection, set_rls_user, get_or_create_user, queries
 from app.services.user_cache import get_cached_user_uuid
+from app.agent.runtime import create_agent_graph
 from app.schemas.chats import (
     Chat, 
     CreateChatRequest, 
@@ -127,6 +132,29 @@ async def stream_generator_to_redis(
 
 # --- Endpoints ---
 
+
+async def _refresh_agent_graph(request: Request):
+    """Recreate the LangGraph instance and its saver when the connection drops."""
+    saver_cm = getattr(request.app.state, "_agent_saver_cm", None)
+    if saver_cm:
+        try:
+            await saver_cm.__aexit__(None, None, None)
+        except Exception as e:
+            logger.warning(f"Error closing previous agent saver: {e}")
+
+    graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
+    request.app.state.agent_graph = graph
+    request.app.state._agent_saver_cm = saver_cm
+    return graph
+
+
+async def _get_agent_graph(request: Request):
+    """Return the cached graph, refreshing if missing."""
+    graph = getattr(request.app.state, "agent_graph", None)
+    if graph:
+        return graph
+    return await _refresh_agent_graph(request)
+
 @router.post("/", response_model=Chat)
 async def create_chat(
     request: CreateChatRequest,
@@ -204,9 +232,7 @@ async def send_message(
     auth_token = auth_header.split(" ")[1]
 
     # Get graph from app state
-    graph = req_obj.app.state.agent_graph
-    if not graph:
-        raise HTTPException(status_code=503, detail="Agent service unavailable")
+    graph = await _get_agent_graph(req_obj)
     
     async with get_db_connection() as conn:
         user_uuid = await get_cached_user_uuid(conn, user_id)
@@ -351,14 +377,17 @@ async def get_chat_messages(
         if not thread_id:
             raise HTTPException(status_code=404, detail="Chat not found")
 
-    # Get graph from app state
-    graph = request.app.state.agent_graph
-    if not graph:
-        raise HTTPException(status_code=503, detail="Agent service unavailable")
+    # Get graph from app state (refresh if missing)
+    graph = await _get_agent_graph(request)
 
     try:
         config = {"configurable": {"thread_id": thread_id}}
-        snapshot = await graph.aget_state(config)
+        try:
+            snapshot = await graph.aget_state(config)
+        except OperationalError as e:
+            logger.warning(f"Agent graph connection lost, refreshing and retrying: {e}")
+            graph = await _refresh_agent_graph(request)
+            snapshot = await graph.aget_state(config)
         
         messages = []
         vals = snapshot.values or {}

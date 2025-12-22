@@ -34,12 +34,15 @@ async def create_agent_graph(database_url: str):
     # Add search_path option so checkpointer uses correct schema
     schema = settings.DB_SCHEMA
     options_param = quote(f"-c search_path={schema},public")
+    keepalive_params = "keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5"
     
     # Simple string append to avoid urlparse issues with bracketed IPv4
     if "?" in pg_url:
         pg_url = f"{pg_url}&options={options_param}"
     else:
         pg_url = f"{pg_url}?options={options_param}"
+    # Keep the TCP connection alive so the checkpointer doesn't drop after idle periods
+    pg_url = f"{pg_url}&{keepalive_params}"
     
     logger.info(f"Initializing AsyncPostgresSaver checkpointer with schema: {schema}")
     

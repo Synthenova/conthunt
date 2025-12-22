@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { auth } from "@/lib/firebaseClient";
 import { Board, BoardItem, CreateBoardRequest } from "@/lib/types/boards";
 
-const API_BASE = "http://localhost:8000/v1";
+import { BACKEND_URL } from '@/lib/api';
+
+const API_BASE = `${BACKEND_URL}/v1`;
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {
     const user = auth.currentUser;
