@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
+# from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.core import get_settings, logger
 from app.db import init_db, close_db
@@ -55,7 +55,7 @@ app = FastAPI(
 )
 
 # Honor X-Forwarded-* headers from Cloud Run so redirects keep HTTPS.
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+# app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # CORS middleware
 app.add_middleware(
