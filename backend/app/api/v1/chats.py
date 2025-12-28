@@ -105,14 +105,14 @@ async def stream_generator_to_redis(
             elif ev_type == "on_tool_start":
                 payload = {
                     "type": "tool_start",
-                    "tool": data.get("name"),
+                    "tool": ev.get("name"),
                     "input": data.get("input")
                 }
                 
             elif ev_type == "on_tool_end":
                 payload = {
                     "type": "tool_end",
-                    "tool": data.get("name")
+                    "tool": ev.get("name")
                 }
 
             if payload:
