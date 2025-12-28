@@ -1,5 +1,6 @@
 from typing import List, Optional
 from uuid import UUID
+import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
@@ -14,6 +15,7 @@ from app.api.v1.analysis import run_gemini_analysis
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.services.cdn_signer import generate_signed_url
 from app.services.cloud_tasks import cloud_tasks
+from app.services.user_cache import get_cached_user_uuid
 from app.core import get_settings, logger
 
 settings = get_settings()
@@ -32,7 +34,7 @@ async def list_boards(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         return await queries.get_user_boards(conn, user_uuid, check_content_item_id=check_item_id)
 
@@ -49,7 +51,7 @@ async def create_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         board_id = await queries.create_board(conn, user_uuid, board_in.name)
@@ -71,7 +73,7 @@ async def search_boards(
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         return await queries.search_user_boards(conn, user_uuid, q)
 
@@ -87,7 +89,7 @@ async def get_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         board = await queries.get_board_by_id(conn, board_id)
@@ -108,7 +110,7 @@ async def delete_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         success = await queries.delete_board(conn, board_id)
@@ -128,7 +130,7 @@ async def get_board_items(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         # Verify board exists
@@ -136,14 +138,20 @@ async def get_board_items(
         if not board:
             raise HTTPException(status_code=404, detail="Board not found")
             
+        t_start_query = time.time()
         items = await queries.get_board_items(conn, board_id)
+        t_end_query = time.time()
+        logger.info(f"[TIMING] get_board_items query took: {t_end_query - t_start_query:.4f}s")
         
         # Sign URLs for stored assets
+        t_start_sign = time.time()
         for item in items:
             for asset in item.get("assets", []):
                 if asset.get("status") in ("stored", "downloaded") and asset.get("gcs_uri"):
                     asset["source_url"] = generate_signed_url(asset["gcs_uri"])
-                    
+        t_end_sign = time.time()
+        logger.info(f"[TIMING] signing URLs took: {t_end_sign - t_start_sign:.4f}s for {len(items)} items")
+
         return items
 
 
@@ -159,7 +167,7 @@ async def get_board_items_summary(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         # Verify board exists
@@ -186,7 +194,7 @@ async def add_item_to_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         try:
@@ -236,7 +244,7 @@ async def batch_add_items_to_board(
     media_asset_ids = []
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         # Verify board exists
@@ -289,7 +297,7 @@ async def remove_item_from_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         success = await queries.remove_item_from_board(conn, board_id, content_item_id)
@@ -310,7 +318,7 @@ async def search_in_board(
         raise HTTPException(status_code=401, detail="Invalid user")
         
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         board = await queries.get_board_by_id(conn, board_id)

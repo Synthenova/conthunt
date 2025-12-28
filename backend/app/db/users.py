@@ -5,7 +5,10 @@ from typing import Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.db.decorators import log_query_timing
 
+
+@log_query_timing
 async def get_or_create_user(conn: AsyncConnection, firebase_uid: str) -> Tuple[UUID, str]:
     """
     Get or create internal user record from Firebase UID.
