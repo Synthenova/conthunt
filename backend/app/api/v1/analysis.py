@@ -58,31 +58,35 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
     import traceback
     
     start_time = time.time()
-    print(f"[ANALYSIS] Starting background task for media_asset_id={media_asset_id}, analysis_id={analysis_id}")
-    print(f"[ANALYSIS] Video URI: {video_uri}")
+    start_time = time.time()
+    logger.info(f"[ANALYSIS] Starting background task for media_asset_id={media_asset_id}, analysis_id={analysis_id}")
+    logger.debug(f"[ANALYSIS] Video URI: {video_uri}")
     
     try:
-        print(f"[ANALYSIS] Building HumanMessage with video...")
+        logger.info(f"[ANALYSIS] Building HumanMessage with video...")
         message = HumanMessage(
             content=[
                 {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
-                {
-                    "type": "media",
+                {      
+                    "type": "media",              
                     "file_uri": video_uri,
                     "mime_type": "video/mp4", 
                 }
             ]
         )
         
-        print(f"[ANALYSIS] Invoking Gemini LLM (structured output)...")
+        
+        logger.info(f"[ANALYSIS] Invoking Gemini LLM (structured output)...")
         invoke_start = time.time()
         result: VideoAnalysisResult = await structured_llm.ainvoke([message])
         invoke_duration = time.time() - invoke_start
-        print(f"[ANALYSIS] Gemini LLM returned in {invoke_duration:.2f}s")
-        print(f"[ANALYSIS] Result summary: {result.summary[:100] if result.summary else 'N/A'}...")
+        invoke_duration = time.time() - invoke_start
+        logger.info(f"[ANALYSIS] Gemini LLM returned in {invoke_duration:.2f}s")
+        logger.info(f"[ANALYSIS] Result summary: {result.summary[:100] if result.summary else 'N/A'}...")
         
         # Update to completed
-        print(f"[ANALYSIS] Updating status to 'completed'...")
+        # Update to completed
+        logger.info(f"[ANALYSIS] Updating status to 'completed'...")
         async with get_db_connection() as conn:
             await update_analysis_status(
                 conn,
@@ -93,7 +97,8 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
             await conn.commit()
         
         total_duration = time.time() - start_time
-        print(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
+        total_duration = time.time() - start_time
+        logger.info(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
         
     except Exception as e:
         total_duration = time.time() - start_time
@@ -110,7 +115,7 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
                     error=str(e),
                 )
                 await conn.commit()
-            print(f"[ANALYSIS] Updated status to 'failed' for {analysis_id}")
+            logger.info(f"[ANALYSIS] Updated status to 'failed' for {analysis_id}")
         except Exception as db_err:
             logger.error(f"[ANALYSIS] Failed to update status to 'failed': {db_err}")
 
@@ -126,7 +131,7 @@ async def run_gemini_analysis(
     Creates 'processing' record and spawns background task.
     Does NOT trigger TwelveLabs indexing.
     """
-    print(f"run_gemini_analysis called for media_asset {media_asset_id}")
+    logger.info(f"run_gemini_analysis called for media_asset {media_asset_id}")
     
     async with get_db_connection() as conn:
         # 1. Get media asset details
@@ -134,7 +139,16 @@ async def run_gemini_analysis(
         if not media_asset:
             raise HTTPException(status_code=404, detail="Media asset not found")
         
-        video_uri = media_asset.get("gcs_uri") or media_asset.get("video_url")
+        # Determine video URI for analysis
+        source_url = media_asset.get("source_url", "")
+        gcs_uri = media_asset.get("gcs_uri")
+        
+        # For YouTube, always use source_url (gcs_uri is not a real video file)
+        is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
+        if is_youtube:
+            video_uri = source_url
+        else:
+            video_uri = gcs_uri or media_asset.get("video_url") or source_url
         
         if not video_uri:
             raise HTTPException(status_code=400, detail="No video URL available for analysis")
@@ -165,14 +179,15 @@ async def run_gemini_analysis(
         )
         await conn.commit()
         
-        print(f"Created pending analysis {analysis_id} for media_asset {media_asset_id}")
+        logger.info(f"Created pending analysis {analysis_id} for media_asset {media_asset_id}")
 
         # 4. Spawn background task for LLM processing
-        print(f"[ANALYSIS] Spawning background task for analysis_id={analysis_id}")
+        # 4. Spawn background task for LLM processing
+        logger.info(f"[ANALYSIS] Spawning background task for analysis_id={analysis_id}")
         
         if use_cloud_tasks:
              # Use Cloud Tasks
-             print(f"[ANALYSIS] Using Cloud Tasks (queue={settings.QUEUE_GEMINI}) for analysis {analysis_id}")
+             logger.info(f"[ANALYSIS] Using Cloud Tasks (queue={settings.QUEUE_GEMINI}) for analysis {analysis_id}")
              await cloud_tasks.create_http_task(
                  queue_name=settings.QUEUE_GEMINI,
                  relative_uri="/v1/tasks/gemini/analyze",
@@ -186,9 +201,9 @@ async def run_gemini_analysis(
              # Legacy/Local mode
              import asyncio
              asyncio.create_task(_execute_gemini_analysis(analysis_id, media_asset_id, video_uri))
-             print(f"[ANALYSIS] Background task spawned successfully (local asyncio)")
+             logger.info(f"[ANALYSIS] Background task spawned successfully (local asyncio)")
         else:
-             print(f"[ANALYSIS] WARNING: No execution method provided, task detached")
+             logger.warning(f"[ANALYSIS] WARNING: No execution method provided, task detached")
              import asyncio
              asyncio.create_task(_execute_gemini_analysis(analysis_id, media_asset_id, video_uri))
         
@@ -218,12 +233,20 @@ async def analyze_video(
     Returns immediately with 'processing' status. Poll to check completion.
     Also triggers 12Labs indexing in the background.
     """
-    # Trigger 12Labs Indexing in Background (via Cloud Tasks)
-    await cloud_tasks.create_http_task(
-        queue_name=settings.QUEUE_TWELVELABS,
-        relative_uri="/v1/tasks/twelvelabs/index",
-        payload={"media_asset_id": str(media_asset_id)}
-    )
+    # Check if this is a YouTube video (TwelveLabs can't handle YouTube URLs directly)
+    async with get_db_connection() as conn:
+        media_asset = await get_media_asset_by_id(conn, media_asset_id)
+    
+    source_url = media_asset.get("source_url", "") if media_asset else ""
+    is_youtube = "youtube.com" in source_url or "youtu.be" in source_url    
+    
+    if not is_youtube:
+        # Trigger 12Labs Indexing in Background (only for non-YouTube)
+        await cloud_tasks.create_http_task(
+            queue_name=settings.QUEUE_TWELVELABS,
+            relative_uri="/v1/tasks/twelvelabs/index",
+            payload={"media_asset_id": str(media_asset_id)}
+        )
     
     # Run non-blocking Gemini analysis (via Cloud Tasks)
     return await run_gemini_analysis(media_asset_id, background_tasks=background_tasks, use_cloud_tasks=True)

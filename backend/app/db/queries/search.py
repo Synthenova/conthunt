@@ -4,12 +4,15 @@ import hashlib
 import time
 import logging
 from typing import List, Tuple
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.services.content_builder import extract_author_from_payload, content_item_from_row
+
 from app.platforms.base import NormalizedItem, MediaUrl
+from app.db.decorators import log_query_timing
 
 
 def compute_search_hash(query: str, inputs: dict) -> str:
@@ -18,6 +21,7 @@ def compute_search_hash(query: str, inputs: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+@log_query_timing
 async def insert_search(
     conn: AsyncConnection,
     user_id: UUID,
@@ -52,6 +56,7 @@ async def insert_search(
     return search_id
 
 
+@log_query_timing
 async def update_search_status(
     conn: AsyncConnection,
     search_id: UUID,
@@ -64,6 +69,7 @@ async def update_search_status(
     )
 
 
+@log_query_timing
 async def insert_platform_call(
     conn: AsyncConnection,
     search_id: UUID,
@@ -114,6 +120,7 @@ async def insert_platform_call(
     return call_id
 
 
+@log_query_timing
 async def insert_platform_calls_batch(
     conn: AsyncConnection,
     calls: List[dict],
@@ -160,6 +167,7 @@ async def insert_platform_calls_batch(
     )
 
 
+@log_query_timing
 async def upsert_content_item(
     conn: AsyncConnection,
     item: NormalizedItem,
@@ -208,6 +216,7 @@ async def upsert_content_item(
     return row[0], row[1]
 
 
+@log_query_timing
 async def upsert_content_items_batch(
     conn: AsyncConnection,
     items: List[NormalizedItem],
@@ -229,7 +238,12 @@ async def upsert_content_items_batch(
     prepared_items = []
     
     for item in item_list:
+        # Generate deterministic ID matching streaming logic
+        # content_id = uuid5(NAMESPACE_URL, f"{platform}:{external_id}")
+        det_id = str(uuid5(NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
+        
         prepared_items.append({
+            "id": det_id,
             "platform": item.platform,
             "external_id": item.external_id,
             "content_type": item.content_type,
@@ -245,18 +259,18 @@ async def upsert_content_items_batch(
     result = await conn.execute(
         text("""
             INSERT INTO content_items (
-                platform, external_id, content_type, canonical_url,
+                id, platform, external_id, content_type, canonical_url,
                 title, primary_text, published_at, creator_handle,
                 metrics, payload
             )
             SELECT 
-                platform, external_id, content_type, canonical_url,
+                id, platform, external_id, content_type, canonical_url,
                 title, primary_text, 
                 CAST(published_at AS TIMESTAMP WITH TIME ZONE), 
                 creator_handle,
                 metrics::jsonb, payload::jsonb
             FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
-                platform text, external_id text, content_type text, canonical_url text,
+                id uuid, platform text, external_id text, content_type text, canonical_url text,
                 title text, primary_text text, published_at text, creator_handle text,
                 metrics text, payload text
             )
@@ -279,6 +293,7 @@ async def upsert_content_items_batch(
     return mapping
 
 
+@log_query_timing
 async def insert_search_result(
     conn: AsyncConnection,
     search_id: UUID,
@@ -302,6 +317,7 @@ async def insert_search_result(
     )
 
 
+@log_query_timing
 async def insert_media_asset(
     conn: AsyncConnection,
     content_item_id: UUID,
@@ -332,6 +348,7 @@ async def insert_media_asset(
     return asset_id
 
 
+@log_query_timing
 async def insert_search_results_batch(
     conn: AsyncConnection,
     results: List[dict],
@@ -353,6 +370,7 @@ async def insert_search_results_batch(
     )
 
 
+@log_query_timing
 async def insert_media_assets_batch(
     conn: AsyncConnection,
     assets: List[dict],
@@ -389,6 +407,7 @@ async def insert_media_assets_batch(
 
 from app.core import logger
 
+@log_query_timing
 async def get_search_by_id(
     conn: AsyncConnection,
     search_id: UUID,
@@ -426,6 +445,7 @@ async def get_search_by_id(
     }
 
 
+@log_query_timing
 async def get_user_searches(
     conn: AsyncConnection,
     limit: int = 20,
@@ -453,6 +473,7 @@ async def get_user_searches(
     ]
 
 
+@log_query_timing
 async def get_platform_calls_for_search(
     conn: AsyncConnection,
     search_id: UUID,
@@ -485,6 +506,7 @@ async def get_platform_calls_for_search(
     ]
 
 
+@log_query_timing
 async def get_search_results_with_content(
     conn: AsyncConnection,
     search_id: UUID,
@@ -545,27 +567,20 @@ async def get_search_results_with_content(
     items = []
     for row in rows:
         content_item_id = row[1]
+        
+        # Build content_item using shared helper (offset=1: skips rank)
+        content_item = content_item_from_row(row, offset=1)
+
         items.append({
             "rank": row[0],
-            "content_item": {
-                "id": row[1],
-                "platform": row[2],
-                "external_id": row[3],
-                "content_type": row[4],
-                "canonical_url": row[5],
-                "title": row[6],
-                "primary_text": row[7],
-                "published_at": row[8],
-                "creator_handle": row[9],
-                "metrics": row[10],
-                "payload": row[11],
-            },
+            "content_item": content_item,
             "assets": assets_map.get(content_item_id, []),
         })
     
     return items
 
 
+@log_query_timing
 async def get_media_asset_with_access_check(
     conn: AsyncConnection,
     asset_id: UUID,
@@ -602,6 +617,7 @@ async def get_media_asset_with_access_check(
 
 
 
+@log_query_timing
 async def get_full_search_detail(conn: AsyncConnection, search_id: UUID) -> dict | None:
     """
     Fetch ALL search data in a single query:

@@ -201,6 +201,22 @@ async def download_asset_with_claim(
             logger.debug(f"Asset {asset_id} already claimed or processed")
             return
         
+        # YouTube video assets: mark as stored without downloading
+        # YouTube URLs are HTML pages, not direct video files
+        if platform == "youtube" and asset.get("asset_type") == "video":
+            logger.info(f"YouTube video asset {asset_id} - marking stored without download")
+            async with get_db_connection() as conn:
+                await conn.execute(
+                    text("""
+                        UPDATE media_assets 
+                        SET status = 'stored'
+                        WHERE id = :id
+                    """),
+                    {"id": asset_id}
+                )
+                await conn.commit()
+            return
+        
         await download_single_asset(http_client, asset, platform, external_id)
 
 

@@ -1,7 +1,8 @@
 import { ChatSidebar, ChatToggleButton } from "@/components/chat";
 import { Toaster } from "@/components/ui/sonner";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/AppSidebar";
+import { NavigationReset } from "@/components/layout/NavigationReset";
 
 export default function AppLayout({
     children,
@@ -10,7 +11,9 @@ export default function AppLayout({
 }) {
     return (
         <SidebarProvider>
+            <NavigationReset />
             <div className="flex h-screen w-full overflow-hidden">
+                <SidebarTrigger className="md:hidden absolute top-4 left-4 z-50 text-white" />
                 {/* Left Sidebar */}
                 <AppSidebar />
 

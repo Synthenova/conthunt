@@ -37,39 +37,9 @@ export const PLATFORM_CONFIG: Record<string, PlatformConfig> = {
         ]
     },
     youtube: {
-        label: "YouTube",
-        filters: [
-            {
-                key: "uploadDate",
-                label: "Upload Date",
-                type: "select",
-                options: [
-                    { label: "Any Time", value: "" },
-                    { label: "Last Hour", value: "lastHour" },
-                    { label: "Today", value: "today" },
-                    { label: "This Week", value: "thisWeek" },
-                    { label: "This Month", value: "thisMonth" },
-                    { label: "This Year", value: "thisYear" }
-                ]
-            },
-            {
-                key: "duration",
-                label: "Duration",
-                type: "select",
-                options: [
-                    { label: "Any", value: "" },
-                    { label: "Short (< 4 min)", value: "short" },
-                    { label: "Medium (4-20 min)", value: "medium" },
-                    { label: "Long (> 20 min)", value: "long" }
-                ]
-            }
-        ],
-        sorts: [
-            { key: "relevance", label: "Relevance" },
-            { key: "viewCount", label: "View Count" },
-            { key: "date", label: "Upload Date" },
-            { key: "rating", label: "Rating" }
-        ]
+        label: "YouTube Shorts",
+        filters: [], // Shorts filter is hardcoded in backend, other filters don't work with it
+        sorts: []    // Sort options don't work with filter param
     },
     instagram_reels: {
         label: "Instagram Reels",

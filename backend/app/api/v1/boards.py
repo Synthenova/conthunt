@@ -14,7 +14,7 @@ from app.api.v1.analysis import run_gemini_analysis
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.services.cdn_signer import generate_signed_url
 from app.services.cloud_tasks import cloud_tasks
-from app.core import get_settings
+from app.core import get_settings, logger
 
 settings = get_settings()
 
@@ -153,7 +153,7 @@ async def get_board_items_summary(
     user: dict = Depends(get_current_user),
 ):
     """Get board items summary for agent - minimal text data + media_asset_id only."""
-    print(f"[BOARD_SUMMARY] Request for board_id={board_id}")
+    logger.info(f"[BOARD_SUMMARY] Request for board_id={board_id}")
     firebase_uid = user.get("uid")
     if not firebase_uid:
         raise HTTPException(status_code=401, detail="Invalid user")
@@ -164,12 +164,12 @@ async def get_board_items_summary(
         
         # Verify board exists
         board = await queries.get_board_by_id(conn, board_id)
-        print(f"[BOARD_SUMMARY] Board found: {board is not None}")
+        logger.debug(f"[BOARD_SUMMARY] Board found: {board is not None}")
         if not board:
             raise HTTPException(status_code=404, detail="Board not found")
         
         result = await queries.get_board_items_summary(conn, board_id)
-        print(f"[BOARD_SUMMARY] Returning {len(result) if result else 0} items")
+        logger.info(f"[BOARD_SUMMARY] Returning {len(result) if result else 0} items")
         return result
 
 

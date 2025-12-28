@@ -30,7 +30,19 @@ export function useSearchStream(searchId?: string | null) {
         }
     }, []);
 
+    const waitForAuth = () => {
+        return new Promise<any>((resolve) => {
+            const unsubscribe = auth.onAuthStateChanged((user) => {
+                unsubscribe();
+                resolve(user);
+            });
+        });
+    };
+
     const loadSearch = useCallback(async (abortController: AbortController, id: string) => {
+        // Wait for auth to initialize first
+        await waitForAuth();
+
         const user = auth.currentUser;
         if (!user) {
             setError("User not authenticated");

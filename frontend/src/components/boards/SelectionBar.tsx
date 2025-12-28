@@ -105,15 +105,19 @@ export function SelectionBar({ itemsById = {}, downloadDisabled = false }: Selec
                 const filename = `${item.platform || "video"}_${safeId}.mp4`;
 
 
-                const downloadUrl = item.video_url || videoAsset?.source_url || videoAsset?.gcs_uri?.replace("gs://", "https://storage.googleapis.com/");
+                let downloadUrl = item.video_url || videoAsset?.source_url || videoAsset?.gcs_uri?.replace("gs://", "https://storage.googleapis.com/");
 
                 if (!downloadUrl) {
                     console.warn(`No download URL found for item ${item.id}`);
                     continue;
                 }
 
-                const response = await fetch(downloadUrl);
+                // If not GCS, use proxy to avoid CORS
+                if (!downloadUrl.includes("storage.googleapis.com") && !downloadUrl.includes(backendUrl)) {
+                    downloadUrl = `${backendUrl}/v1/media/proxy?url=${encodeURIComponent(downloadUrl)}`;
+                }
 
+                const response = await fetch(downloadUrl);
                 if (!response.ok) continue;
                 const data = await response.arrayBuffer();
                 zip.file(filename, data);

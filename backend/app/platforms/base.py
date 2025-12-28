@@ -34,6 +34,10 @@ class NormalizedItem:
     primary_text: Optional[str] = None
     published_at: Optional[datetime] = None
     creator_handle: Optional[str] = None
+    author_id: Optional[str] = None
+    author_name: Optional[str] = None
+    author_url: Optional[str] = None
+    author_image_url: Optional[str] = None
     metrics: dict = field(default_factory=dict)
     payload: dict = field(default_factory=dict)
     media_urls: list[MediaUrl] = field(default_factory=list)

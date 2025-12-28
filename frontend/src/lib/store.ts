@@ -45,7 +45,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         tiktok_keyword: true,
         tiktok_top: false,
         youtube: true,
-        pinterest: true,
+        pinterest: false,
     },
     filters: {},
     sortBy: {},

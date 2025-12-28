@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { useSearchStore } from "@/lib/store";
 import { useSearch } from "@/hooks/useSearch";
 import { useSearchStream } from "@/hooks/useSearchStream";
 import { SearchHeader } from "@/components/search/SearchHeader";

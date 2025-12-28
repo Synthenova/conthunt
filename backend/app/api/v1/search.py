@@ -66,7 +66,7 @@ async def call_platform(
             request_params=request_params,
         )
     except Exception as e:
-        print(traceback.format_exc())
+        logger.error(f"Platform {slug} error traceback:\n{traceback.format_exc()}")
         duration_ms = int((time.time() - start_time) * 1000)
         logger.error(f"Platform {slug} error: {e}")
         return PlatformCallResult(
@@ -112,6 +112,10 @@ def transform_result_to_stream_item(result: PlatformCallResult) -> dict:
                     "primary_text": item.primary_text,
                     "published_at": item.published_at,
                     "creator_handle": item.creator_handle,
+                    "author_id": item.author_id,
+                    "author_name": item.author_name,
+                    "author_url": item.author_url,
+                    "author_image_url": item.author_image_url,
                     "metrics": item.metrics,
                 },
                 "assets": assets_data
@@ -257,8 +261,13 @@ async def search_worker(
                 
                 # Only insert assets if item was newly inserted
                 if was_inserted:
+                    # Deterministic Content ID (re-calculate to ensure seed match)
+                    det_content_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
+                    
                     for media_url in item.media_urls:
-                        asset_id = uuid.uuid4()
+                        # Deterministic Asset ID
+                        asset_seed = f"{det_content_id}:{media_url.asset_type.value}:{media_url.source_url}"
+                        asset_id = uuid.uuid5(uuid.NAMESPACE_URL, asset_seed)
                         media_assets_batch.append({
                             "id": asset_id,
                             "content_item_id": content_item_id,

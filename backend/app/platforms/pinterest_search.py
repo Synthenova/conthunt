@@ -114,6 +114,12 @@ class PinterestSearchAdapter:
             pinner = pin.get("pinner", {})
             creator_handle = pinner.get("username")
             
+            # Author details
+            author_id = pinner.get("id")
+            author_name = pinner.get("full_name")
+            author_url = f"https://www.pinterest.com/{creator_handle}/" if creator_handle else None
+            author_image_url = pinner.get("image_medium_url") or pinner.get("image_small_url") or pinner.get("image_large_url")
+
             # Determine content type
             content_type = "pin"
             if pin.get("is_video"):
@@ -128,12 +134,17 @@ class PinterestSearchAdapter:
                 primary_text=pin.get("description") or pin.get("title"),
                 published_at=None,  # Pinterest doesn't typically expose this
                 creator_handle=creator_handle,
+                author_id=author_id,
+                author_name=author_name,
+                author_url=author_url,
+                author_image_url=author_image_url,
                 metrics=metrics,
                 payload={
                     "pinner": {
                         "id": pinner.get("id"),
                         "username": pinner.get("username"),
                         "full_name": pinner.get("full_name"),
+                        "image_url": author_image_url,
                     },
                     "board": pin.get("board", {}),
                     "domain": pin.get("domain"),
@@ -147,6 +158,7 @@ class PinterestSearchAdapter:
         # Extract response metadata
         response_meta = {
             "credits_remaining": response_json.get("credits_remaining"),
+            "items_count": len(items),
         }
         
         # Extract cursor for pagination

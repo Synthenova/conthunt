@@ -5,7 +5,10 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.db.decorators import log_query_timing
 
+
+@log_query_timing
 async def get_video_analysis_by_media_asset(
     conn: AsyncConnection,
     media_asset_id: UUID,
@@ -36,6 +39,7 @@ async def get_video_analysis_by_media_asset(
     }
 
 
+@log_query_timing
 async def create_pending_analysis(
     conn: AsyncConnection,
     media_asset_id: UUID,
@@ -60,6 +64,7 @@ async def create_pending_analysis(
     return analysis_id
 
 
+@log_query_timing
 async def update_analysis_status(
     conn: AsyncConnection,
     analysis_id: UUID,
@@ -92,6 +97,7 @@ async def update_analysis_status(
     )
 
 
+@log_query_timing
 async def insert_video_analysis(
     conn: AsyncConnection,
     media_asset_id: UUID,

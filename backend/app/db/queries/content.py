@@ -5,9 +5,12 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.db.decorators import log_query_timing
+
 from app.services.cdn_signer import generate_signed_url
 
 
+@log_query_timing
 async def get_content_item_by_id(
     conn: AsyncConnection,
     content_item_id: UUID,
@@ -71,6 +74,7 @@ async def get_content_item_by_id(
     }
 
 
+@log_query_timing
 async def get_video_media_asset_for_content_item(
     conn: AsyncConnection,
     content_item_id: UUID,
@@ -109,6 +113,7 @@ async def get_video_media_asset_for_content_item(
     }
 
 
+@log_query_timing
 async def get_media_asset_by_id(
     conn: AsyncConnection,
     media_asset_id: UUID,

@@ -17,7 +17,7 @@ export function SearchHeader({ onSearch, isLoading }: SearchHeaderProps) {
         { key: 'instagram_reels', label: 'Instagram' },
         { key: 'tiktok_keyword', label: 'TikTok' },
         { key: 'youtube', label: 'YouTube' },
-        { key: 'pinterest', label: 'Pinterest' },
+        // { key: 'pinterest', label: 'Pinterest' },
     ];
 
     const handleKeyDown = (e: React.KeyboardEvent) => {

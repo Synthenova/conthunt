@@ -119,6 +119,19 @@ class TikTokTopAdapter:
             author = video_item.get("author", {})
             creator_handle = author.get("unique_id") or author.get("nickname")
             
+            # Author details
+            author_id = author.get("uid") or author.get("unique_id")
+            author_name = author.get("nickname")
+            author_url = f"https://www.tiktok.com/@{creator_handle}" if creator_handle else None
+            # author.get("avatar_thumb") is usually a dict with url_list
+            avatar_thumb = author.get("avatar_thumb", {})
+            if isinstance(avatar_thumb, dict):
+                 author_image_url = avatar_thumb.get("url_list", [None])[0]
+            elif isinstance(avatar_thumb, str):
+                 author_image_url = avatar_thumb
+            else:
+                 author_image_url = None
+            
             # Build canonical URL
             canonical_url = None
             if creator_handle and external_id:
@@ -133,13 +146,17 @@ class TikTokTopAdapter:
                 primary_text=video_item.get("desc"),
                 published_at=published_at,
                 creator_handle=creator_handle,
+                author_id=author_id,
+                author_name=author_name,
+                author_url=author_url,
+                author_image_url=author_image_url,
                 metrics=metrics,
                 payload={
                     "author": {
                         "uid": author.get("uid"),
                         "unique_id": author.get("unique_id"),
                         "nickname": author.get("nickname"),
-                        "avatar": author.get("avatar_thumb", {}).get("url_list", [None])[0],
+                        "avatar": author_image_url,
                     },
                     "music": video_item.get("music", {}),
                     "video_duration": video_obj.get("duration"),
@@ -152,6 +169,7 @@ class TikTokTopAdapter:
         response_meta = {
             "credits_remaining": response_json.get("credits_remaining"),
             "has_more": data.get("has_more"),
+            "items_count": len(items),
         }
         
         # Extract cursor

@@ -6,7 +6,10 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.db.decorators import log_query_timing
 
+
+@log_query_timing
 async def get_twelvelabs_asset_by_media_asset(
     conn: AsyncConnection,
     media_asset_id: UUID,
@@ -36,6 +39,7 @@ async def get_twelvelabs_asset_by_media_asset(
     }
 
 
+@log_query_timing
 async def upsert_twelvelabs_asset(
     conn: AsyncConnection,
     media_asset_id: UUID,
@@ -75,6 +79,7 @@ async def upsert_twelvelabs_asset(
 
 
 
+@log_query_timing
 async def update_twelvelabs_asset_status(
     conn: AsyncConnection,
     media_asset_id: UUID,
@@ -114,6 +119,7 @@ async def update_twelvelabs_asset_status(
     )
 
 
+@log_query_timing
 async def get_user_twelvelabs_assets(
     conn: AsyncConnection,
 ) -> List[str]:
@@ -139,6 +145,7 @@ async def get_user_twelvelabs_assets(
     return [row[0] for row in rows]
 
 
+@log_query_timing
 async def get_board_twelvelabs_assets(
     conn: AsyncConnection,
     board_id: UUID,
@@ -162,6 +169,7 @@ async def get_board_twelvelabs_assets(
     return [row[0] for row in result.fetchall()]
 
 
+@log_query_timing
 async def get_twelvelabs_id_for_media_asset(
     conn: AsyncConnection,
     media_asset_id: UUID,

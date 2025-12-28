@@ -55,6 +55,10 @@ class ContentItemDetail(BaseModel):
     primary_text: Optional[str] = None
     published_at: Optional[datetime] = None
     creator_handle: Optional[str] = None
+    author_id: Optional[str] = None
+    author_name: Optional[str] = None
+    author_url: Optional[str] = None
+    author_image_url: Optional[str] = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
     payload: Dict[str, Any] = Field(default_factory=dict)
 

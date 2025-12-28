@@ -103,7 +103,9 @@ export function useChatMessages(chatId: string | null) {
             const messages = data.messages.map((m: any) => ({
                 id: m.id,
                 type: m.type as 'human' | 'ai',
-                content: m.content,
+                content: Array.isArray(m.content)
+                    ? m.content.map((c: any) => c.text || '').join('')
+                    : m.content,
             }));
 
             // Preserve optimistic messages that haven't been saved yet
@@ -191,7 +193,20 @@ export function useSendMessage() {
                                 break;
                             case 'content_delta':
                                 // Append streaming content
-                                appendDelta(data.content, data.id);
+                                // Append streaming content
+                                let textContent = '';
+                                if (Array.isArray(data.content)) {
+                                    textContent = data.content
+                                        .filter((c: any) => c.type === 'text')
+                                        .map((c: any) => c.text || '')
+                                        .join('');
+                                } else if (typeof data.content === 'string') {
+                                    textContent = data.content;
+                                }
+
+                                if (textContent) {
+                                    appendDelta(textContent, data.id);
+                                }
                                 break;
                             case 'tool_start':
                                 // Could show tool indicator

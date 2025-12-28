@@ -15,6 +15,10 @@ export interface FlatMediaItem {
     share_count: number;
     published_at?: string;
     creator?: string;
+    creator_id?: string;
+    creator_name?: string;
+    creator_url?: string;
+    creator_image?: string;
     assets?: any[];  // Raw assets array for API calls (ContentDrawer)
 }
 
@@ -42,9 +46,16 @@ export function transformToMediaItem(backendResult: any): FlatMediaItem {
 
     // Use backend proxy for Instagram/Meta images to avoid hotlinking blocks
     if (thumbnailUrl && (thumbnailUrl.includes("cdninstagram.com") || thumbnailUrl.includes("fbcdn.net"))) {
-        // Use environment variable, fallback to localhost only if missing but warn? 
-        // Better to assume env var is there as per user request.
         thumbnailUrl = `${BACKEND_URL}/v1/media/proxy?url=${encodeURIComponent(thumbnailUrl)}`;
+    }
+
+    let creatorImageUrl = content.author_image_url;
+    if (creatorImageUrl && (
+        creatorImageUrl.includes("cdninstagram.com") ||
+        creatorImageUrl.includes("fbcdn.net") ||
+        creatorImageUrl.includes("tiktokcdn")
+    )) {
+        creatorImageUrl = `${BACKEND_URL}/v1/media/proxy?url=${encodeURIComponent(creatorImageUrl)}`;
     }
 
     // 2. Metrics Resolution
@@ -71,6 +82,12 @@ export function transformToMediaItem(backendResult: any): FlatMediaItem {
         // Metadata
         published_at: content.published_at,
         creator: content.creator_handle || content.author,
+
+        // Rich Creator Info
+        creator_id: content.author_id,
+        creator_name: content.author_name,
+        creator_url: content.author_url,
+        creator_image: creatorImageUrl,
 
         // Raw assets for API calls
         assets: assets,

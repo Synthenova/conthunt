@@ -4,7 +4,10 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.db.decorators import log_query_timing
 
+
+@log_query_timing
 async def get_user_role(conn: AsyncConnection, user_id: UUID) -> str:
     """Get user's current role."""
     result = await conn.execute(
@@ -15,6 +18,7 @@ async def get_user_role(conn: AsyncConnection, user_id: UUID) -> str:
     return row[0] if row else "free"
 
 
+@log_query_timing
 async def update_user_role(
     conn: AsyncConnection, 
     firebase_uid: str, 
@@ -28,6 +32,7 @@ async def update_user_role(
     return result.rowcount > 0
 
 
+@log_query_timing
 async def update_user_dodo_subscription(
     conn: AsyncConnection,
     firebase_uid: str,

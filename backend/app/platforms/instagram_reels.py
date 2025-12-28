@@ -85,14 +85,20 @@ class InstagramReelsAdapter:
             
             # Extract metrics
             metrics = {}
-            if "view_count" in reel:
+            if "video_view_count" in reel:
+                metrics["views"] = reel.get("video_view_count")
+            elif "view_count" in reel:
                 metrics["views"] = reel.get("view_count")
+
+            if "video_play_count" in reel:
+                metrics["plays"] = reel.get("video_play_count")
+            elif "play_count" in reel:
+                metrics["plays"] = reel.get("play_count")
+
             if "like_count" in reel:
                 metrics["likes"] = reel.get("like_count")
             if "comment_count" in reel:
                 metrics["comments"] = reel.get("comment_count")
-            if "play_count" in reel:
-                metrics["plays"] = reel.get("play_count")
             
             # Get external ID
             external_id = str(reel.get("pk") or reel.get("id") or reel.get("shortcode", ""))
@@ -107,6 +113,12 @@ class InstagramReelsAdapter:
             owner = reel.get("owner", {}) or reel.get("user", {})
             creator_handle = owner.get("username")
             
+            # Author details
+            author_id = owner.get("id")
+            author_name = owner.get("full_name")
+            author_url = f"https://www.instagram.com/{creator_handle}/" if creator_handle else None
+            author_image_url = owner.get("profile_pic_url")
+            
             item = NormalizedItem(
                 platform="instagram",
                 external_id=external_id,
@@ -116,6 +128,10 @@ class InstagramReelsAdapter:
                 primary_text=reel.get("caption") or (reel.get("edge_media_to_caption", {}).get("edges", [{}])[0].get("node", {}).get("text")),
                 published_at=published_at,
                 creator_handle=creator_handle,
+                author_id=author_id,
+                author_name=author_name,
+                author_url=author_url,
+                author_image_url=author_image_url,
                 metrics=metrics,
                 payload={
                     "shortcode": shortcode,
@@ -130,6 +146,7 @@ class InstagramReelsAdapter:
         # Extract response metadata
         response_meta = {
             "credits_remaining": response_json.get("credits_remaining"),
+            "items_count": len(items),
         }
         
         # Extract cursor if present

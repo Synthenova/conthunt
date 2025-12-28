@@ -149,11 +149,24 @@ async def _refresh_agent_graph(request: Request):
 
 
 async def _get_agent_graph(request: Request):
-    """Return the cached graph, refreshing if missing."""
+    """Return the cached graph, refreshing if connection is stale."""
     graph = getattr(request.app.state, "agent_graph", None)
-    if graph:
-        return graph
-    return await _refresh_agent_graph(request)
+    if not graph:
+        return await _refresh_agent_graph(request)
+    
+    # Proactively test the checkpointer connection before using it
+    try:
+        # Quick health check - try to get state for a non-existent thread
+        # This will fail fast if connection is closed
+        await graph.aget_state({"configurable": {"thread_id": "__health_check__"}})
+    except OperationalError:
+        logger.warning("Agent graph connection stale, refreshing before use")
+        return await _refresh_agent_graph(request)
+    except Exception:
+        # Other errors (e.g., thread not found) are fine - connection is alive
+        pass
+    
+    return graph
 
 @router.post("", response_model=Chat)
 @router.post("/", response_model=Chat)

@@ -34,7 +34,7 @@ export function ResultsGrid({ results, loading }: ResultsGridProps) {
     }
 
     return (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-20">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">
             {results.map((item, i) => (
                 <div key={item.id || i} className="animate-in fade-in zoom-in duration-500" style={{ animationDelay: `${i * 50}ms` }}>
                     <MediaCard

@@ -5,7 +5,12 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.db.decorators import log_query_timing
 
+from app.services.content_builder import extract_author_from_payload, content_item_from_row
+
+
+@log_query_timing
 async def create_board(
     conn: AsyncConnection,
     user_id: UUID,
@@ -23,6 +28,7 @@ async def create_board(
     return board_id
 
 
+@log_query_timing
 async def get_user_boards(
     conn: AsyncConnection,
     user_id: UUID,
@@ -60,6 +66,7 @@ async def get_user_boards(
     ]
 
 
+@log_query_timing
 async def get_board_by_id(
     conn: AsyncConnection,
     board_id: UUID,
@@ -90,6 +97,7 @@ async def get_board_by_id(
     }
 
 
+@log_query_timing
 async def delete_board(
     conn: AsyncConnection,
     board_id: UUID,
@@ -102,6 +110,7 @@ async def delete_board(
     return result.rowcount > 0
 
 
+@log_query_timing
 async def add_item_to_board(
     conn: AsyncConnection,
     board_id: UUID,
@@ -129,6 +138,7 @@ async def add_item_to_board(
         raise
 
 
+@log_query_timing
 async def batch_add_items_to_board(
     conn: AsyncConnection,
     board_id: UUID,
@@ -161,6 +171,7 @@ async def batch_add_items_to_board(
     return result.rowcount
 
 
+@log_query_timing
 async def remove_item_from_board(
     conn: AsyncConnection,
     board_id: UUID,
@@ -177,6 +188,7 @@ async def remove_item_from_board(
     return result.rowcount > 0
 
 
+@log_query_timing
 async def get_board_items(
     conn: AsyncConnection,
     board_id: UUID,
@@ -232,28 +244,21 @@ async def get_board_items(
 
     for row in rows:
         cid = row[2]
+        
+        # Build content_item using shared helper (offset=2: skips board_id, added_at)
+        content_item = content_item_from_row(row, offset=2)
+
         items.append({
             "board_id": row[0],
             "added_at": row[1],
-            "content_item": {
-                "id": cid,
-                "platform": row[3],
-                "external_id": row[4],
-                "content_type": row[5],
-                "canonical_url": row[6],
-                "title": row[7],
-                "primary_text": row[8],
-                "published_at": row[9],
-                "creator_handle": row[10],
-                "metrics": row[11],
-                "payload": row[12],
-            },
+            "content_item": content_item,
             "assets": assets_map.get(cid, [])
         })
         
     return items
 
 
+@log_query_timing
 async def get_board_items_summary(
     conn: AsyncConnection,
     board_id: UUID,
@@ -294,6 +299,7 @@ async def get_board_items_summary(
     return items
 
 
+@log_query_timing
 async def search_user_boards(
     conn: AsyncConnection,
     user_id: UUID,
@@ -335,6 +341,7 @@ async def search_user_boards(
     ]
 
 
+@log_query_timing
 async def search_in_board(
     conn: AsyncConnection,
     board_id: UUID,
@@ -394,22 +401,14 @@ async def search_in_board(
     items = []
     for row in rows:
         cid = row[2]
+        
+        # Build content_item using shared helper (offset=2: skips board_id, added_at)
+        content_item = content_item_from_row(row, offset=2)
+
         items.append({
             "board_id": row[0],
             "added_at": row[1],
-            "content_item": {
-                "id": cid,
-                "platform": row[3],
-                "external_id": row[4],
-                "content_type": row[5],
-                "canonical_url": row[6],
-                "title": row[7],
-                "primary_text": row[8],
-                "published_at": row[9],
-                "creator_handle": row[10],
-                "metrics": row[11],
-                "payload": row[12],
-            },
+            "content_item": content_item,
             "assets": assets_map.get(cid, [])
         })
 

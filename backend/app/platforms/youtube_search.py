@@ -29,14 +29,10 @@ class YouTubeSearchAdapter:
         
         request_params = {
             "query": query,
+            "filter": "shorts",  # Always search for shorts only
         }
         
-        if "uploadDate" in params:
-            request_params["uploadDate"] = params["uploadDate"]
-        if "sortBy" in params:
-            request_params["sortBy"] = params["sortBy"]
-        if "filter" in params:
-            request_params["filter"] = params["filter"]
+        # Note: uploadDate and sortBy don't work with filter, so we skip them
         if "continuationToken" in params:
             request_params["continuationToken"] = params["continuationToken"]
         if params.get("includeExtras") is not None:
@@ -56,14 +52,18 @@ class YouTubeSearchAdapter:
         
         data = response_json.get("data", response_json)
         
-        # YouTube response can have both 'videos' and 'shelves.items' (shorts)
+        # YouTube response can have 'videos', 'shorts', and 'shelves.items'
         all_videos = []
         
         # Direct videos
         videos = data.get("videos", [])
         all_videos.extend(videos)
         
-        # Shelves (shorts)
+        # Shorts (this is where filter=shorts results go!)
+        shorts = data.get("shorts", [])
+        all_videos.extend(shorts)
+        
+        # Shelves (sometimes has shorts)
         shelves = data.get("shelves", [])
         for shelf in shelves:
             shelf_items = shelf.get("items", [])
@@ -73,8 +73,27 @@ class YouTubeSearchAdapter:
         if not all_videos:
             all_videos = data.get("items", [])
         
+        logger.debug(f"Length of all_videos: {len(all_videos)}")
         for video in all_videos:
             if not video:
+                continue
+            
+            # Filter: Only include videos under 5 minutes (300 seconds)
+            length_seconds = video.get("lengthSeconds")
+            if length_seconds is None:
+                # Try parsing from lengthText (e.g., "4:14", "53:18")
+                length_text = video.get("lengthText", "")
+                if length_text:
+                    parts = length_text.split(":")
+                    try:
+                        if len(parts) == 2:
+                            length_seconds = int(parts[0]) * 60 + int(parts[1])
+                        elif len(parts) == 3:
+                            length_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                    except ValueError:
+                        pass
+            
+            if length_seconds and length_seconds > 300:  # Skip if > 5 minutes
                 continue
             
             media_urls = []
@@ -112,7 +131,9 @@ class YouTubeSearchAdapter:
             
             # Extract metrics
             metrics = {}
-            if "viewCount" in video:
+            if "viewCountInt" in video:
+                metrics["views"] = video.get("viewCountInt")
+            elif "viewCount" in video:
                 metrics["views"] = video.get("viewCount")
             elif "views" in video:
                 metrics["views"] = video.get("views")
@@ -134,9 +155,29 @@ class YouTubeSearchAdapter:
             if content_type == "short":
                 canonical_url = f"https://www.youtube.com/shorts/{external_id}"
             
+            # Add canonical URL as VIDEO asset for Gemini analysis
+            # Gemini 3 on Vertex can analyze YouTube URLs directly
+            media_urls.append(MediaUrl(
+                asset_type=AssetType.VIDEO,
+                source_url=canonical_url,
+            ))
+            
             # Get channel info
             channel = video.get("channel", {})
-            creator_handle = channel.get("name") or video.get("channelTitle")
+            creator_handle = channel.get("title") or channel.get("name") or video.get("channelTitle")
+
+            # Author details
+            author_id = channel.get("id") or video.get("channelId")
+            author_name = channel.get("title") or channel.get("name") or video.get("channelTitle")
+            author_url = channel.get("url") or (f"https://www.youtube.com/{channel.get('handle')}" if channel.get("handle") else None)
+            
+            # Channel thumbnail
+            author_image_url = None
+            chan_thumb = channel.get("thumbnail")
+            if isinstance(chan_thumb, str):
+                author_image_url = chan_thumb
+            elif isinstance(chan_thumb, dict):
+                 author_image_url = chan_thumb.get("url") or chan_thumb.get("static")
             
             item = NormalizedItem(
                 platform="youtube",
@@ -147,12 +188,19 @@ class YouTubeSearchAdapter:
                 primary_text=video.get("description") or video.get("title"),
                 published_at=published_at,
                 creator_handle=creator_handle,
+                author_id=author_id,
+                author_name=author_name,
+                author_url=author_url,
+                author_image_url=author_image_url,
                 metrics=metrics,
                 payload={
                     "channel": {
                         "id": channel.get("id") or video.get("channelId"),
-                        "name": channel.get("name") or video.get("channelTitle"),
+                        "name": author_name,
+                        "title": author_name,
+                        "handle": channel.get("handle"),
                         "url": channel.get("url"),
+                        "thumbnail": author_image_url,
                     },
                     "duration": video.get("duration"),
                     "durationText": video.get("durationText"),
@@ -166,6 +214,7 @@ class YouTubeSearchAdapter:
         # Extract response metadata
         response_meta = {
             "credits_remaining": response_json.get("credits_remaining"),
+            "items_count": len(items),
         }
         
         # Extract continuation token
