@@ -11,14 +11,23 @@ interface MediaCardProps {
     item: any;
     platform: string;
     showBadge?: boolean;
+    onHoverTimeChange?: (seconds: number) => void;
+    onHoverStateChange?: (isHovering: boolean) => void;
 }
 
-export function MediaCard({ item, platform, showBadge = true }: MediaCardProps) {
+export function MediaCard({
+    item,
+    platform,
+    showBadge = true,
+    onHoverTimeChange,
+    onHoverStateChange,
+}: MediaCardProps) {
     const [isPlaying, setIsPlaying] = useState(false);
     const [isCaptionExpanded, setIsCaptionExpanded] = useState(false);
     const { mediaMuted, setMediaMuted } = useSearchStore();
     const videoRef = useRef<HTMLVideoElement>(null);
     const youtubeRef = useRef<HTMLIFrameElement>(null);
+    const youtubeHoverStartRef = useRef<number | null>(null);
 
     // Platform-specific field mapping
     const title = item.title || item.caption || item.description || "No Title";
@@ -47,12 +56,22 @@ export function MediaCard({ item, platform, showBadge = true }: MediaCardProps) 
 
     const handleHover = (isHovering: boolean) => {
         setIsPlaying(isHovering);
+        onHoverStateChange?.(isHovering);
         if (videoRef.current && !isYouTube) {
             if (isHovering) {
+                onHoverTimeChange?.(0);
                 videoRef.current.play().catch(() => { }); // Autoplay policies might block
             } else {
                 videoRef.current.pause();
                 videoRef.current.currentTime = 0;
+            }
+        }
+        if (isYouTube) {
+            if (isHovering) {
+                youtubeHoverStartRef.current = performance.now();
+                onHoverTimeChange?.(0);
+            } else {
+                youtubeHoverStartRef.current = null;
             }
         }
     };
@@ -77,6 +96,22 @@ export function MediaCard({ item, platform, showBadge = true }: MediaCardProps) 
             syncYouTubeMute();
         }
     }, [mediaMuted, isYouTube, isPlaying]);
+
+    useEffect(() => {
+        if (!isYouTube || !isPlaying) return;
+
+        const start = youtubeHoverStartRef.current;
+        if (start === null) return;
+
+        const interval = window.setInterval(() => {
+            const elapsed = (performance.now() - start) / 1000;
+            onHoverTimeChange?.(Math.max(0, elapsed));
+        }, 100);
+
+        return () => {
+            window.clearInterval(interval);
+        };
+    }, [isPlaying, isYouTube, onHoverTimeChange]);
 
     return (
         <GlassCard
@@ -111,6 +146,11 @@ export function MediaCard({ item, platform, showBadge = true }: MediaCardProps) 
                             muted={mediaMuted}
                             loop
                             playsInline
+                            onTimeUpdate={() => {
+                                if (videoRef.current) {
+                                    onHoverTimeChange?.(videoRef.current.currentTime);
+                                }
+                            }}
                         />
                     )}
 

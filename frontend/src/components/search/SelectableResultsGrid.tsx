@@ -11,6 +11,7 @@ interface SelectableResultsGridProps {
 
 export function SelectableResultsGrid({ results, loading, analysisDisabled = false }: SelectableResultsGridProps) {
     const [selectedItem, setSelectedItem] = useState<any | null>(null);
+    const [selectedResumeTime, setSelectedResumeTime] = useState(0);
 
     if (loading) {
         return (
@@ -46,11 +47,14 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
                         key={item.id || i}
                         className="animate-in fade-in zoom-in duration-500 cursor-pointer"
                         style={{ animationDelay: `${i * 50}ms` }}
-                        onClick={() => setSelectedItem(item)}
                     >
                         <SelectableMediaCard
                             item={item}
                             platform={item.platform || 'unknown'}
+                            onOpen={(nextItem, resumeTime) => {
+                                setSelectedItem(nextItem);
+                                setSelectedResumeTime(resumeTime);
+                            }}
                         />
                     </div>
                 ))}
@@ -58,9 +62,13 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
 
             <ContentDrawer
                 isOpen={!!selectedItem}
-                onClose={() => setSelectedItem(null)}
+                onClose={() => {
+                    setSelectedItem(null);
+                    setSelectedResumeTime(0);
+                }}
                 item={selectedItem}
                 analysisDisabled={analysisDisabled}
+                resumeTime={selectedResumeTime}
             />
         </>
     );

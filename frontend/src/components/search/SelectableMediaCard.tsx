@@ -5,18 +5,22 @@ import { useSearchStore } from "@/lib/store";
 import { Badge } from "@/components/ui/badge";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useRef } from "react";
 
 interface SelectableMediaCardProps {
     item: any;
     platform: string;
+    onOpen?: (item: any, resumeTime: number) => void;
 }
 
-export function SelectableMediaCard({ item, platform }: SelectableMediaCardProps) {
+export function SelectableMediaCard({ item, platform, onOpen }: SelectableMediaCardProps) {
     const { selectedItems, toggleItemSelection } = useSearchStore();
     const isSelected = selectedItems.includes(item.id);
     const selectionMode = selectedItems.length > 0;
     const link = item.url || item.link || item.web_url;
     const platformLabel = formatPlatformLabel(platform);
+    const lastHoverTimeRef = useRef(0);
+    const hoverStartRef = useRef<number | null>(null);
 
     const handleSelect = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -25,7 +29,21 @@ export function SelectableMediaCard({ item, platform }: SelectableMediaCardProps
     };
 
     return (
-        <div className="relative group/select">
+        <div
+            className="relative group/select"
+            onClick={() => {
+                if (!onOpen) return;
+                const hoverStart = hoverStartRef.current;
+                let resumeTime = 0;
+                if (hoverStart !== null) {
+                    const hoverDuration = (performance.now() - hoverStart) / 1000;
+                    if (hoverDuration >= 0.6) {
+                        resumeTime = Math.max(0, lastHoverTimeRef.current - 0.5);
+                    }
+                }
+                onOpen(item, resumeTime);
+            }}
+        >
             {/* Selection + Platform */}
             <div className="absolute top-2 left-2 z-20 flex items-center gap-2">
                 <button
@@ -67,7 +85,17 @@ export function SelectableMediaCard({ item, platform }: SelectableMediaCardProps
             )}
 
             {/* Original Media Card */}
-            <MediaCard item={item} platform={platform} showBadge={false} />
+            <MediaCard
+                item={item}
+                platform={platform}
+                showBadge={false}
+                onHoverTimeChange={(seconds) => {
+                    lastHoverTimeRef.current = seconds;
+                }}
+                onHoverStateChange={(isHovering) => {
+                    hoverStartRef.current = isHovering ? performance.now() : null;
+                }}
+            />
         </div>
     );
 }

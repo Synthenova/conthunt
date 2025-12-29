@@ -30,22 +30,56 @@ const ANALYSIS_NOT_READY_MESSAGE = "Finalizing search results...";
 const ANALYSIS_POLL_INTERVAL_MS = 2500;
 const ANALYSIS_MAX_NOT_READY_RETRIES = 20;
 const ANALYSIS_NOT_READY_STATUSES = new Set([404, 409, 425]);
+const MEDIA_BASE_VH = 0.6;
+const MEDIA_MIN_HEIGHT_PX = 320;
+const MEDIA_MAX_HEIGHT_PX = 560;
+const MEDIA_SHRINK_RATE = 0.6;
 
 interface ContentDrawerProps {
     isOpen: boolean;
     onClose: () => void;
     item: any | null;
     analysisDisabled?: boolean;
+    resumeTime?: number;
 }
 
-export function ContentDrawer({ isOpen, onClose, item, analysisDisabled = false }: ContentDrawerProps) {
+export function ContentDrawer({
+    isOpen,
+    onClose,
+    item,
+    analysisDisabled = false,
+    resumeTime = 0,
+}: ContentDrawerProps) {
+    const viewportRef = useRef<HTMLDivElement>(null);
     const [analyzing, setAnalyzing] = useState(false);
     const [polling, setPolling] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<any>(null);
     const [error, setError] = useState<string | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
+    const [mediaHeight, setMediaHeight] = useState<number | null>(null);
     const analysisNotReadyRetries = useRef(0);
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const youtubeRef = useRef<HTMLIFrameElement>(null);
+    const lastSeekTimeRef = useRef<number | null>(null);
+    const baseMediaHeightRef = useRef(0);
+    const scrollRafRef = useRef<number | null>(null);
+    const isYouTube = item?.platform === 'youtube' || item?.platform === 'youtube_search';
+    const link = item?.url || item?.canonical_url;
+    const youtubeId = isYouTube && link
+        ? (link.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?/]+)/)?.[1] || item?.external_id || item?.id)
+        : null;
+
+    const handleYouTubeSeek = (seekTime: number) => {
+        if (!youtubeRef.current) return;
+        if (seekTime <= 0) return;
+        if (lastSeekTimeRef.current === seekTime) return;
+        youtubeRef.current.contentWindow?.postMessage(
+            JSON.stringify({ event: "command", func: "seekTo", args: [seekTime, true] }),
+            "*"
+        );
+        lastSeekTimeRef.current = seekTime;
+    };
 
     // Board Management
     const [isBoardPopoverOpen, setIsBoardPopoverOpen] = useState(false);
@@ -189,10 +223,95 @@ export function ContentDrawer({ isOpen, onClose, item, analysisDisabled = false 
             setError(null);
             setAnalyzing(false);
             setPolling(false);
-            setIsPlaying(false);
+            setIsPlaying(true);
             analysisNotReadyRetries.current = 0;
+            lastSeekTimeRef.current = null;
         }
     }, [isOpen, item]);
+
+    useEffect(() => {
+        if (!isOpen) {
+            setIsPlaying(false);
+        }
+    }, [isOpen]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+
+        const updateBaseHeight = () => {
+            const baseHeight = Math.min(
+                MEDIA_MAX_HEIGHT_PX,
+                Math.max(MEDIA_MIN_HEIGHT_PX, window.innerHeight * MEDIA_BASE_VH)
+            );
+            baseMediaHeightRef.current = baseHeight;
+            setMediaHeight(baseHeight);
+        };
+
+        updateBaseHeight();
+        window.addEventListener("resize", updateBaseHeight);
+
+        return () => {
+            window.removeEventListener("resize", updateBaseHeight);
+        };
+    }, [isOpen]);
+
+    const handleViewportScroll = useCallback(() => {
+        if (scrollRafRef.current !== null) return;
+        scrollRafRef.current = requestAnimationFrame(() => {
+            scrollRafRef.current = null;
+            const viewport = viewportRef.current;
+            if (!viewport) return;
+            const baseHeight = baseMediaHeightRef.current;
+            if (!baseHeight) return;
+            const maxShrink = baseHeight - MEDIA_MIN_HEIGHT_PX;
+            const shrink = Math.min(viewport.scrollTop * MEDIA_SHRINK_RATE, maxShrink);
+            setMediaHeight(Math.round(baseHeight - shrink));
+        });
+    }, []);
+
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        if (!viewport) return;
+
+        viewport.addEventListener("scroll", handleViewportScroll, { passive: true });
+        return () => {
+            viewport.removeEventListener("scroll", handleViewportScroll);
+        };
+    }, [handleViewportScroll]);
+
+    useEffect(() => {
+        if (!isPlaying) return;
+        if (resumeTime <= 0) return;
+        if (!videoRef.current) return;
+
+        const video = videoRef.current;
+        const safeTime = Math.max(0, resumeTime);
+        const seek = () => {
+            if (!Number.isNaN(video.duration) && video.duration > 0) {
+                video.currentTime = Math.min(safeTime, video.duration);
+            } else {
+                video.currentTime = safeTime;
+            }
+            video.play().catch(() => { });
+        };
+
+        if (video.readyState >= 1) {
+            seek();
+        } else {
+            const onLoaded = () => {
+                seek();
+                video.removeEventListener("loadedmetadata", onLoaded);
+            };
+            video.addEventListener("loadedmetadata", onLoaded);
+        }
+    }, [isPlaying, resumeTime]);
+
+    useEffect(() => {
+        if (!isPlaying) return;
+        if (!isYouTube) return;
+        if (resumeTime <= 0) return;
+        handleYouTubeSeek(resumeTime);
+    }, [isPlaying, isYouTube, resumeTime]);
 
     const handleAnalyze = async () => {
         if (!item || analyzing || polling || analysisDisabled) return;  // Guard against duplicate calls
@@ -227,67 +346,69 @@ export function ContentDrawer({ isOpen, onClose, item, analysisDisabled = false 
     return (
         <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
             <SheetContent className="w-full sm:max-w-md md:max-w-lg lg:max-w-xl p-0 gap-0 overflow-hidden bg-[#0A0A0A] border-l-border flex flex-col h-full">
-                {/* Header / Media Area */}
-                {/* Header / Media Area */}
-                <div className="relative h-60 w-full bg-black flex items-center justify-center group shrink-0">
-                    {!isPlaying ? (
-                        <>
-                            <img
-                                src={item.thumbnail_url || item.thumbnail}
-                                alt={item.title}
-                                className="w-full h-full object-contain"
-                            />
-                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-16 w-16 rounded-full bg-white/20 hover:bg-white/30 text-white backdrop-blur-sm"
-                                    onClick={() => setIsPlaying(true)}
-                                >
-                                    <Play className="h-8 w-8 fill-current" />
-                                </Button>
-                            </div>
-                            {/* Overlay Badges */}
-                            <div className="absolute top-4 left-4 pointer-events-none">
-                                <Badge variant="secondary" className="bg-yellow-100 text-yellow-900 border-none">
-                                    AI Overlay
-                                </Badge>
-                            </div>
-                        </>
-                    ) : (
-                        (() => {
-                            // YouTube detection
-                            const isYouTube = item.platform === 'youtube' || item.platform === 'youtube_search';
-                            const link = item.url || item.canonical_url;
-                            const youtubeId = isYouTube && link ?
-                                (link.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?/]+)/)?.[1] || item.external_id || item.id) :
-                                null;
+                {/* Media Spotlight */}
+                <div className="relative w-full bg-[#0A0A0A] px-5 pt-5 pb-4 shrink-0">
+                    <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/[0.06] to-transparent pointer-events-none" />
+                    <div
+                        className="relative mx-auto aspect-[9/16] rounded-2xl overflow-hidden bg-black shadow-[0_20px_50px_rgba(0,0,0,0.6)] ring-1 ring-white/10 group"
+                        style={{ height: mediaHeight ? `${mediaHeight}px` : "60vh" }}
+                    >
+                        {!isPlaying ? (
+                            <>
+                                <img
+                                    src={item.thumbnail_url || item.thumbnail}
+                                    alt={item.title}
+                                    className="w-full h-full object-cover"
+                                />
+                                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-16 w-16 rounded-full bg-white/20 hover:bg-white/30 text-white backdrop-blur-sm"
+                                        onClick={() => setIsPlaying(true)}
+                                    >
+                                        <Play className="h-8 w-8 fill-current" />
+                                    </Button>
+                                </div>
+                                {/* Overlay Badges */}
+                                <div className="absolute top-4 left-4 pointer-events-none">
+                                    <Badge variant="secondary" className="bg-yellow-100 text-yellow-900 border-none">
+                                        AI Overlay
+                                    </Badge>
+                                </div>
+                            </>
+                        ) : (
+                            (() => {
+                                if (isYouTube && youtubeId) {
+                                    return (
+                                        <iframe
+                                            ref={youtubeRef}
+                                            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&modestbranding=1&playsinline=1&enablejsapi=1`}
+                                            className="w-full h-full"
+                                            allow="autoplay; encrypted-media; fullscreen"
+                                            allowFullScreen
+                                            onLoad={() => handleYouTubeSeek(resumeTime)}
+                                        />
+                                    );
+                                }
 
-                            if (isYouTube && youtubeId) {
                                 return (
-                                    <iframe
-                                        src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&modestbranding=1&playsinline=1`}
-                                        className="w-full h-full"
-                                        allow="autoplay; encrypted-media; fullscreen"
-                                        allowFullScreen
-                                    />
+                                    <video
+                                        ref={videoRef}
+                                        src={item.video_url || item.url}
+                                        className="w-full h-full object-cover"
+                                        controls
+                                        autoPlay
+                                        playsInline
+                                    >
+                                        Your browser does not support the video tag.
+                                    </video>
                                 );
-                            }
+                            })()
+                        )}
+                    </div>
 
-                            return (
-                                <video
-                                    src={item.video_url || item.url}
-                                    className="w-full h-full object-contain"
-                                    controls
-                                    autoPlay
-                                >
-                                    Your browser does not support the video tag.
-                                </video>
-                            );
-                        })()
-                    )}
-
-                    <div className="absolute top-4 right-14 z-10">
+                    <div className="absolute top-4 right-5 z-10">
                         <Button
                             variant="ghost"
                             size="icon"
@@ -299,8 +420,8 @@ export function ContentDrawer({ isOpen, onClose, item, analysisDisabled = false 
                     </div>
                 </div>
 
-                <ScrollArea className="flex-1 min-h-0">
-                    <div className="p-6 space-y-6">
+                <ScrollArea className="flex-1 min-h-0 bg-[#0E0E0E]" viewportRef={viewportRef}>
+                    <div className="px-5 pt-6 pb-8 space-y-6 border-t border-white/5 bg-gradient-to-b from-white/[0.03] to-transparent rounded-t-3xl">
                         {/* Title & Metadata */}
                         <div>
                             <div className="flex items-center justify-between mb-4">
@@ -345,7 +466,7 @@ export function ContentDrawer({ isOpen, onClose, item, analysisDisabled = false 
                                 </div>
                             </div>
 
-                            <h2 className="text-xl font-semibold leading-tight text-white mb-3">
+                            <h2 className="text-2xl font-semibold leading-snug text-white mb-3">
                                 {item.title || "Untitled Video"}
                             </h2>
 
