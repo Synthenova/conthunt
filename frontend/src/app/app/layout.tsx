@@ -10,7 +10,7 @@ export default function AppLayout({
     children: React.ReactNode;
 }) {
     return (
-        <SidebarProvider>
+        <SidebarProvider style={{ "--sidebar-width": "320px" } as Record<string, string>}>
             <NavigationReset />
             <div className="flex h-screen w-full overflow-hidden">
                 <SidebarTrigger className="md:hidden absolute top-4 left-4 z-50 text-white" />

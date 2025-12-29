@@ -31,18 +31,24 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
 }
 
 // Fetch all chats
-export function useChatList(context?: { type?: 'board' | 'search'; id?: string | null }) {
+export function useChatList(
+    context?: { type?: 'board' | 'search'; id?: string | null },
+    options?: { setStore?: boolean }
+) {
     const setChats = useChatStore((s) => s.setChats);
+    const shouldSetStore = options?.setStore !== false;
 
     return useQuery({
-        queryKey: ['chats', context?.type || 'all', context?.id || 'all'],
+        queryKey: ['chats', context?.type || 'all', context?.id || 'all', shouldSetStore ? 'store' : 'no-store'],
         queryFn: async () => {
             const params = new URLSearchParams();
             if (context?.type) params.set('context_type', context.type);
             if (context?.id) params.set('context_id', context.id);
             const suffix = params.toString() ? `?${params.toString()}` : '';
             const chats = await fetchWithAuth<Chat[]>(`${BACKEND_URL}/v1/chats${suffix}`);
-            setChats(chats);
+            if (shouldSetStore) {
+                setChats(chats);
+            }
             return chats;
         },
         staleTime: 30000,

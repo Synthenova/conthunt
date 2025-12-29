@@ -2,15 +2,28 @@
 
 import { useChatStore } from '@/lib/chatStore';
 import { useChatList, useDeleteChat } from '@/hooks/useChat';
+import { useBoards } from '@/hooks/useBoards';
+import { useSearch } from '@/hooks/useSearch';
 import { formatDistanceToNow } from 'date-fns';
 import { Trash2, MessageSquare, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useMemo } from 'react';
 
 export function ChatHistoryPanel({ context }: { context?: { type?: 'board' | 'search'; id?: string } | null }) {
     const { chats, activeChatId, setActiveChatId, showHistory } = useChatStore();
     const { isLoading } = useChatList({ type: context?.type, id: context?.id });
     const deleteChat = useDeleteChat();
+    const { boards } = useBoards();
+    const { history } = useSearch();
+
+    const boardNameById = useMemo(() => {
+        return new Map(boards.map((board) => [String(board.id), board.name]));
+    }, [boards]);
+
+    const searchLabelById = useMemo(() => {
+        return new Map(history.map((item: any) => [String(item.id), item.query]));
+    }, [history]);
 
     if (!showHistory) return null;
 
@@ -36,7 +49,22 @@ export function ChatHistoryPanel({ context }: { context?: { type?: 'board' | 'se
                             No chat history yet
                         </div>
                     ) : (
-                        chats.map((chat) => (
+                        chats.map((chat) => {
+                            const contextId = chat.context_id ? String(chat.context_id) : "";
+                            const contextLabel =
+                                chat.context_type === 'board'
+                                    ? boardNameById.get(contextId)
+                                    : chat.context_type === 'search'
+                                        ? searchLabelById.get(contextId)
+                                        : null;
+                            const contextPrefix =
+                                chat.context_type === 'board'
+                                    ? 'Board'
+                                    : chat.context_type === 'search'
+                                        ? 'Search'
+                                        : null;
+
+                            return (
                             <div
                                 key={chat.id}
                                 onClick={() => handleSelectChat(chat.id)}
@@ -51,6 +79,9 @@ export function ChatHistoryPanel({ context }: { context?: { type?: 'board' | 'se
                                         {chat.title}
                                     </p>
                                     <p className="text-xs text-muted-foreground">
+                                        {contextLabel && contextPrefix
+                                            ? `${contextPrefix}: ${contextLabel} • `
+                                            : ''}
                                         {formatDistanceToNow(new Date(chat.created_at), { addSuffix: true })}
                                     </p>
                                 </div>
@@ -64,7 +95,8 @@ export function ChatHistoryPanel({ context }: { context?: { type?: 'board' | 'se
                                     <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                             </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
             </ScrollArea>
