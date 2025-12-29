@@ -16,7 +16,7 @@ class BoardResponse(BaseModel):
     updated_at: datetime
     item_count: Optional[int] = 0
     has_item: bool = False
-    # Optional: We could add preview images here later
+    preview_urls: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

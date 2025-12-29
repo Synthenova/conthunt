@@ -10,16 +10,29 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
-import { Check, ChevronDown, Plus, X, Loader2, FolderPlus, Download } from "lucide-react";
+import { Check, ChevronDown, Plus, X, Loader2, FolderPlus, Download, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { auth } from "@/lib/firebaseClient";
 
 interface SelectionBarProps {
     itemsById?: Record<string, any>;
     downloadDisabled?: boolean;
+    showAddToBoard?: boolean;
+    showRemoveFromBoard?: boolean;
+    onRemoveSelected?: () => void;
+    removeDisabled?: boolean;
+    disabledBoardIds?: string[];
 }
 
-export function SelectionBar({ itemsById = {}, downloadDisabled = false }: SelectionBarProps) {
+export function SelectionBar({
+    itemsById = {},
+    downloadDisabled = false,
+    showAddToBoard = true,
+    showRemoveFromBoard = false,
+    onRemoveSelected,
+    removeDisabled = false,
+    disabledBoardIds = [],
+}: SelectionBarProps) {
     const { selectedItems, clearSelection } = useSearchStore();
     const { boards, isLoadingBoards, createBoard, addToBoard, isAddingToBoard, isCreatingBoard } = useBoards();
 
@@ -155,135 +168,142 @@ export function SelectionBar({ itemsById = {}, downloadDisabled = false }: Selec
                 <div className="w-px h-8 bg-white/10" />
 
                 {/* Add to Board Dropdown */}
-                <Popover open={isOpen} onOpenChange={setIsOpen}>
-                    <PopoverTrigger asChild>
-                        <Button
-                            variant="default"
-                            className="gap-2"
-                            disabled={isAddingToBoard}
+                {showAddToBoard && (
+                    <Popover open={isOpen} onOpenChange={setIsOpen}>
+                        <PopoverTrigger asChild>
+                            <Button
+                                variant="default"
+                                className="gap-2"
+                                disabled={isAddingToBoard}
+                            >
+                                {isAddingToBoard ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    <FolderPlus className="h-4 w-4" />
+                                )}
+                                Add to Board
+                                <ChevronDown className="h-4 w-4" />
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                            className="w-72 p-0 bg-zinc-900/95 backdrop-blur-xl border-white/10"
+                            align="center"
+                            side="top"
+                            sideOffset={8}
                         >
-                            {isAddingToBoard ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                                <FolderPlus className="h-4 w-4" />
-                            )}
-                            Add to Board
-                            <ChevronDown className="h-4 w-4" />
-                        </Button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                        className="w-72 p-0 bg-zinc-900/95 backdrop-blur-xl border-white/10"
-                        align="center"
-                        side="top"
-                        sideOffset={8}
-                    >
-                        <div className="p-3 border-b border-white/10">
-                            <h4 className="font-semibold text-sm text-white">Select Boards</h4>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                Choose one or more boards
-                            </p>
-                        </div>
+                            <div className="p-3 border-b border-white/10">
+                                <h4 className="font-semibold text-sm text-white">Select Boards</h4>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Choose one or more boards
+                                </p>
+                            </div>
 
-                        {/* Board List */}
-                        <div className="max-h-60 overflow-y-auto p-2">
-                            {isLoadingBoards ? (
-                                <div className="flex items-center justify-center py-8">
-                                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                                </div>
-                            ) : boards.length === 0 ? (
-                                <div className="text-center py-6 text-sm text-muted-foreground">
-                                    No boards yet
-                                </div>
-                            ) : (
-                                <div className="space-y-1">
-                                    {boards.map((board) => (
-                                        <button
-                                            key={board.id}
-                                            onClick={() => toggleBoard(board.id)}
-                                            className={`
-                                                w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors
-                                                ${selectedBoards.includes(board.id)
-                                                    ? 'bg-primary/20 text-white'
-                                                    : 'hover:bg-white/5 text-white/80'
-                                                }
-                                            `}
-                                        >
-                                            <div className={`
-                                                h-5 w-5 rounded border-2 flex items-center justify-center
-                                                ${selectedBoards.includes(board.id)
-                                                    ? 'bg-primary border-primary'
-                                                    : 'border-white/30'
-                                                }
-                                            `}>
-                                                {selectedBoards.includes(board.id) && (
-                                                    <Check className="h-3 w-3 text-white" />
-                                                )}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="font-medium truncate">{board.name}</div>
-                                                <div className="text-xs text-muted-foreground">
-                                                    {board.item_count} items
+                            {/* Board List */}
+                            <div className="max-h-60 overflow-y-auto p-2">
+                                {isLoadingBoards ? (
+                                    <div className="flex items-center justify-center py-8">
+                                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                    </div>
+                                ) : boards.length === 0 ? (
+                                    <div className="text-center py-6 text-sm text-muted-foreground">
+                                        No boards yet
+                                    </div>
+                                ) : (
+                                    <div className="space-y-1">
+                                        {boards.map((board) => {
+                                            const isDisabledBoard = disabledBoardIds.includes(board.id);
+                                            return (
+                                            <button
+                                                key={board.id}
+                                                onClick={() => toggleBoard(board.id)}
+                                                disabled={isDisabledBoard}
+                                                className={`
+                                                    w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors
+                                                    ${isDisabledBoard
+                                                        ? 'opacity-50 cursor-not-allowed bg-white/5'
+                                                        : selectedBoards.includes(board.id)
+                                                            ? 'bg-primary/20 text-white'
+                                                            : 'hover:bg-white/5 text-white/80'
+                                                    }
+                                                `}
+                                            >
+                                                <div className={`
+                                                    h-5 w-5 rounded border-2 flex items-center justify-center
+                                                    ${isDisabledBoard || selectedBoards.includes(board.id)
+                                                        ? 'bg-primary border-primary'
+                                                        : 'border-white/30'
+                                                    }
+                                                `}>
+                                                    {(isDisabledBoard || selectedBoards.includes(board.id)) && (
+                                                        <Check className="h-3 w-3 text-white" />
+                                                    )}
                                                 </div>
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="font-medium truncate">{board.name}</div>
+                                                    <div className="text-xs text-muted-foreground">
+                                                        {board.item_count} items
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        )})}
+                                    </div>
+                                )}
+                            </div>
 
-                        {/* Create New Board */}
-                        <div className="p-2 border-t border-white/10">
-                            {showNewBoardInput ? (
-                                <div className="flex gap-2">
-                                    <Input
-                                        placeholder="Board name..."
-                                        value={newBoardName}
-                                        onChange={(e) => setNewBoardName(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleCreateBoard()}
-                                        className="h-9 bg-white/5 border-white/10"
-                                        autoFocus
-                                    />
-                                    <Button
-                                        size="sm"
-                                        onClick={handleCreateBoard}
-                                        disabled={!newBoardName.trim() || isCreatingBoard}
-                                        className="h-9"
+                            {/* Create New Board */}
+                            <div className="p-2 border-t border-white/10">
+                                {showNewBoardInput ? (
+                                    <div className="flex gap-2">
+                                        <Input
+                                            placeholder="Board name..."
+                                            value={newBoardName}
+                                            onChange={(e) => setNewBoardName(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && handleCreateBoard()}
+                                            className="h-9 bg-white/5 border-white/10"
+                                            autoFocus
+                                        />
+                                        <Button
+                                            size="sm"
+                                            onClick={handleCreateBoard}
+                                            disabled={!newBoardName.trim() || isCreatingBoard}
+                                            className="h-9"
+                                        >
+                                            {isCreatingBoard ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <Check className="h-4 w-4" />
+                                            )}
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={() => setShowNewBoardInput(true)}
+                                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-primary hover:bg-primary/10 transition-colors"
                                     >
-                                        {isCreatingBoard ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                            <Check className="h-4 w-4" />
-                                        )}
+                                        <Plus className="h-4 w-4" />
+                                        Create new board
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Confirm Button */}
+                            {selectedBoards.length > 0 && (
+                                <div className="p-2 border-t border-white/10">
+                                    <Button
+                                        className="w-full"
+                                        onClick={handleAddToBoards}
+                                        disabled={isAddingToBoard}
+                                    >
+                                        {isAddingToBoard ? (
+                                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                        ) : null}
+                                        Add to {selectedBoards.length} board{selectedBoards.length !== 1 ? 's' : ''}
                                     </Button>
                                 </div>
-                            ) : (
-                                <button
-                                    onClick={() => setShowNewBoardInput(true)}
-                                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-primary hover:bg-primary/10 transition-colors"
-                                >
-                                    <Plus className="h-4 w-4" />
-                                    Create new board
-                                </button>
                             )}
-                        </div>
-
-                        {/* Confirm Button */}
-                        {selectedBoards.length > 0 && (
-                            <div className="p-2 border-t border-white/10">
-                                <Button
-                                    className="w-full"
-                                    onClick={handleAddToBoards}
-                                    disabled={isAddingToBoard}
-                                >
-                                    {isAddingToBoard ? (
-                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                    ) : null}
-                                    Add to {selectedBoards.length} board{selectedBoards.length !== 1 ? 's' : ''}
-                                </Button>
-                            </div>
-                        )}
-                    </PopoverContent>
-                </Popover>
+                        </PopoverContent>
+                    </Popover>
+                )}
 
                 {/* Download Selected */}
                 <Button
@@ -299,6 +319,19 @@ export function SelectionBar({ itemsById = {}, downloadDisabled = false }: Selec
                     )}
                     {downloadDisabled ? "Download after search completes" : "Download ZIP"}
                 </Button>
+
+                {/* Remove from Board */}
+                {showRemoveFromBoard && onRemoveSelected && (
+                    <Button
+                        variant="destructive"
+                        className="gap-2"
+                        onClick={onRemoveSelected}
+                        disabled={removeDisabled}
+                    >
+                        <Trash2 className="h-4 w-4" />
+                        Remove from board
+                    </Button>
+                )}
 
                 {/* Clear Selection */}
                 <Button

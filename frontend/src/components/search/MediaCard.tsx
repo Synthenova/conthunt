@@ -1,27 +1,33 @@
 import { GlassCard } from "@/components/ui/glass-card";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
-import { Play, Heart, MessageCircle, Share2, ExternalLink, Eye, MoreHorizontal } from "lucide-react";
-import { useState, useRef } from "react";
+import { Play, Heart, MessageCircle, Share2, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useSearchStore } from "@/lib/store";
 
 interface MediaCardProps {
     item: any;
     platform: string;
+    showBadge?: boolean;
 }
 
-export function MediaCard({ item, platform }: MediaCardProps) {
+export function MediaCard({ item, platform, showBadge = true }: MediaCardProps) {
     const [isPlaying, setIsPlaying] = useState(false);
     const [isCaptionExpanded, setIsCaptionExpanded] = useState(false);
+    const { mediaMuted, setMediaMuted } = useSearchStore();
     const videoRef = useRef<HTMLVideoElement>(null);
+    const youtubeRef = useRef<HTMLIFrameElement>(null);
 
     // Platform-specific field mapping
     const title = item.title || item.caption || item.description || "No Title";
     const thumbnail = item.thumbnail_url || item.cover_url || item.image_url;
     // Prefer direct media URL or fall back to platform link
     const videoUrl = item.video_url || item.media_url;
-    const link = item.url || item.link || item.web_url; // Keep link for external button if needed
+    const link = item.url || item.link || item.web_url;
+    const platformLabel = formatPlatformLabel(platform);
+    const platformIconClass = getPlatformIconClass(platform);
 
     // Stats
     const views = item.view_count || item.play_count || 0;
@@ -50,6 +56,27 @@ export function MediaCard({ item, platform }: MediaCardProps) {
             }
         }
     };
+
+    useEffect(() => {
+        if (videoRef.current) {
+            videoRef.current.muted = mediaMuted;
+        }
+    }, [mediaMuted]);
+
+    const syncYouTubeMute = () => {
+        if (!isYouTube || !youtubeRef.current) return;
+        const command = mediaMuted ? "mute" : "unMute";
+        youtubeRef.current.contentWindow?.postMessage(
+            JSON.stringify({ event: "command", func: command, args: [] }),
+            "*"
+        );
+    };
+
+    useEffect(() => {
+        if (isPlaying) {
+            syncYouTubeMute();
+        }
+    }, [mediaMuted, isYouTube, isPlaying]);
 
     return (
         <GlassCard
@@ -81,7 +108,7 @@ export function MediaCard({ item, platform }: MediaCardProps) {
                                 "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
                                 isPlaying ? 'opacity-100' : 'opacity-0'
                             )}
-                            muted
+                            muted={mediaMuted}
                             loop
                             playsInline
                         />
@@ -90,10 +117,12 @@ export function MediaCard({ item, platform }: MediaCardProps) {
                     {/* YouTube Embedded Player */}
                     {isYouTube && youtubeId && isPlaying && (
                         <iframe
-                            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&disablekb=1`}
+                            ref={youtubeRef}
+                            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${mediaMuted ? 1 : 0}&controls=0&modestbranding=1&playsinline=1&disablekb=1&enablejsapi=1`}
                             className="absolute inset-0 w-full h-full pointer-events-none"
                             allow="autoplay; encrypted-media"
                             allowFullScreen
+                            onLoad={syncYouTubeMute}
                         />
                     )}
 
@@ -108,10 +137,43 @@ export function MediaCard({ item, platform }: MediaCardProps) {
                         For now, just the Platform Badge which hides on hover. */}
 
                     {/* Platform Badge */}
-                    <div className="absolute top-3 left-3">
-                        <Badge className="bg-black/50 backdrop-blur-md border-white/10 hover:bg-black/70 uppercase text-[10px]">
-                            {platform.replace('_', ' ')}
-                        </Badge>
+                    {showBadge && (
+                        <div className="absolute top-2 left-2">
+                            {link ? (
+                                <a
+                                    href={link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label={`${platformLabel} link`}
+                                    title={platformLabel}
+                                >
+                                    <Badge className="relative bg-black/50 backdrop-blur-md border-white/40 hover:bg-black/70 uppercase text-[10px] flex items-center gap-1 pr-2 transition-[padding] duration-200 group-hover:pr-5">
+                                        <i className={cn("bi", platformIconClass, "text-[14px]")} aria-hidden="true" />
+                                        <i className="bi bi-box-arrow-up-right text-[13px] opacity-0 transition-opacity duration-200 absolute right-1 group-hover:opacity-100" aria-hidden="true" />
+                                    </Badge>
+                                </a>
+                            ) : (
+                                <Badge className="bg-black/50 backdrop-blur-md border-white/40 hover:bg-black/70 uppercase text-[10px] flex items-center gap-1">
+                                    <i className={cn("bi", platformIconClass, "text-[14px]")} aria-hidden="true" />
+                                </Badge>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Mute Toggle */}
+                    <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-full bg-black/40 hover:bg-black/60 text-white"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setMediaMuted(!mediaMuted);
+                            }}
+                        >
+                            {mediaMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                        </Button>
                     </div>
 
                     {/* Right Side Stats Bar */}
@@ -137,13 +199,7 @@ export function MediaCard({ item, platform }: MediaCardProps) {
                             </div>
                         )}
 
-                        <div className="flex flex-col items-center gap-1">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 text-white" asChild>
-                                <a href={link} target="_blank" rel="noopener noreferrer">
-                                    <ExternalLink className="h-4 w-4" />
-                                </a>
-                            </Button>
-                        </div>
+                        {null}
                     </div>
 
 
@@ -207,4 +263,17 @@ function formatNumber(num: number): string {
     if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
     if (num >= 1000) return (num / 1000).toFixed(1) + 'k';
     return num.toString();
+}
+
+function formatPlatformLabel(platform: string): string {
+    return platform.replace(/_/g, " ");
+}
+
+function getPlatformIconClass(platform: string): string {
+    const normalized = platform.toLowerCase();
+    if (normalized.includes("tiktok")) return "bi-tiktok";
+    if (normalized.includes("instagram")) return "bi-instagram";
+    if (normalized.includes("youtube")) return "bi-youtube";
+    if (normalized.includes("pinterest")) return "bi-pinterest";
+    return "bi-globe";
 }

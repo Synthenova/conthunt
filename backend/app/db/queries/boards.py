@@ -45,8 +45,36 @@ async def get_user_boards(
                 (SELECT COUNT(*) FROM board_items bi WHERE bi.board_id = b.id) as item_count,
                 case when cast(:check_item_id as uuid) is not null then
                     exists(select 1 from board_items bi where bi.board_id = b.id and bi.content_item_id = :check_item_id)
-                else false end as has_item
+                else false end as has_item,
+                preview.preview_urls
             FROM boards b
+            LEFT JOIN LATERAL (
+                SELECT array_agg(item.preview_url ORDER BY item.added_at DESC) AS preview_urls
+                FROM (
+                    SELECT
+                        bi.added_at,
+                        COALESCE(best_asset.gcs_uri, best_asset.source_url) AS preview_url
+                    FROM board_items bi
+                    LEFT JOIN LATERAL (
+                        SELECT ma.gcs_uri, ma.source_url
+                        FROM media_assets ma
+                        WHERE ma.content_item_id = bi.content_item_id
+                          AND ma.asset_type IN ('thumbnail', 'cover', 'image')
+                        ORDER BY
+                            CASE ma.asset_type
+                                WHEN 'thumbnail' THEN 1
+                                WHEN 'cover' THEN 2
+                                WHEN 'image' THEN 3
+                                ELSE 99
+                            END
+                        LIMIT 1
+                    ) best_asset ON true
+                    WHERE bi.board_id = b.id
+                    ORDER BY bi.added_at DESC
+                    LIMIT 4
+                ) item
+                WHERE item.preview_url IS NOT NULL
+            ) preview ON true
             WHERE b.user_id = :user_id
             ORDER BY b.updated_at DESC
         """),
@@ -60,7 +88,8 @@ async def get_user_boards(
             "created_at": row[3],
             "updated_at": row[4],
             "item_count": row[5],
-            "has_item": row[6]
+            "has_item": row[6],
+            "preview_urls": list(row[7] or []),
         }
         for row in result.fetchall()
     ]

@@ -26,6 +26,10 @@ interface SearchState {
     selectAll: (ids: string[]) => void;
     isItemSelected: (id: string) => boolean;
 
+    // Global media mute state
+    mediaMuted: boolean;
+    setMediaMuted: (muted: boolean) => void;
+
     setQuery: (q: string) => void;
     setLimit: (n: number) => void;
     togglePlatform: (key: keyof SearchInputs) => void;
@@ -60,6 +64,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     clearSelection: () => set({ selectedItems: [] }),
     selectAll: (ids) => set({ selectedItems: ids }),
     isItemSelected: (id) => get().selectedItems.includes(id),
+
+    mediaMuted: false,
+    setMediaMuted: (muted) => set({ mediaMuted: muted }),
 
     setQuery: (query) => set({ query }),
     setLimit: (limit) => set({ limit }),

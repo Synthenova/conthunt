@@ -9,6 +9,7 @@ interface ClientFilteredResultsProps {
     loading: boolean;
     analysisDisabled?: boolean;
     resultsAreFlat?: boolean;
+    showControls?: boolean;
     onFlatResultsChange?: (results: FlatMediaItem[]) => void;
     onAllResultsChange?: (results: FlatMediaItem[]) => void;
 }
@@ -18,6 +19,7 @@ export function ClientFilteredResults({
     loading,
     analysisDisabled = false,
     resultsAreFlat = false,
+    showControls = true,
     onFlatResultsChange,
     onAllResultsChange,
 }: ClientFilteredResultsProps) {
@@ -40,13 +42,15 @@ export function ClientFilteredResults({
 
     return (
         <div className="space-y-4">
-            <ClientResultControls
-                sort={clientSort}
-                onSortChange={setClientSort}
-                dateFilter={clientDateFilter}
-                onDateFilterChange={setClientDateFilter}
-                totalResults={flatResults.length}
-            />
+            {showControls && baseResults.length > 0 && (
+                <ClientResultControls
+                    sort={clientSort}
+                    onSortChange={setClientSort}
+                    dateFilter={clientDateFilter}
+                    onDateFilterChange={setClientDateFilter}
+                    totalResults={flatResults.length}
+                />
+            )}
             <SelectableResultsGrid
                 results={flatResults}
                 loading={loading}

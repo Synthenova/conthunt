@@ -11,6 +11,7 @@ export interface Board {
     updated_at: string;
     item_count: number;
     has_item?: boolean;
+    preview_urls?: string[];
 }
 
 export interface ContentItem {

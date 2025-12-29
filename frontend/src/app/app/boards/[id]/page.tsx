@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useBoards } from "@/hooks/useBoards";
@@ -9,6 +9,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ClientFilteredResults } from "@/components/search/ClientFilteredResults";
+import { SelectionBar } from "@/components/boards/SelectionBar";
 import {
     Dialog,
     DialogContent,
@@ -27,7 +28,7 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Trash2, Plus, Loader2, FolderOpen, Video, Download } from "lucide-react";
+import { ArrowLeft, Trash2, Plus, Loader2, FolderOpen, Video } from "lucide-react";
 import { transformToMediaItem } from "@/lib/transformers";
 import { formatDistanceToNow } from "date-fns";
 
@@ -51,7 +52,6 @@ export default function BoardDetailPage() {
 
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [showRemoveDialog, setShowRemoveDialog] = useState(false);
-    const [isDownloading, setIsDownloading] = useState(false);
 
     // Transform board items to flat media format for cards
     const transformedItems = (items || []).map(item => {
@@ -60,6 +60,16 @@ export default function BoardDetailPage() {
     });
 
     const selectedCount = selectedItems.length;
+
+    const itemsById = useMemo(() => {
+        const map: Record<string, any> = {};
+        for (const item of transformedItems) {
+            if (item?.id) {
+                map[item.id] = item;
+            }
+        }
+        return map;
+    }, [transformedItems]);
 
     const handleDeleteBoard = async () => {
         try {
@@ -79,66 +89,6 @@ export default function BoardDetailPage() {
             setShowRemoveDialog(false);
         } catch (error) {
             console.error("Failed to remove items:", error);
-        }
-    };
-
-    const handleDownloadZip = async () => {
-        if (selectedItems.length === 0) return;
-        setIsDownloading(true);
-
-        try {
-            // Filter only the selected items from the transformed list
-            const downloadableItems = transformedItems.filter(item => selectedItems.includes(item.id));
-
-            const JSZip = (await import("jszip")).default;
-            const zip = new JSZip();
-
-            for (const item of downloadableItems) {
-                // For now, assume video is the target. The assets are already on the item from transform.
-                // We need to look at the raw assets which are passed through by transformToMediaItem
-                const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
-
-                // Fallback: If no explicit video asset in raw array, check if video_url is valid?
-                // But transformToMediaItem sets video_url from asset.source_url usually.
-                // Let's rely on the same logic as SelectionBar: check assets directly.
-
-                const downloadUrl = item.video_url || videoAsset?.source_url || videoAsset?.gcs_uri?.replace("gs://", "https://storage.googleapis.com/");
-
-                if (!downloadUrl) {
-                    console.warn(`No download URL found for item ${item.id}`);
-                    continue;
-                }
-
-                const safeId = String(item.id || "video").replace(/[^a-zA-Z0-9_-]/g, "_");
-                const filename = `${item.platform || "video"}_${safeId}.mp4`;
-
-                try {
-                    const response = await fetch(downloadUrl);
-                    if (!response.ok) {
-                        console.error(`Failed to fetch ${downloadUrl}: ${response.statusText}`);
-                        continue;
-                    }
-                    const data = await response.arrayBuffer();
-                    zip.file(filename, data);
-                } catch (err) {
-                    console.error(`Error downloading ${downloadUrl}:`, err);
-                }
-            }
-
-            const blob = await zip.generateAsync({ type: "blob" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = `conthunt-board-${board?.name || 'videos'}-${new Date().toISOString().slice(0, 10)}.zip`;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-            URL.revokeObjectURL(url);
-
-        } catch (error) {
-            console.error("Failed to download zip:", error);
-        } finally {
-            setIsDownloading(false);
         }
     };
 
@@ -211,40 +161,6 @@ export default function BoardDetailPage() {
                     </Button>
                 </div>
 
-                {/* Selection Actions */}
-                {selectedCount > 0 && (
-                    <div className="flex items-center gap-4 p-3 bg-white/5 rounded-lg border border-white/10">
-                        <span className="text-sm">
-                            {selectedCount} item{selectedCount !== 1 ? 's' : ''} selected
-                        </span>
-
-                        <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={handleDownloadZip}
-                            disabled={isDownloading}
-                        >
-                            {isDownloading ? (
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            ) : (
-                                <Download className="h-4 w-4 mr-2" />
-                            )}
-                            Download
-                        </Button>
-
-                        <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => setShowRemoveDialog(true)}
-                        >
-                            Remove from board
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={clearSelection}>
-                            Clear selection
-                        </Button>
-                    </div>
-                )}
-
                 {/* Content Grid */}
                 {isItemsLoading ? (
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
@@ -275,6 +191,7 @@ export default function BoardDetailPage() {
                         results={transformedItems}
                         loading={false}
                         resultsAreFlat
+
                     />
                 )}
             </div>
@@ -332,6 +249,14 @@ export default function BoardDetailPage() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            <SelectionBar
+                itemsById={itemsById}
+                showRemoveFromBoard
+                onRemoveSelected={() => setShowRemoveDialog(true)}
+                removeDisabled={isRemovingFromBoard || selectedCount === 0}
+                disabledBoardIds={[boardId]}
+            />
 
         </div>
     );

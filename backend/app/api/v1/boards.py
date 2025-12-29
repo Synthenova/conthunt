@@ -36,7 +36,17 @@ async def list_boards(
     async with get_db_connection() as conn:
         user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
-        return await queries.get_user_boards(conn, user_uuid, check_content_item_id=check_item_id)
+        boards = await queries.get_user_boards(conn, user_uuid, check_content_item_id=check_item_id)
+        for board in boards:
+            preview_urls = board.get("preview_urls") or []
+            signed_urls = []
+            for url in preview_urls:
+                if url and url.startswith("gs://"):
+                    signed_urls.append(generate_signed_url(url))
+                else:
+                    signed_urls.append(url)
+            board["preview_urls"] = signed_urls
+        return boards
 
 
 @router.post("", response_model=BoardResponse, status_code=status.HTTP_201_CREATED)

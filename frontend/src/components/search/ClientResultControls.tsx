@@ -28,10 +28,10 @@ export function ClientResultControls({
     onDateFilterChange,
     totalResults
 }: ClientResultControlsProps) {
-    if (totalResults === 0) return null;
+
 
     const sortLabels: Record<ClientSortOption, string> = {
-        default: "Default API Sort",
+        default: "Relevancy",
         views: "Most Viewed",
         likes: "Most Liked",
         shares: "Most Shared",
