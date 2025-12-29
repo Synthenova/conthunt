@@ -56,6 +56,12 @@ const navItems = [
 
 const TITLE_LIMIT = 28;
 
+type SearchHistoryItem = {
+    id: string;
+    query: string;
+    inputs?: Record<string, unknown>;
+};
+
 function truncateText(value: string, limit: number) {
     if (value.length <= limit) return value;
     return value.slice(0, limit - 1).trimEnd() + "...";
@@ -196,7 +202,7 @@ export function AppSidebar() {
                                         </div>
                                     </SidebarMenuItem>
                                 ) : (
-                                    history.map((item) => {
+                                    (history as SearchHistoryItem[]).map((item) => {
                                         const searchId = String(item.id);
                                         const chatsForSearch = chatsBySearchId[searchId] || [];
                                         const isExpanded = expandedSearches.has(searchId);
