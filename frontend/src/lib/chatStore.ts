@@ -11,6 +11,18 @@ export interface Chat {
     title: string;
     created_at: string;
     updated_at: string;
+    context_type?: 'board' | 'search';
+    context_id?: string | null;
+}
+
+export interface MediaChipInput {
+    id: string;
+    media_asset_id?: string | null;
+    platform?: string;
+    title?: string;
+    creator_handle?: string;
+    content_type?: string;
+    primary_text?: string;
 }
 
 interface ChatState {
@@ -54,6 +66,11 @@ interface ChatState {
     showHistory: boolean;
     toggleHistory: () => void;
     setShowHistory: (show: boolean) => void;
+
+    // Pending media chips (from selection/drag)
+    queuedMediaChips: MediaChipInput[];
+    queueMediaChips: (chips: MediaChipInput[]) => void;
+    clearQueuedMediaChips: () => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -135,4 +152,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     showHistory: false,
     toggleHistory: () => set((state) => ({ showHistory: !state.showHistory })),
     setShowHistory: (show) => set({ showHistory: show }),
+
+    // Pending media chips
+    queuedMediaChips: [],
+    queueMediaChips: (chips) => set((state) => ({
+        queuedMediaChips: [...state.queuedMediaChips, ...chips],
+    })),
+    clearQueuedMediaChips: () => set({ queuedMediaChips: [] }),
 }));

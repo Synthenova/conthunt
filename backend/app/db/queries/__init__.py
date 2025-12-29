@@ -22,6 +22,7 @@ from app.db.queries.search import (
     get_user_searches,
     get_platform_calls_for_search,
     get_search_results_with_content,
+    get_search_items_summary,
     get_media_asset_with_access_check,
     get_full_search_detail,
     update_search_status,
@@ -58,9 +59,18 @@ from app.db.queries.twelvelabs import (
 # Analysis queries (Gemini-based)
 from app.db.queries.analysis import (
     get_video_analysis_by_media_asset,
+    get_video_analyses_by_media_assets,
     insert_video_analysis,
     create_pending_analysis,
     update_analysis_status,
+)
+
+# Insights queries
+from app.db.queries.insights import (
+    get_board_insights,
+    upsert_pending_board_insights,
+    update_board_insights_status,
+    get_board_media_assets_since,
 )
 
 # Content queries (shared)
@@ -99,6 +109,7 @@ __all__ = [
     "get_user_searches",
     "get_platform_calls_for_search",
     "get_search_results_with_content",
+    "get_search_items_summary",
     "get_media_asset_with_access_check",
     "update_search_status",
     "insert_platform_calls_batch",
@@ -122,9 +133,15 @@ __all__ = [
     "update_twelvelabs_asset_status",
     "get_user_twelvelabs_assets",
     "get_video_analysis_by_media_asset",
+    "get_video_analyses_by_media_assets",
     "insert_video_analysis",
     "create_pending_analysis",
     "update_analysis_status",
+    # Insights
+    "get_board_insights",
+    "upsert_pending_board_insights",
+    "update_board_insights_status",
+    "get_board_media_assets_since",
     # Content
     "get_content_item_by_id",
     "get_video_media_asset_for_content_item",
@@ -139,4 +156,3 @@ __all__ = [
     "check_chat_exists",
     "delete_chat",
 ]
-

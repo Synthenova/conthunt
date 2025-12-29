@@ -16,34 +16,54 @@ async def create_chat(
     user_id: UUID,
     thread_id: str,
     title: str,
+    context_type: Optional[str] = None,
+    context_id: Optional[UUID] = None,
 ) -> None:
     """Insert a new chat record."""
     await conn.execute(
         text("""
-            INSERT INTO conthunt.chats (id, user_id, thread_id, title, status)
-            VALUES (:id, :user_id, :thread_id, :title, 'idle')
+            INSERT INTO conthunt.chats (id, user_id, thread_id, title, status, context_type, context_id)
+            VALUES (:id, :user_id, :thread_id, :title, 'idle', :context_type, :context_id)
         """),
         {
             "id": chat_id,
             "user_id": user_id,
             "thread_id": thread_id,
-            "title": title
+            "title": title,
+            "context_type": context_type,
+            "context_id": context_id,
         }
     )
 
 
 @log_query_timing
-async def get_user_chats(conn: AsyncConnection, user_id: UUID) -> List[ChatSchema]:
+async def get_user_chats(
+    conn: AsyncConnection,
+    user_id: UUID,
+    context_type: Optional[str] = None,
+    context_id: Optional[UUID] = None,
+) -> List[ChatSchema]:
     """Get all chats for a user."""
     # Note: RLS handles the filtering usually, but we include user_id in query for explicit correctness if bypassing RLS
     # Here we assume RLS is set, but standard select is good.
+    where_clauses = ["deleted_at IS NULL"]
+    params: dict = {}
+    if context_type:
+        where_clauses.append("context_type = :context_type")
+        params["context_type"] = context_type
+    if context_id:
+        where_clauses.append("context_id = :context_id")
+        params["context_id"] = context_id
+
+    where_sql = " AND ".join(where_clauses)
     rows = await conn.execute(
         text("""
-            SELECT id, user_id, thread_id, title, status, created_at, updated_at 
+            SELECT id, user_id, thread_id, title, context_type, context_id, status, created_at, updated_at
             FROM conthunt.chats 
-            WHERE deleted_at IS NULL
+            WHERE """ + where_sql + """
             ORDER BY updated_at DESC
-        """)
+        """),
+        params
     )
     
     results = []
@@ -53,9 +73,11 @@ async def get_user_chats(conn: AsyncConnection, user_id: UUID) -> List[ChatSchem
             user_id=r[1],
             thread_id=r[2],
             title=r[3],
-            status=r[4],
-            created_at=r[5],
-            updated_at=r[6]
+            context_type=r[4],
+            context_id=r[5],
+            status=r[6],
+            created_at=r[7],
+            updated_at=r[8]
         ))
     return results
 

@@ -5,14 +5,16 @@ import { useSearchStore } from "@/lib/store";
 import { useBoards } from "@/hooks/useBoards";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
+import { useChatStore } from "@/lib/chatStore";
 import {
     Popover,
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
-import { Check, ChevronDown, Plus, X, Loader2, FolderPlus, Download, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Plus, X, Loader2, FolderPlus, Download, Trash2, Sparkles, MessageSquarePlus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { auth } from "@/lib/firebaseClient";
+import { toast } from "sonner";
 
 interface SelectionBarProps {
     itemsById?: Record<string, any>;
@@ -35,12 +37,14 @@ export function SelectionBar({
 }: SelectionBarProps) {
     const { selectedItems, clearSelection } = useSearchStore();
     const { boards, isLoadingBoards, createBoard, addToBoard, isAddingToBoard, isCreatingBoard } = useBoards();
+    const { queueMediaChips, openSidebar } = useChatStore();
 
     const [isOpen, setIsOpen] = useState(false);
     const [selectedBoards, setSelectedBoards] = useState<string[]>([]);
     const [newBoardName, setNewBoardName] = useState("");
     const [showNewBoardInput, setShowNewBoardInput] = useState(false);
     const [isDownloading, setIsDownloading] = useState(false);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
 
     const count = selectedItems.length;
     const downloadableItems = useMemo(() => {
@@ -53,6 +57,17 @@ export function SelectionBar({
             return platform !== "youtube" && videoAsset?.id;
         });
     }, [itemsById, selectedItems]);
+
+    const analyzableItems = useMemo(() => {
+        const items = selectedItems
+            .map((id) => itemsById[id])
+            .filter(Boolean);
+        return items.filter((item: any) => {
+            const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
+            return Boolean(videoAsset?.id);
+        });
+    }, [itemsById, selectedItems]);
+
 
     // Don't render if no items selected
     if (count === 0) return null;
@@ -94,6 +109,104 @@ export function SelectionBar({
         } catch (error) {
             console.error("Failed to add to boards:", error);
         }
+    };
+
+
+    const handleAnalyzeSelected = async () => {
+        if (isAnalyzing || analyzableItems.length === 0) return;
+
+        setIsAnalyzing(true);
+
+        try {
+            const user = auth.currentUser;
+            if (!user) {
+                throw new Error("User not authenticated");
+            }
+            const token = await user.getIdToken();
+            const { BACKEND_URL } = await import('@/lib/api');
+            const backendUrl = BACKEND_URL;
+
+            const requests = analyzableItems
+                .map((item: any) => {
+                    const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
+                    const mediaAssetId = videoAsset?.id;
+                    if (!mediaAssetId) return null;
+                    return fetch(`${backendUrl}/v1/video-analysis/${mediaAssetId}`, {
+                        method: "POST",
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            "Content-Type": "application/json",
+                        },
+                    });
+                })
+                .filter(Boolean) as Promise<Response>[];
+
+            if (requests.length === 0) {
+                toast.error("No videos available for analysis.");
+                return;
+            }
+
+            const results = await Promise.allSettled(requests);
+
+            let startedCount = 0;
+            let failedCount = 0;
+
+            results.forEach((result) => {
+                if (result.status === "fulfilled") {
+                    if (result.value.ok) {
+                        startedCount += 1;
+                    } else {
+                        failedCount += 1;
+                    }
+                } else {
+                    failedCount += 1;
+                }
+            });
+
+            if (startedCount > 0) {
+                toast.info("Analysis started. They'll be ready in a minute.");
+            }
+            if (failedCount > 0) {
+                toast.error(`Failed to start ${failedCount} analysis${failedCount === 1 ? "" : "es"}.`);
+            }
+        } catch (error) {
+            console.error("Failed to start analysis:", error);
+            toast.error("Failed to start analysis.");
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
+
+    const handleAddToChat = () => {
+        if (selectedItems.length === 0) return;
+
+        const items = selectedItems
+            .map((id) => itemsById[id])
+            .filter(Boolean);
+
+        const chips = items.map((item: any) => {
+            const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
+            const mediaAssetId = videoAsset?.id;
+            return {
+                id: item.id,
+                media_asset_id: mediaAssetId,
+                platform: item.platform,
+                title: item.title || item.caption || item.description || "Untitled video",
+                creator_handle: item.creator || item.creator_handle || item.creator_name,
+                content_type: item.content_type,
+                primary_text: item.primary_text || item.caption || item.description,
+            };
+        }).filter((chip: any) => chip.media_asset_id && chip.platform);
+
+        if (!chips.length) {
+            toast.error("No videos available to add to chat.");
+            return;
+        }
+
+        queueMediaChips(chips);
+        openSidebar();
+        clearSelection();
+        toast.info("Added to chat.");
     };
 
     const handleDownloadZip = async () => {
@@ -304,6 +417,33 @@ export function SelectionBar({
                         </PopoverContent>
                     </Popover>
                 )}
+
+
+                {/* Analyze Selected */}
+                <Button
+                    variant="secondary"
+                    className="gap-2"
+                    onClick={handleAnalyzeSelected}
+                    disabled={isAnalyzing || analyzableItems.length === 0}
+                >
+                    {isAnalyzing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Sparkles className="h-4 w-4" />
+                    )}
+                    Analyze
+                </Button>
+
+                {/* Add to Chat */}
+                <Button
+                    variant="secondary"
+                    className="gap-2"
+                    onClick={handleAddToChat}
+                    disabled={analyzableItems.length === 0}
+                >
+                    <MessageSquarePlus className="h-4 w-4" />
+                    Add to chat
+                </Button>
 
                 {/* Download Selected */}
                 <Button

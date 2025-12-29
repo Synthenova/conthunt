@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { auth } from "@/lib/firebaseClient";
-import { Board, BoardItem, CreateBoardRequest } from "@/lib/types/boards";
+import { Board, BoardItem, BoardInsights, CreateBoardRequest } from "@/lib/types/boards";
 
 import { BACKEND_URL } from '@/lib/api';
 
@@ -54,6 +54,17 @@ export function useBoards({ checkItemId }: { checkItemId?: string } = {}) {
             queryKey: ["boardItems", id],
             queryFn: () => fetchWithAuth(`${API_BASE}/boards/${id}/items`),
             enabled: !!id,
+        });
+
+    const getBoardInsights = (
+        id: string,
+        options: Omit<UseQueryOptions<BoardInsights>, "queryKey" | "queryFn"> = {}
+    ) =>
+        useQuery<BoardInsights>({
+            queryKey: ["boardInsights", id],
+            queryFn: () => fetchWithAuth(`${API_BASE}/boards/${id}/insights`),
+            enabled: !!id && (options.enabled ?? true),
+            ...options,
         });
 
     // POST /v1/boards - Create board
@@ -118,6 +129,16 @@ export function useBoards({ checkItemId }: { checkItemId?: string } = {}) {
         },
     });
 
+    const refreshBoardInsightsMutation = useMutation({
+        mutationFn: (boardId: string) =>
+            fetchWithAuth(`${API_BASE}/boards/${boardId}/insights/refresh`, {
+                method: "POST",
+            }),
+        onSuccess: (_, boardId) => {
+            queryClient.invalidateQueries({ queryKey: ["boardInsights", boardId] });
+        },
+    });
+
     return {
         // Queries
         boards: boardsQuery.data || [],
@@ -125,6 +146,7 @@ export function useBoards({ checkItemId }: { checkItemId?: string } = {}) {
         boardsError: boardsQuery.error,
         getBoard,
         getBoardItems,
+        getBoardInsights,
 
         // Mutations
         createBoard: createBoardMutation.mutateAsync,
@@ -138,6 +160,9 @@ export function useBoards({ checkItemId }: { checkItemId?: string } = {}) {
 
         removeFromBoard: removeFromBoardMutation.mutateAsync,
         isRemovingFromBoard: removeFromBoardMutation.isPending,
+
+        refreshBoardInsights: refreshBoardInsightsMutation.mutateAsync,
+        isRefreshingInsights: refreshBoardInsightsMutation.isPending,
 
         // Refetch
         refetchBoards: () => queryClient.invalidateQueries({ queryKey: ["boards"] }),

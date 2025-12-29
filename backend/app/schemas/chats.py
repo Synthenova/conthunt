@@ -1,6 +1,6 @@
 from datetime import datetime
 from uuid import UUID
-from typing import Union, List, Dict, Any, Optional
+from typing import Union, List, Dict, Any, Optional, Literal
 from pydantic import BaseModel
 from langchain_core.messages import (
     BaseMessage, 
@@ -25,16 +25,19 @@ class Chat(BaseModel):
     user_id: UUID
     thread_id: str
     title: Optional[str] = None
+    context_type: Optional[Literal["board", "search"]] = None
+    context_id: Optional[UUID] = None
     status: str
     created_at: datetime
     updated_at: datetime
 
 class CreateChatRequest(BaseModel):
     title: Optional[str] = None
+    context_type: Optional[Literal["board", "search"]] = None
+    context_id: Optional[UUID] = None
 
 class SendMessageRequest(BaseModel):
     message: str
-    board_id: Optional[str] = None
 
 class Message(BaseModel):
     id: Optional[str] = None

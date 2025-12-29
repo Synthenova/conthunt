@@ -116,6 +116,15 @@ class CloudTasksService:
                     compressed_data=compressed_bytes
                 )
                 
+            elif uri == "/v1/tasks/boards/insights":
+                from app.services.board_insights import execute_board_insights
+                from uuid import UUID
+                
+                await execute_board_insights(
+                    board_id=UUID(payload["board_id"]),
+                    user_id=UUID(payload["user_id"]),
+                )
+                
             else:
                 logger.warning(f"[LOCAL] Unknown task URI: {uri}")
                 

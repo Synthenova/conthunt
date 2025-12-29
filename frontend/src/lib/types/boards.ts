@@ -44,6 +44,37 @@ export interface BoardItem {
     added_at: string;
 }
 
+export interface CommonAngle {
+    label: string;
+    percentage: number;
+}
+
+export interface CreativeBrief {
+    target_audience: string;
+    key_message: string;
+    recommended_format: string;
+}
+
+export interface BoardInsightsResult {
+    top_hooks: string[];
+    common_angles: CommonAngle[];
+    creative_brief: CreativeBrief;
+    script_ideas: string[];
+    objections: string[];
+    ctas: string[];
+}
+
+export interface BoardInsights {
+    id?: string;
+    board_id: string;
+    status: "empty" | "processing" | "completed" | "failed";
+    insights?: BoardInsightsResult | null;
+    error?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    last_completed_at?: string | null;
+}
+
 // Request types
 export interface CreateBoardRequest {
     name: string;

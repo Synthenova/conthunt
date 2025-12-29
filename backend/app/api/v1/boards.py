@@ -11,6 +11,7 @@ from app.schemas.boards import (
     BoardCreate, BoardResponse,
     BoardItemCreate, BoardItemBatchCreate, BoardItemResponse
 )
+from app.schemas.insights import BoardInsightsResponse, BoardInsightsResult
 from app.api.v1.analysis import run_gemini_analysis
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.services.cdn_signer import generate_signed_url
@@ -191,6 +192,94 @@ async def get_board_items_summary(
         return result
 
 
+@router.get("/{board_id}/insights", response_model=BoardInsightsResponse)
+async def get_board_insights(
+    board_id: UUID,
+    user: dict = Depends(get_current_user),
+):
+    """Get cached board insights."""
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
+
+        board = await queries.get_board_by_id(conn, board_id)
+        if not board:
+            raise HTTPException(status_code=404, detail="Board not found")
+
+        insights = await queries.get_board_insights(conn, board_id)
+        if not insights:
+            return BoardInsightsResponse(
+                board_id=board_id,
+                status="empty",
+            )
+
+        insights_result = insights.get("insights_result") or {}
+        parsed_insights = None
+        if insights_result:
+            parsed_insights = BoardInsightsResult(**insights_result)
+
+        return BoardInsightsResponse(
+            id=insights.get("id"),
+            board_id=board_id,
+            status=insights.get("status", "processing"),
+            insights=parsed_insights,
+            error=insights.get("error"),
+            created_at=insights.get("created_at"),
+            updated_at=insights.get("updated_at"),
+            last_completed_at=insights.get("last_completed_at"),
+        )
+
+
+@router.post("/{board_id}/insights/refresh", response_model=BoardInsightsResponse)
+async def refresh_board_insights(
+    board_id: UUID,
+    user: dict = Depends(get_current_user),
+):
+    """Trigger background refresh for board insights."""
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
+
+        board = await queries.get_board_by_id(conn, board_id)
+        if not board:
+            raise HTTPException(status_code=404, detail="Board not found")
+
+        await queries.upsert_pending_board_insights(conn, board_id)
+        insights = await queries.get_board_insights(conn, board_id)
+
+    await cloud_tasks.create_http_task(
+        queue_name=settings.QUEUE_GEMINI,
+        relative_uri="/v1/tasks/boards/insights",
+        payload={
+            "board_id": str(board_id),
+            "user_id": str(user_uuid),
+        },
+    )
+
+    insights_result = insights.get("insights_result") if insights else {}
+    parsed_insights = None
+    if insights_result:
+        parsed_insights = BoardInsightsResult(**insights_result)
+
+    return BoardInsightsResponse(
+        id=insights.get("id") if insights else None,
+        board_id=board_id,
+        status="processing",
+        insights=parsed_insights,
+        created_at=insights.get("created_at") if insights else None,
+        updated_at=insights.get("updated_at") if insights else None,
+        last_completed_at=insights.get("last_completed_at") if insights else None,
+    )
+
+
 @router.post("/{board_id}/items", status_code=status.HTTP_201_CREATED)
 async def add_item_to_board(
     board_id: UUID,
@@ -222,7 +311,8 @@ async def add_item_to_board(
         media_asset_id = media_asset.get("id")
     
     # Trigger Gemini analysis (via Cloud Tasks)
-    await run_gemini_analysis(media_asset_id, background_tasks=None, use_cloud_tasks=True)
+    # NOTE: Gemini analysis disabled to reduce costs.
+    # await run_gemini_analysis(media_asset_id, background_tasks=None, use_cloud_tasks=True)
 
     # Trigger TwelveLabs Indexing (via Cloud Tasks)
     await cloud_tasks.create_http_task(
@@ -279,7 +369,8 @@ async def batch_add_items_to_board(
     # Trigger background analysis for each video
     for media_asset_id in media_asset_ids:
         # Trigger Gemini via Cloud Tasks (passed flag)
-        await run_gemini_analysis(media_asset_id, background_tasks=None, use_cloud_tasks=True)
+        # NOTE: Gemini analysis disabled to reduce costs.
+        # await run_gemini_analysis(media_asset_id, background_tasks=None, use_cloud_tasks=True)
         
         # Trigger TwelveLabs via Cloud Tasks directly
         await cloud_tasks.create_http_task(

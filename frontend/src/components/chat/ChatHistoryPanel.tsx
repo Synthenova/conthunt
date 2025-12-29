@@ -7,9 +7,9 @@ import { Trash2, MessageSquare, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-export function ChatHistoryPanel() {
+export function ChatHistoryPanel({ context }: { context?: { type?: 'board' | 'search'; id?: string } | null }) {
     const { chats, activeChatId, setActiveChatId, showHistory } = useChatStore();
-    const { isLoading } = useChatList();
+    const { isLoading } = useChatList({ type: context?.type, id: context?.id });
     const deleteChat = useDeleteChat();
 
     if (!showHistory) return null;

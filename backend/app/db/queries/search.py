@@ -581,6 +581,46 @@ async def get_search_results_with_content(
 
 
 @log_query_timing
+async def get_search_items_summary(
+    conn: AsyncConnection,
+    search_id: UUID,
+) -> List[dict]:
+    """
+    Get search results summary for agent consumption - minimal text data + video media_asset_id only.
+    """
+    result = await conn.execute(
+        text("""
+            SELECT 
+                ci.title,
+                ci.platform,
+                ci.creator_handle,
+                ci.content_type,
+                ci.primary_text,
+                ma.id as media_asset_id
+            FROM search_results sr
+            JOIN content_items ci ON sr.content_item_id = ci.id
+            LEFT JOIN media_assets ma ON ma.content_item_id = ci.id AND ma.asset_type = 'video'
+            WHERE sr.search_id = :search_id
+            ORDER BY sr.rank ASC
+        """),
+        {"search_id": search_id}
+    )
+
+    items = []
+    for row in result.fetchall():
+        items.append({
+            "title": row[0],
+            "platform": row[1],
+            "creator_handle": row[2],
+            "content_type": row[3],
+            "primary_text": row[4],
+            "media_asset_id": str(row[5]) if row[5] else None,
+        })
+
+    return items
+
+
+@log_query_timing
 async def get_media_asset_with_access_check(
     conn: AsyncConnection,
     asset_id: UUID,

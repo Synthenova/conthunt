@@ -11,9 +11,12 @@ interface SelectableMediaCardProps {
     item: any;
     platform: string;
     onOpen?: (item: any, resumeTime: number) => void;
+    itemsById?: Record<string, any>;
 }
 
-export function SelectableMediaCard({ item, platform, onOpen }: SelectableMediaCardProps) {
+const MEDIA_DRAG_TYPE = 'application/x-conthunt-media';
+
+export function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: SelectableMediaCardProps) {
     const { selectedItems, toggleItemSelection } = useSearchStore();
     const isSelected = selectedItems.includes(item.id);
     const selectionMode = selectedItems.length > 0;
@@ -28,9 +31,35 @@ export function SelectableMediaCard({ item, platform, onOpen }: SelectableMediaC
         toggleItemSelection(item.id);
     };
 
+    const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+        e.stopPropagation();
+        const selected = (selectionMode && isSelected)
+            ? selectedItems.map((id) => itemsById[id]).filter(Boolean)
+            : [];
+        const items = selected.length ? selected : [item];
+
+        const payloadItems = items.map((payloadItem: any) => {
+            const videoAsset = payloadItem.assets?.find((a: any) => a.asset_type === "video");
+            return {
+                id: payloadItem.id,
+                title: payloadItem.title || payloadItem.caption || payloadItem.description || "Untitled video",
+                platform: payloadItem.platform || platform,
+                creator_handle: payloadItem.creator || payloadItem.creator_handle || payloadItem.creator_name,
+                content_type: payloadItem.content_type,
+                primary_text: payloadItem.primary_text || payloadItem.caption || payloadItem.description,
+                media_asset_id: videoAsset?.id || payloadItem.media_asset_id || null,
+            };
+        });
+
+        e.dataTransfer.setData(MEDIA_DRAG_TYPE, JSON.stringify({ items: payloadItems, source: "grid" }));
+        e.dataTransfer.effectAllowed = "copy";
+    };
+
     return (
         <div
             className="relative group/select"
+            draggable
+            onDragStart={handleDragStart}
             onClick={() => {
                 if (!onOpen) return;
                 const hoverStart = hoverStartRef.current;

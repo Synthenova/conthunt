@@ -71,7 +71,6 @@ async def stream_generator_to_redis(
             "configurable": {
                 "thread_id": thread_id,
                 "x-auth-token": (context or {}).get("x-auth-token"),
-                "board_id": (context or {}).get("board_id"),
             }
         }
         
@@ -195,7 +194,9 @@ async def create_chat(
             chat_id=chat_id,
             user_id=user_uuid,
             thread_id=thread_id,
-            title=title
+            title=title,
+            context_type=request.context_type,
+            context_id=request.context_id,
         )
         await conn.commit()
         
@@ -204,6 +205,8 @@ async def create_chat(
             user_id=user_uuid,
             thread_id=thread_id,
             title=title,
+            context_type=request.context_type,
+            context_id=request.context_id,
             status="idle",
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
@@ -214,6 +217,8 @@ async def create_chat(
 @router.get("/", response_model=List[Chat])
 async def list_chats(
     user: dict = Depends(get_current_user),
+    context_type: Optional[str] = None,
+    context_id: Optional[uuid.UUID] = None,
 ):
     """List all chats for the current user."""
     user_id = user.get("uid")
@@ -223,7 +228,12 @@ async def list_chats(
     async with get_db_connection() as conn:
         user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
-        return await queries.get_user_chats(conn, user_uuid)
+        return await queries.get_user_chats(
+            conn,
+            user_uuid,
+            context_type=context_type,
+            context_id=context_id,
+        )
 
 
 @router.post("/{chat_id}/send")
@@ -265,10 +275,9 @@ async def send_message(
     # Runtime context (not persisted) - includes auth token for tools
     context = {
         "x-auth-token": auth_token,
-        "board_id": request.board_id,
     }
     
-    logger.info(f"[CHAT] Sending to agent with board_id={request.board_id}, auth_token present: {bool(auth_token)}")
+    logger.info(f"[CHAT] Sending to agent, auth_token present: {bool(auth_token)}")
     
     # Clear previous stream data to prevent replaying old messages within 60s window
     r = redis.from_url(settings.REDIS_URL, decode_responses=True)

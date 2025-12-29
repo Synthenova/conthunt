@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { SelectableMediaCard } from "./SelectableMediaCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
@@ -12,6 +12,15 @@ interface SelectableResultsGridProps {
 export function SelectableResultsGrid({ results, loading, analysisDisabled = false }: SelectableResultsGridProps) {
     const [selectedItem, setSelectedItem] = useState<any | null>(null);
     const [selectedResumeTime, setSelectedResumeTime] = useState(0);
+    const itemsById = useMemo(() => {
+        const map: Record<string, any> = {};
+        results.forEach((item) => {
+            if (item?.id) {
+                map[item.id] = item;
+            }
+        });
+        return map;
+    }, [results]);
 
     if (loading) {
         return (
@@ -51,6 +60,7 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
                         <SelectableMediaCard
                             item={item}
                             platform={item.platform || 'unknown'}
+                            itemsById={itemsById}
                             onOpen={(nextItem, resumeTime) => {
                                 setSelectedItem(nextItem);
                                 setSelectedResumeTime(resumeTime);

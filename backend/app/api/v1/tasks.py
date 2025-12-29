@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.core import get_settings, logger
 from app.db.session import get_db_connection
 from app.api.v1.analysis import _execute_gemini_analysis
+from app.services.board_insights import execute_board_insights
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.media.downloader import download_asset_with_claim
 from app.storage.raw_archive import upload_raw_json_gz
@@ -34,6 +35,10 @@ class RawArchiveTaskPayload(BaseModel):
     platform: str
     search_id: UUID
     raw_json_compressed: str  # base64-encoded gzip data
+
+class BoardInsightsTaskPayload(BaseModel):
+    board_id: UUID
+    user_id: UUID
 
 @router.post("/gemini/analyze")
 async def handle_gemini_analysis_task(payload: AnalysisTaskPayload):
@@ -89,5 +94,17 @@ async def handle_raw_archive_task(payload: RawArchiveTaskPayload):
         platform=payload.platform,
         search_id=payload.search_id,
         compressed_data=compressed_bytes
+    )
+    return {"status": "ok"}
+
+@router.post("/boards/insights")
+async def handle_board_insights_task(payload: BoardInsightsTaskPayload):
+    """
+    Handle background board insights task.
+    """
+    logger.info(f"Received board insights task for board {payload.board_id}")
+    await execute_board_insights(
+        board_id=payload.board_id,
+        user_id=payload.user_id,
     )
     return {"status": "ok"}

@@ -31,13 +31,17 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
 }
 
 // Fetch all chats
-export function useChatList() {
+export function useChatList(context?: { type?: 'board' | 'search'; id?: string | null }) {
     const setChats = useChatStore((s) => s.setChats);
 
     return useQuery({
-        queryKey: ['chats'],
+        queryKey: ['chats', context?.type || 'all', context?.id || 'all'],
         queryFn: async () => {
-            const chats = await fetchWithAuth<Chat[]>(`${BACKEND_URL}/v1/chats`);
+            const params = new URLSearchParams();
+            if (context?.type) params.set('context_type', context.type);
+            if (context?.id) params.set('context_id', context.id);
+            const suffix = params.toString() ? `?${params.toString()}` : '';
+            const chats = await fetchWithAuth<Chat[]>(`${BACKEND_URL}/v1/chats${suffix}`);
             setChats(chats);
             return chats;
         },
@@ -51,10 +55,14 @@ export function useCreateChat() {
     const { addChat, setActiveChatId, setMessages, openSidebar } = useChatStore();
 
     return useMutation({
-        mutationFn: async (title?: string) => {
+        mutationFn: async (input?: { title?: string; contextType?: 'board' | 'search'; contextId?: string | null }) => {
             return fetchWithAuth<Chat>(`${BACKEND_URL}/v1/chats`, {
                 method: 'POST',
-                body: JSON.stringify({ title: title || 'New Chat' }),
+                body: JSON.stringify({
+                    title: input?.title || 'New Chat',
+                    context_type: input?.contextType,
+                    context_id: input?.contextId,
+                }),
             });
         },
         onSuccess: (chat) => {
@@ -137,7 +145,6 @@ export function useSendMessage() {
 
     const sendMessage = useCallback(async (
         message: string,
-        boardId?: string,
         abortController?: AbortController,
         chatId?: string  // Optional: pass directly to avoid race condition
     ) => {
@@ -169,7 +176,7 @@ export function useSendMessage() {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ message, board_id: boardId }),
+                body: JSON.stringify({ message }),
                 signal: controller.signal,
             });
 

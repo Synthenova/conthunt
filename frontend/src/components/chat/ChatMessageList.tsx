@@ -10,7 +10,58 @@ import {
 import { Message, MessageContent } from '@/components/ui/message';
 import { TextShimmer } from '@/components/ui/text-shimmer';
 import { Loader2, Sparkles, MessageSquare } from 'lucide-react';
-import { useEffect } from 'react';
+
+type MessageSegment = { type: 'text' | 'chip'; value: string };
+
+const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
+const CONTEXT_FENCE_RE = /```context[\s\S]*?```/g;
+const PLATFORM_PREFIX_RE = /^([a-z0-9_]+)::\s*(.+)$/i;
+
+function getPlatformIconClass(platform: string): string {
+    const normalized = platform.toLowerCase();
+    if (normalized.includes('tiktok')) return 'bi-tiktok';
+    if (normalized.includes('instagram')) return 'bi-instagram';
+    if (normalized.includes('youtube')) return 'bi-youtube';
+    if (normalized.includes('pinterest')) return 'bi-pinterest';
+    return 'bi-globe';
+}
+
+function parseChipLabel(label: string) {
+    const match = label.match(PLATFORM_PREFIX_RE);
+    if (!match) {
+        return { text: label };
+    }
+
+    const platform = match[1];
+    const text = match[2];
+    return { text, iconClass: getPlatformIconClass(platform) };
+}
+
+function parseMessageSegments(content: string): MessageSegment[] {
+    CHIP_FENCE_RE.lastIndex = 0;
+    CONTEXT_FENCE_RE.lastIndex = 0;
+    const cleaned = content.replace(CONTEXT_FENCE_RE, '');
+    const segments: MessageSegment[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = CHIP_FENCE_RE.exec(cleaned)) !== null) {
+        if (match.index > lastIndex) {
+            segments.push({ type: 'text', value: cleaned.slice(lastIndex, match.index) });
+        }
+        const label = match[1]?.trim();
+        if (label) {
+            segments.push({ type: 'chip', value: label });
+        }
+        lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < cleaned.length) {
+        segments.push({ type: 'text', value: cleaned.slice(lastIndex) });
+    }
+
+    return segments;
+}
 
 export function ChatMessageList() {
     const {
@@ -71,11 +122,32 @@ export function ChatMessageList() {
                             markdown={msg.type === 'ai'}
                             className={
                                 msg.type === 'human'
-                                    ? 'bg-secondary max-w-[85%] text-foreground'
+                                    ? 'bg-secondary max-w-[85%] text-foreground whitespace-pre-wrap'
                                     : 'bg-transparent max-w-[95%] text-foreground p-0'
                             }
                         >
-                            {msg.content}
+                            {msg.type === 'human' ? (
+                                parseMessageSegments(msg.content).map((segment, index) => (
+                                    segment.type === 'chip' ? (() => {
+                                        const chipMeta = parseChipLabel(segment.value);
+                                        return (
+                                            <span
+                                                key={`${msg.id}-chip-${index}`}
+                                                className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
+                                            >
+                                                {chipMeta.iconClass && (
+                                                    <i className={`bi ${chipMeta.iconClass} text-[12px]`} aria-hidden="true" />
+                                                )}
+                                                <span>{chipMeta.text}</span>
+                                            </span>
+                                        );
+                                    })() : (
+                                        <span key={`${msg.id}-text-${index}`}>{segment.value}</span>
+                                    )
+                                ))
+                            ) : (
+                                msg.content
+                            )}
                         </MessageContent>
                     </Message>
                 ))}

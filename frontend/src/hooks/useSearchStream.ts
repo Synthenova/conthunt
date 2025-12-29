@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { auth } from "@/lib/firebaseClient";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
 import { BACKEND_URL } from '@/lib/api';
 
 export function useSearchStream(searchId?: string | null) {
+    const queryClient = useQueryClient();
     const [search, setSearch] = useState<any>(null);
     const [results, setResults] = useState<any[]>([]);
     const [platformCalls, setPlatformCalls] = useState<any[]>([]);
@@ -24,11 +26,14 @@ export function useSearchStream(searchId?: string | null) {
                 if (data.results) {
                     setResults(data.results);
                 }
+                if (data?.status === "completed") {
+                    queryClient.setQueryData(["search", id], data);
+                }
             }
         } catch (err) {
             console.error("Failed to fetch search details", err);
         }
-    }, []);
+    }, [queryClient]);
 
     const waitForAuth = () => {
         return new Promise<any>((resolve) => {
@@ -70,6 +75,7 @@ export function useSearchStream(searchId?: string | null) {
                 setResults(searchData.results || []);
                 setIsStreaming(false);
                 setIsLoading(false);
+                queryClient.setQueryData(["search", id], searchData);
                 return;
             }
 
@@ -125,7 +131,7 @@ export function useSearchStream(searchId?: string | null) {
             setError(err.message || "Failed to load search");
             setIsLoading(false);
         }
-    }, [fetchSearchDetails]);
+    }, [fetchSearchDetails, queryClient]);
 
     useEffect(() => {
         if (!searchId) {

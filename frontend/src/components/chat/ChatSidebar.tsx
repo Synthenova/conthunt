@@ -6,14 +6,40 @@ import { ChatHistoryPanel } from './ChatHistoryPanel';
 import { ChatMessageList } from './ChatMessageList';
 import { ChatInput } from './ChatInput';
 import { cn } from '@/lib/utils';
-import { useParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
+import { useMemo, useEffect } from 'react';
+import { useChatList } from '@/hooks/useChat';
 
 export function ChatSidebar() {
-    const { isOpen } = useChatStore();
-    const params = useParams();
+    const { isOpen, activeChatId, setActiveChatId } = useChatStore();
+    const pathname = usePathname();
 
-    // Get boardId from URL if we're on a board page
-    const boardId = params?.id as string | undefined;
+    const context = useMemo(() => {
+        if (!pathname) return null;
+        const boardMatch = pathname.match(/^\/app\/boards\/([^/]+)\/?$/);
+        if (boardMatch) {
+            return { type: 'board' as const, id: boardMatch[1] };
+        }
+        const searchMatch = pathname.match(/^\/app\/searches\/([^/]+)\/?$/);
+        if (searchMatch) {
+            return { type: 'search' as const, id: searchMatch[1] };
+        }
+        return null;
+    }, [pathname]);
+
+    const { data: chats, isLoading } = useChatList({
+        type: context?.type,
+        id: context?.id,
+    });
+
+    useEffect(() => {
+        if (!context || isLoading) return;
+
+        const nextChatId = chats?.[0]?.id ?? null;
+        if (nextChatId !== activeChatId) {
+            setActiveChatId(nextChatId);
+        }
+    }, [context, chats, isLoading, activeChatId, setActiveChatId]);
 
     return (
         <>
@@ -43,12 +69,12 @@ export function ChatSidebar() {
                     "flex flex-col h-full w-[420px] max-w-full",
                     !isOpen && "lg:invisible"
                 )}>
-                    <ChatHeader />
-                    <div className="relative flex-1 min-h-0 flex flex-col">
-                        <ChatHistoryPanel />
+                        <ChatHeader />
+                        <div className="relative flex-1 min-h-0 flex flex-col">
+                        <ChatHistoryPanel context={context} />
                         <ChatMessageList />
                     </div>
-                    <ChatInput boardId={boardId} />
+                    <ChatInput context={context} />
                 </div>
             </aside>
         </>

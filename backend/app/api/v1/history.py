@@ -177,3 +177,26 @@ async def get_search_detail(
     duration = (time.time() - req_start) * 1000
     logger.info(f"get_search_detail: finished search_id={search_id} duration={duration:.2f}ms")
     return response
+
+
+@router.get("/searches/{search_id}/items/summary")
+@router.get("/searches/{search_id}/items/summary/")
+async def get_search_items_summary(
+    search_id: UUID,
+    user: dict = Depends(get_current_user),
+):
+    """Get search items summary for agent - minimal text data + media_asset_id only."""
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+
+    async with get_db_connection() as conn:
+        from app.services.user_cache import get_cached_user_uuid
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
+
+        search = await queries.get_search_by_id(conn, search_id)
+        if not search:
+            raise HTTPException(status_code=404, detail="Search not found")
+
+        return await queries.get_search_items_summary(conn, search_id)

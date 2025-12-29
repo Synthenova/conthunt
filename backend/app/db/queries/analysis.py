@@ -40,6 +40,40 @@ async def get_video_analysis_by_media_asset(
 
 
 @log_query_timing
+async def get_video_analyses_by_media_assets(
+    conn: AsyncConnection,
+    media_asset_ids: list[UUID],
+) -> list[dict]:
+    """Get cached video analyses for a list of media assets."""
+    if not media_asset_ids:
+        return []
+    result = await conn.execute(
+        text("""
+            SELECT id, media_asset_id, twelvelabs_asset_id, prompt,
+                   analysis_result, token_usage, created_at, status, error
+            FROM video_analyses
+            WHERE media_asset_id = ANY(:media_asset_ids)
+        """),
+        {"media_asset_ids": media_asset_ids}
+    )
+    rows = result.fetchall()
+    return [
+        {
+            "id": row[0],
+            "media_asset_id": row[1],
+            "twelvelabs_asset_id": row[2],
+            "prompt": row[3],
+            "analysis_result": row[4],
+            "token_usage": row[5],
+            "created_at": row[6],
+            "status": row[7],
+            "error": row[8],
+        }
+        for row in rows
+    ]
+
+
+@log_query_timing
 async def create_pending_analysis(
     conn: AsyncConnection,
     media_asset_id: UUID,
