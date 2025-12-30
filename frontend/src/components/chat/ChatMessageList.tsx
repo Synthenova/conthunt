@@ -9,13 +9,14 @@ import {
 } from '@/components/ui/chat-container';
 import { Message, MessageContent } from '@/components/ui/message';
 import { TextShimmer } from '@/components/ui/text-shimmer';
-import { Loader2, Sparkles, MessageSquare } from 'lucide-react';
+import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search } from 'lucide-react';
 
 type MessageSegment = { type: 'text' | 'chip'; value: string };
 
 const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
 const CONTEXT_FENCE_RE = /```context[\s\S]*?```/g;
 const PLATFORM_PREFIX_RE = /^([a-z0-9_]+)::\s*(.+)$/i;
+const CHIP_LABEL_LIMIT = 10;
 
 function getPlatformIconClass(platform: string): string {
     const normalized = platform.toLowerCase();
@@ -27,6 +28,28 @@ function getPlatformIconClass(platform: string): string {
 }
 
 function parseChipLabel(label: string) {
+    if (label.startsWith("{") && label.endsWith("}")) {
+        try {
+            const parsed = JSON.parse(label);
+            if (parsed?.type === "media") {
+                const text = parsed.title || parsed.label || "Media";
+                const platform = parsed.platform || "";
+                return {
+                    text,
+                    iconClass: platform ? getPlatformIconClass(platform) : undefined,
+                };
+            }
+            if (parsed?.type === "board") {
+                return { text: parsed.label || parsed.id || "Board", icon: "board" };
+            }
+            if (parsed?.type === "search") {
+                return { text: parsed.label || parsed.id || "Search", icon: "search" };
+            }
+        } catch (e) {
+            // Fall through to legacy parsing.
+        }
+    }
+
     const match = label.match(PLATFORM_PREFIX_RE);
     if (!match) {
         return { text: label };
@@ -35,6 +58,11 @@ function parseChipLabel(label: string) {
     const platform = match[1];
     const text = match[2];
     return { text, iconClass: getPlatformIconClass(platform) };
+}
+
+function truncateLabel(value: string) {
+    if (value.length <= CHIP_LABEL_LIMIT) return value;
+    return value.slice(0, CHIP_LABEL_LIMIT - 1).trimEnd() + "…";
 }
 
 function parseMessageSegments(content: string): MessageSegment[] {
@@ -137,10 +165,18 @@ export function ChatMessageList() {
                                                     key={`${msg.id}-chip-${index}`}
                                                     className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
                                                 >
+                                                    {chipMeta.icon === "board" && (
+                                                        <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                                    )}
+                                                    {chipMeta.icon === "search" && (
+                                                        <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                                    )}
                                                     {chipMeta.iconClass && (
                                                         <i className={`bi ${chipMeta.iconClass} text-[12px]`} aria-hidden="true" />
                                                     )}
-                                                    <span>{chipMeta.text}</span>
+                                                    <span className="truncate" title={chipMeta.text}>
+                                                        {truncateLabel(chipMeta.text)}
+                                                    </span>
                                                 </span>
                                             );
                                         })() : (

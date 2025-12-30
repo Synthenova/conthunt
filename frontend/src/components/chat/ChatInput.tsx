@@ -16,7 +16,7 @@ import {
     PromptInputAction,
 } from '@/components/ui/prompt-input';
 import { Button } from '@/components/ui/button';
-import { ArrowUp, Square, X } from 'lucide-react';
+import { ArrowUp, Square, X, LayoutDashboard, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 type ChatContext = { type: 'board' | 'search'; id: string };
@@ -97,7 +97,7 @@ interface ChatInputProps {
 
 const MENTION_RE = /(?:^|\s)@([^\s@]*)$/;
 const MEDIA_DRAG_TYPE = 'application/x-conthunt-media';
-const CHIP_TITLE_LIMIT = 20;
+const CHIP_TITLE_LIMIT = 10;
 
 function normalizeText(value?: string) {
     return value ? value.replace(/\s+/g, ' ').trim() : '';
@@ -468,13 +468,25 @@ export function ChatInput({ context }: ChatInputProps) {
                                 key={`${chip.type}-${chip.id}`}
                                 className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
                             >
-                                {chip.type === 'media' ? (
+                                {chip.type === 'board' && (
+                                    <>
+                                        <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                        <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
+                                    </>
+                                )}
+                                {chip.type === 'search' && (
+                                    <>
+                                        <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                        <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
+                                    </>
+                                )}
+                                {chip.type === 'media' && (
                                     <>
                                         <i className={cn("bi", getPlatformIconClass(chip.platform), "text-[12px]")} aria-hidden="true" />
-                                        <span>{chip.label}</span>
+                                        <span className="truncate" title={chip.title}>
+                                            {truncateText(chip.title, CHIP_TITLE_LIMIT)}
+                                        </span>
                                     </>
-                                ) : (
-                                    chip.label
                                 )}
                                 {!chip.locked && (
                                     <button
