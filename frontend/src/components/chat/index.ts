@@ -4,3 +4,4 @@ export { ChatHistoryPanel } from './ChatHistoryPanel';
 export { ChatMessageList } from './ChatMessageList';
 export { ChatInput } from './ChatInput';
 export { ChatToggleButton } from './ChatToggleButton';
+export { ChatSidebarGate } from './ChatSidebarGate';

@@ -1,4 +1,4 @@
-import { ChatSidebar, ChatToggleButton } from "@/components/chat";
+import { ChatSidebarGate } from "@/components/chat";
 import { Toaster } from "@/components/ui/sonner";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/AppSidebar";
@@ -22,11 +22,8 @@ export default function AppLayout({
                     {children}
                 </main>
 
-                {/* Right Chat Sidebar */}
-                <ChatSidebar />
-
-                {/* Floating toggle button */}
-                <ChatToggleButton />
+                {/* Right Chat Sidebar + Toggle (hidden on /app) */}
+                <ChatSidebarGate />
 
                 {/* Toast notifications */}
                 <Toaster />

@@ -73,10 +73,15 @@ async def stream_generator_to_redis(
                 "x-auth-token": (context or {}).get("x-auth-token"),
             }
         }
+        tool_run_ids = set()
         
         async for ev in graph.astream_events(inputs, config=config, version="v2"):
             ev_type = ev.get("event")
             data = ev.get("data", {}) or {}
+            run_id = ev.get("run_id")
+            parent_run_id = ev.get("parent_run_id")
+            metadata = ev.get("metadata") or {}
+            langgraph_node = metadata.get("langgraph_node")
             
             payload = None
             
@@ -85,6 +90,25 @@ async def stream_generator_to_redis(
                 pass
 
             elif ev_type == "on_chat_model_stream":
+                # Only forward assistant model streams, not tool-internal LLM runs.
+                if parent_run_id in tool_run_ids:
+                    logger.debug(
+                        "[CHAT] Skipping nested model stream from tool run_id=%s parent_run_id=%s name=%s node=%s",
+                        run_id,
+                        parent_run_id,
+                        ev.get("name"),
+                        langgraph_node,
+                    )
+                    continue
+                if langgraph_node and langgraph_node != "agent":
+                    logger.debug(
+                        "[CHAT] Skipping model stream for non-agent node run_id=%s parent_run_id=%s name=%s node=%s",
+                        run_id,
+                        parent_run_id,
+                        ev.get("name"),
+                        langgraph_node,
+                    )
+                    continue
                 chunk = data.get("chunk")
                 if chunk:
                     # chunk might be an AIMessageChunk object
@@ -102,6 +126,15 @@ async def stream_generator_to_redis(
                         pass
                         
             elif ev_type == "on_tool_start":
+                if run_id:
+                    tool_run_ids.add(run_id)
+                logger.debug(
+                    "[CHAT] Tool start name=%s run_id=%s parent_run_id=%s node=%s",
+                    ev.get("name"),
+                    run_id,
+                    parent_run_id,
+                    langgraph_node,
+                )
                 payload = {
                     "type": "tool_start",
                     "tool": ev.get("name"),
@@ -109,6 +142,8 @@ async def stream_generator_to_redis(
                 }
                 
             elif ev_type == "on_tool_end":
+                if run_id and run_id in tool_run_ids:
+                    tool_run_ids.discard(run_id)
                 tool_output = data.get("output")
                 # If output is a Message object (like ToolMessage), extract content
                 if hasattr(tool_output, "content"):
@@ -286,7 +321,7 @@ async def send_message(
     }
     
     logger.info(f"[CHAT] Sending to agent, auth_token present: {bool(auth_token)}")
-    
+
     # Clear previous stream data to prevent replaying old messages within 60s window
     r = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
@@ -443,6 +478,7 @@ async def get_chat_messages(
                    content=content,
                    additional_kwargs=additional_kwargs
                ))
+
         return ChatHistory(messages=messages)
     except Exception as e:
         logger.error(f"Error fetching state: {e}")

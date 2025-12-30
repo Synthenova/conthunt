@@ -14,6 +14,12 @@ export function ChatSidebar() {
     const { isOpen, activeChatId, setActiveChatId } = useChatStore();
     const pathname = usePathname();
 
+    const chatIdFromPath = useMemo(() => {
+        if (!pathname) return null;
+        const chatMatch = pathname.match(/^\/app\/chats\/([^/]+)\/?$/);
+        return chatMatch ? chatMatch[1] : null;
+    }, [pathname]);
+
     const context = useMemo(() => {
         if (!pathname) return null;
         const boardMatch = pathname.match(/^\/app\/boards\/([^/]+)\/?$/);
@@ -33,13 +39,20 @@ export function ChatSidebar() {
     });
 
     useEffect(() => {
+        if (chatIdFromPath) {
+            if (chatIdFromPath !== activeChatId) {
+                setActiveChatId(chatIdFromPath);
+            }
+            return;
+        }
+
         if (!context || isLoading) return;
 
         const nextChatId = chats?.[0]?.id ?? null;
         if (nextChatId !== activeChatId) {
             setActiveChatId(nextChatId);
         }
-    }, [context, chats, isLoading, activeChatId, setActiveChatId]);
+    }, [chatIdFromPath, context, chats, isLoading, activeChatId, setActiveChatId]);
 
     return (
         <>

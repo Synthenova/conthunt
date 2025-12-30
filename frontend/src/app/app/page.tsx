@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCreateChat, useSendMessage } from "@/hooks/useChat";
-import { useChatStore } from "@/lib/chatStore";
 import {
     PromptInput,
     PromptInputTextarea,
@@ -15,16 +14,17 @@ import { ArrowUp, Sparkles } from "lucide-react";
 
 export default function HomePage() {
     const [message, setMessage] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const router = useRouter();
     const createChat = useCreateChat();
     const { sendMessage } = useSendMessage();
-    const { openSidebar } = useChatStore();
 
     const handleSubmit = async () => {
-        if (!message.trim() || createChat.isPending) return;
+        if (!message.trim() || createChat.isPending || isSubmitting) return;
 
         const messageText = message.trim();
         setMessage("");
+        setIsSubmitting(true);
 
         try {
             // Create chat without context (homepage chats have null context)
@@ -34,18 +34,37 @@ export default function HomePage() {
                 contextId: undefined,
             });
 
-            // Send first message immediately to avoid missing /send on first chat
-            await sendMessage(messageText, new AbortController(), chat.id);
-
-            // Navigate to chat page
-            router.push(`/app/chats/${chat.id}`);
+            // Send first message and navigate once the send is accepted
+            void sendMessage(
+                messageText,
+                new AbortController(),
+                chat.id,
+                {
+                    detach: true,
+                    onSendOk: () => router.push(`/app/chats/${chat.id}`),
+                }
+            ).catch((error) => {
+                console.error("Failed to send first message:", error);
+                setIsSubmitting(false);
+            });
         } catch (error) {
             console.error("Failed to create chat:", error);
+            setIsSubmitting(false);
         }
     };
 
     return (
         <div className="min-h-screen bg-background relative flex items-center justify-center">
+            {isSubmitting && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-3 text-center">
+                        <div className="h-10 w-10 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+                        <p className="text-sm text-muted-foreground">
+                            Starting your chat...
+                        </p>
+                    </div>
+                </div>
+            )}
             {/* Background Gradients */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
                 <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-purple-500/10 rounded-full blur-[120px]" />
@@ -72,12 +91,13 @@ export default function HomePage() {
                     value={message}
                     onValueChange={setMessage}
                     onSubmit={handleSubmit}
-                    isLoading={createChat.isPending}
+                    isLoading={createChat.isPending || isSubmitting}
                     className="w-full bg-secondary/50 border-white/10"
                 >
                     <PromptInputTextarea
                         placeholder="Find me viral cooking videos..."
                         className="text-sm min-h-[60px] text-foreground"
+                        disabled={isSubmitting}
                     />
                     <PromptInputActions className="justify-end px-2 pb-2">
                         <PromptInputAction tooltip="Send message">
@@ -86,7 +106,7 @@ export default function HomePage() {
                                 variant="default"
                                 className="h-8 w-8 rounded-full bg-foreground text-background hover:bg-foreground/90"
                                 onClick={handleSubmit}
-                                disabled={!message.trim() || createChat.isPending}
+                                disabled={!message.trim() || createChat.isPending || isSubmitting}
                             >
                                 <ArrowUp className="h-4 w-4" />
                             </Button>

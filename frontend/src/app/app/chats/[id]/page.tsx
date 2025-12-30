@@ -311,6 +311,7 @@ export default function ChatPage() {
     const hasBoards = context.boards.length > 0;
     const hasSearches = allSearchIds.length > 0;
     const hasContent = hasBoards || hasSearches;
+    const isInitialLoading = isLoadingMessages && messages.length === 0 && !hasContent;
 
     return (
         <div className="flex h-full">
@@ -326,7 +327,19 @@ export default function ChatPage() {
 
             {/* Canvas (left/center) */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                {!hasContent ? (
+                {isInitialLoading ? (
+                    <div className="h-full flex items-center justify-center">
+                        <GlassCard className="p-12 text-center flex flex-col items-center gap-4 max-w-md">
+                            <div className="h-12 w-12 rounded-full bg-white/5 flex items-center justify-center">
+                                <Loader2 className="h-6 w-6 text-muted-foreground animate-spin" />
+                            </div>
+                            <h3 className="text-lg font-medium text-white">Loading chat</h3>
+                            <p className="text-muted-foreground">
+                                Fetching your conversation history and results.
+                            </p>
+                        </GlassCard>
+                    </div>
+                ) : !hasContent ? (
                     <div className="h-full flex items-center justify-center">
                         <GlassCard className="p-12 text-center flex flex-col items-center gap-4 max-w-md">
                             <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">

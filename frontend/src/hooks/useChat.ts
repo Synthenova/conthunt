@@ -163,7 +163,11 @@ export function useSendMessage() {
     const sendMessage = useCallback(async (
         message: string,
         abortController?: AbortController,
-        chatId?: string  // Optional: pass directly to avoid race condition
+        chatId?: string,  // Optional: pass directly to avoid race condition
+        options?: {
+            detach?: boolean;
+            onSendOk?: () => void;
+        }
     ) => {
         // Use passed chatId or fall back to activeChatId from store
         const targetChatId = chatId || activeChatId;
@@ -201,8 +205,10 @@ export function useSendMessage() {
                 throw new Error('Failed to send message');
             }
 
+            options?.onSendOk?.();
+
             // 2. Stream the response
-            await fetchEventSource(`${BACKEND_URL}/v1/chats/${targetChatId}/stream`, {
+            const streamPromise = fetchEventSource(`${BACKEND_URL}/v1/chats/${targetChatId}/stream`, {
                 headers: { 'Authorization': `Bearer ${token}` },
                 signal: controller.signal,
                 onmessage(msg) {
@@ -216,7 +222,6 @@ export function useSendMessage() {
                                 setUserMessageId(data.id);
                                 break;
                             case 'content_delta':
-                                // Append streaming content
                                 // Append streaming content
                                 let textContent = '';
                                 if (Array.isArray(data.content)) {
@@ -275,13 +280,16 @@ export function useSendMessage() {
                     }
                 },
             });
+            if (!options?.detach) {
+                await streamPromise;
+            }
         } catch (err: any) {
             if (err.name !== 'AbortError') {
                 console.error('Send message error:', err);
                 resetStreaming();
             }
         }
-    }, [activeChatId, addMessage, startStreaming, appendDelta, setUserMessageId, finalizeMessage, resetStreaming]);
+    }, [activeChatId, addMessage, startStreaming, appendDelta, setUserMessageId, finalizeMessage, resetStreaming, addCanvasSearchId]);
 
     return { sendMessage };
 }
