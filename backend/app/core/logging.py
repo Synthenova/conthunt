@@ -21,4 +21,18 @@ def setup_logging(level: str = "INFO") -> logging.Logger:
     return logger
 
 
-logger = setup_logging()
+    return logger
+
+
+def get_log_level() -> str:
+    # Avoid circular imports by reading env directly
+    import os
+    from dotenv import load_dotenv
+    
+    # Try to load .env if it exists
+    load_dotenv()
+    
+    return os.getenv("LOG_LEVEL", "INFO")
+
+
+logger = setup_logging(get_log_level())

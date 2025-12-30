@@ -32,6 +32,40 @@ export default function SearchDetailPage() {
         return map;
     }, [allFlatResults]);
 
+    const mergedPlatformCalls = useMemo(() => {
+        if (!platformCalls || platformCalls.length === 0) return [];
+
+        const merged = new Map<string, any>();
+
+        for (const call of platformCalls) {
+            const platform = String(call.platform || "").toLowerCase();
+            const key = platform || "unknown";
+            const existing = merged.get(key);
+
+            if (!existing) {
+                merged.set(key, {
+                    ...call,
+                    platform: platform || call.platform,
+                    response_meta: {
+                        ...(call.response_meta || {}),
+                        items_count: call.response_meta?.items_count || 0,
+                    },
+                });
+                continue;
+            }
+
+            existing.success = existing.success || call.success;
+            existing.duration_ms = Math.max(existing.duration_ms || 0, call.duration_ms || 0);
+            existing.response_meta = {
+                ...(existing.response_meta || {}),
+                ...(call.response_meta || {}),
+                items_count: (existing.response_meta?.items_count || 0) + (call.response_meta?.items_count || 0),
+            };
+        }
+
+        return Array.from(merged.values());
+    }, [platformCalls]);
+
     if (isLoading) {
         return (
             <div className="container mx-auto max-w-6xl py-12 px-4 space-y-8">
@@ -96,9 +130,9 @@ export default function SearchDetailPage() {
             </div>
 
             {/* Platform Stats */}
-            {platformCalls.length > 0 && (
+            {mergedPlatformCalls.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {platformCalls.map((call: any) => (
+                    {mergedPlatformCalls.map((call: any) => (
                         <GlassCard key={call.id} className="p-4 flex flex-col gap-2">
                             <div className="flex justify-between items-center">
                                 <span className="font-semibold capitalize text-white">{call.platform.replace('_', ' ')}</span>

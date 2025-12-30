@@ -120,6 +120,7 @@ export function useChatMessages(chatId: string | null) {
                 content: Array.isArray(m.content)
                     ? m.content.map((c: any) => c.text || '').join('')
                     : m.content,
+                additional_kwargs: m.additional_kwargs,
             }));
 
             // Preserve optimistic messages that haven't been saved yet
@@ -147,6 +148,7 @@ export function useSendMessage() {
         setUserMessageId,
         finalizeMessage,
         resetStreaming,
+        addCanvasSearchId,
     } = useChatStore();
 
     const sendMessage = useCallback(async (
@@ -225,6 +227,25 @@ export function useSendMessage() {
                                 // Could show tool indicator
                                 break;
                             case 'tool_end':
+                                // Extract search IDs from search tool output
+                                if (data.tool === 'search') {
+                                    let output = data.output;
+                                    if (typeof output === 'string') {
+                                        try {
+                                            output = JSON.parse(output);
+                                        } catch (e) {
+                                            console.error('Failed to parse tool output string', e);
+                                        }
+                                    }
+
+                                    if (output?.search_ids) {
+                                        output.search_ids.forEach((s: any) => {
+                                            if (s.search_id) {
+                                                addCanvasSearchId(s.search_id, s.keyword);
+                                            }
+                                        });
+                                    }
+                                }
                                 break;
                             case 'done':
                                 finalizeMessage();

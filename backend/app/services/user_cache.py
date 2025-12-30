@@ -20,7 +20,7 @@ def get_redis_client():
         _redis_pool = redis.ConnectionPool.from_url(settings.REDIS_URL, decode_responses=True)
     return redis.Redis(connection_pool=_redis_pool)
 
-@log_query_timing
+# @log_query_timing
 async def get_cached_user_uuid(conn: AsyncConnection, firebase_uid: str) -> UUID:
     """
     Get user UUID from:

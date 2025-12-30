@@ -72,5 +72,8 @@ async def upload_raw_compressed(
         logger.info(f"Archived raw response for {platform} search {search_id}")
         return uri
     except Exception as e:
-        logger.error(f"Failed to upload raw response: {e}")
-        return None
+        # Retryable exception should bubble up
+        if isinstance(e, (ValueError, TypeError)):
+            logger.error(f"Failed to upload raw response (non-retryable): {e}")
+            return None
+        raise e

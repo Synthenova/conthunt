@@ -109,9 +109,17 @@ async def stream_generator_to_redis(
                 }
                 
             elif ev_type == "on_tool_end":
+                tool_output = data.get("output")
+                # If output is a Message object (like ToolMessage), extract content
+                if hasattr(tool_output, "content"):
+                    final_output = tool_output.content
+                else:
+                    final_output = tool_output
+                    
                 payload = {
                     "type": "tool_end",
-                    "tool": ev.get("name")
+                    "tool": ev.get("name"),
+                    "output": final_output
                 }
 
             if payload:
@@ -428,7 +436,7 @@ async def get_chat_messages(
                 msg_id = msg.get("id")
                 additional_kwargs = msg.get("additional_kwargs", {})
             
-            if m_type in ["human", "ai"]:
+            if m_type in ["human", "ai", "tool"]:
                messages.append(Message(
                    id=msg_id,
                    type=m_type,

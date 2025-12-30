@@ -116,41 +116,44 @@ export function ChatMessageList() {
     return (
         <ChatContainerRoot className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-4 py-4">
             <ChatContainerContent className="gap-4">
-                {messages.map((msg) => (
-                    <Message key={msg.id} className={msg.type === 'human' ? 'justify-end' : 'justify-start'}>
-                        <MessageContent
-                            markdown={msg.type === 'ai'}
-                            className={
-                                msg.type === 'human'
-                                    ? 'bg-secondary max-w-[85%] text-foreground whitespace-pre-wrap'
-                                    : 'bg-transparent max-w-[95%] text-foreground p-0'
-                            }
-                        >
-                            {msg.type === 'human' ? (
-                                parseMessageSegments(msg.content).map((segment, index) => (
-                                    segment.type === 'chip' ? (() => {
-                                        const chipMeta = parseChipLabel(segment.value);
-                                        return (
-                                            <span
-                                                key={`${msg.id}-chip-${index}`}
-                                                className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
-                                            >
-                                                {chipMeta.iconClass && (
-                                                    <i className={`bi ${chipMeta.iconClass} text-[12px]`} aria-hidden="true" />
-                                                )}
-                                                <span>{chipMeta.text}</span>
-                                            </span>
-                                        );
-                                    })() : (
-                                        <span key={`${msg.id}-text-${index}`}>{segment.value}</span>
-                                    )
-                                ))
-                            ) : (
-                                msg.content
-                            )}
-                        </MessageContent>
-                    </Message>
-                ))}
+                {messages.map((msg) => {
+                    if (msg.type === 'tool') return null;
+                    return (
+                        <Message key={msg.id} className={msg.type === 'human' ? 'justify-end' : 'justify-start'}>
+                            <MessageContent
+                                markdown={msg.type === 'ai'}
+                                className={
+                                    msg.type === 'human'
+                                        ? 'bg-secondary max-w-[85%] text-foreground whitespace-pre-wrap'
+                                        : 'bg-transparent max-w-[95%] text-foreground p-0'
+                                }
+                            >
+                                {msg.type === 'human' ? (
+                                    parseMessageSegments(msg.content).map((segment, index) => (
+                                        segment.type === 'chip' ? (() => {
+                                            const chipMeta = parseChipLabel(segment.value);
+                                            return (
+                                                <span
+                                                    key={`${msg.id}-chip-${index}`}
+                                                    className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
+                                                >
+                                                    {chipMeta.iconClass && (
+                                                        <i className={`bi ${chipMeta.iconClass} text-[12px]`} aria-hidden="true" />
+                                                    )}
+                                                    <span>{chipMeta.text}</span>
+                                                </span>
+                                            );
+                                        })() : (
+                                            <span key={`${msg.id}-text-${index}`}>{segment.value}</span>
+                                        )
+                                    ))
+                                ) : (
+                                    msg.content
+                                )}
+                            </MessageContent>
+                        </Message>
+                    );
+                })}
 
                 {/* Streaming AI message */}
                 {isStreaming && streamingContent && (

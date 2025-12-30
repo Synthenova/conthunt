@@ -23,6 +23,7 @@ from app.platforms import (
     get_adapter,
     PlatformCallResult,
 )
+from app.platforms.registry import normalize_platform_slug
 from app.storage import upload_raw_json_gz
 from app.media import download_assets_batch
 from app.schemas import SearchRequest
@@ -124,7 +125,7 @@ def transform_result_to_stream_item(result: PlatformCallResult) -> dict:
 
     return {
         "type": "platform_result",
-        "platform": result.platform,
+        "platform": normalize_platform_slug(result.platform),
         "success": result.success,
         "duration_ms": result.duration_ms,
         "count": len(result.parsed.items) if result.parsed else 0,
@@ -157,7 +158,7 @@ async def search_worker(
         # Push start event
         await r.xadd(stream_key, {"data": json.dumps({
             "type": "start", 
-            "platforms": list(inputs.keys()),
+            "platforms": [normalize_platform_slug(slug) for slug in inputs.keys()],
             "search_id": str(search_id),
         })})
         
@@ -377,6 +378,14 @@ async def create_search(
                 detail=f"Unknown platform: {slug}. Available: {list(PLATFORM_ADAPTERS.keys())}"
             )
     
+    # Check Usage Limits
+    from app.services.usage_tracker import usage_tracker
+    await usage_tracker.check_limit(
+        firebase_uid=firebase_uid, 
+        role=user.get("role", "free"), 
+        feature="search_query"
+    )
+
     # Get user UUID and create search entry
     async with get_db_connection() as conn:
         user_uuid = await get_cached_user_uuid(conn, firebase_uid)
@@ -392,6 +401,15 @@ async def create_search(
         )
         await conn.commit()
     
+    # Record Usage (safe background log)
+    background_tasks.add_task(
+        usage_tracker.record_usage,
+        firebase_uid=firebase_uid,
+        feature="search_query",
+        quantity=1,
+        context={"search_id": str(search_id), "platforms": list(request.inputs.keys())}
+    )
+
     # Spawn background worker
     background_tasks.add_task(
         search_worker,

@@ -149,3 +149,151 @@ async def get_video_analysis(
         return {"error": f"Failed to get analysis: {e.response.text}"}
     except Exception as e:
         return {"error": f"Analysis error: {str(e)}"}
+
+
+# Available platform slugs for search
+AVAILABLE_PLATFORMS = ["tiktok_top", "tiktok_keyword", "instagram_reels", "youtube"]
+
+
+@tool
+async def search(
+    queries: List[Dict[str, Any]],
+    config: RunnableConfig,
+) -> Dict[str, Any]:
+    """
+    Trigger content searches across platforms. Returns search IDs immediately.
+    Searches run asynchronously - use get_search_items() later to retrieve results.
+    
+    Args:
+        queries: List of search queries. Each query is a dict with:
+            - keyword (str): The search term (e.g., "compressible sofas")
+            - platforms (List[str]): Platform slugs to search. If empty, uses all platforms.
+              Available: tiktok_top, tiktok_keyword, instagram_reels, youtube
+    
+    Returns:
+        Dict with 'search_ids' list and instructions for next steps.
+    
+    Example:
+        search([
+            {"keyword": "compressible sofas", "platforms": []},
+            {"keyword": "vacuum furniture", "platforms": ["tiktok_keyword"]}
+        ])
+    """
+    try:
+        headers = await _get_headers(config)
+        if not headers.get("Authorization"):
+            return {"error": "Authentication required. Please provide x-auth-token."}
+
+        search_ids = []
+        errors = []
+        
+        for query in queries:
+            keyword = query.get("keyword", "")
+            platforms = query.get("platforms", [])
+            
+            if not keyword:
+                continue
+            
+            # If no platforms specified, use all available
+            if not platforms:
+                platforms = AVAILABLE_PLATFORMS
+            
+            # Build inputs dict for each platform
+            inputs = {platform: {} for platform in platforms if platform in AVAILABLE_PLATFORMS}
+            
+            if not inputs:
+                errors.append(f"No valid platforms for '{keyword}'")
+                continue
+            
+            # POST /v1/search
+            url = f"{_get_api_base_url()}/search"
+            payload = {
+                "query": keyword,
+                "inputs": inputs
+            }
+            
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    result = response.json()
+                    search_id = result.get("search_id")
+                    if search_id:
+                        search_ids.append({
+                            "search_id": search_id,
+                            "keyword": keyword,
+                            "platforms": list(inputs.keys())
+                        })
+            except Exception as e:
+                errors.append(f"Failed to start search for '{keyword}': {str(e)}")
+        
+        if not search_ids and errors:
+            return {"error": "; ".join(errors)}
+        
+        return {
+            "search_ids": search_ids,
+            "message": f"Started {len(search_ids)} search(es). Use get_search_items(search_id) to retrieve results once complete. If results aren't ready yet, inform the user and try again next turn.",
+            "errors": errors if errors else None
+        }
+    except Exception as e:
+        return {"error": f"Search error: {str(e)}"}
+
+
+@tool
+async def get_search_items(
+    search_id: str,
+    config: RunnableConfig,
+) -> Dict[str, Any]:
+    """
+    Get video results from a completed search.
+    
+    Args:
+        search_id: The search ID returned by the search() tool.
+    
+    Returns:
+        List of videos with title, platform, creator_handle, content_type, primary_text, media_asset_id.
+        Returns error if search is still running or not found.
+    """
+    try:
+        headers = await _get_headers(config)
+        if not headers.get("Authorization"):
+            return {"error": "Authentication required. Please provide x-auth-token."}
+
+        # First check if search is complete
+        url = f"{_get_api_base_url()}/searches/{search_id}"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            search_data = response.json()
+            
+            status = search_data.get("status")
+            if status == "running":
+                return {
+                    "status": "running",
+                    "message": "Search is still running. Please wait and try again in the next turn."
+                }
+            elif status == "failed":
+                return {
+                    "status": "failed",
+                    "message": "Search failed. You may want to try a new search."
+                }
+            
+            # Search is complete - get items summary
+            summary_url = f"{_get_api_base_url()}/searches/{search_id}/items/summary"
+            summary_response = await client.get(summary_url, headers=headers)
+            summary_response.raise_for_status()
+            items = summary_response.json()
+            
+            return {
+                "status": "completed",
+                "query": search_data.get("query"),
+                "items": items,
+                "count": len(items)
+            }
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return {"error": f"Search not found: {search_id}"}
+        return {"error": f"Failed to get search items: {e.response.text}"}
+    except Exception as e:
+        return {"error": f"Error fetching search items: {str(e)}"}

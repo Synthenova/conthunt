@@ -2,8 +2,9 @@ import { create } from 'zustand';
 
 export interface ChatMessage {
     id: string;
-    type: 'human' | 'ai';
+    type: 'human' | 'ai' | 'tool';
     content: string;
+    additional_kwargs?: Record<string, any>;
 }
 
 export interface Chat {
@@ -71,6 +72,12 @@ interface ChatState {
     queuedMediaChips: MediaChipInput[];
     queueMediaChips: (chips: MediaChipInput[]) => void;
     clearQueuedMediaChips: () => void;
+
+    // Canvas state
+    canvasSearchIds: Set<string>;
+    canvasSearchKeywords: Record<string, string>;
+    addCanvasSearchId: (id: string, keyword?: string) => void;
+    setCanvasSearchIds: (ids: Set<string>) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -92,8 +99,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Active chat
     activeChatId: null,
-    setActiveChatId: (id) => set({ activeChatId: id, messages: [], showHistory: false }),
-    resetToNewChat: () => set({ activeChatId: null, messages: [], showHistory: false }),
+    setActiveChatId: (id) => set({ activeChatId: id, messages: [], showHistory: false, canvasSearchIds: new Set(), canvasSearchKeywords: {} }),
+    resetToNewChat: () => set({ activeChatId: null, messages: [], showHistory: false, canvasSearchIds: new Set(), canvasSearchKeywords: {} }),
 
     // Messages
     messages: [],
@@ -159,4 +166,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         queuedMediaChips: [...state.queuedMediaChips, ...chips],
     })),
     clearQueuedMediaChips: () => set({ queuedMediaChips: [] }),
+
+    // Canvas state
+    canvasSearchIds: new Set(),
+    canvasSearchKeywords: {},
+    addCanvasSearchId: (id, keyword) => set((state) => ({
+        canvasSearchIds: new Set(state.canvasSearchIds).add(id),
+        canvasSearchKeywords: keyword ? { ...state.canvasSearchKeywords, [id]: keyword } : state.canvasSearchKeywords
+    })),
+    setCanvasSearchIds: (ids) => set({ canvasSearchIds: ids }),
 }));

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.db.decorators import log_query_timing
 
 
-@log_query_timing
+# @log_query_timing
 async def set_rls_user(conn: AsyncConnection, user_uuid: UUID) -> None:
     """
     Set the app.user_id config for RLS policies.

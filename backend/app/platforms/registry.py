@@ -18,6 +18,14 @@ PLATFORM_ADAPTERS: Dict[str, PlatformAdapter] = {
     "pinterest": pinterest_search_adapter,
 }
 
+PLATFORM_SLUG_TO_NAME: Dict[str, str] = {
+    "instagram_reels": "instagram",
+    "tiktok_keyword": "tiktok",
+    "tiktok_top": "tiktok",
+    "youtube": "youtube",
+    "pinterest": "pinterest",
+}
+
 
 def get_adapter(slug: str) -> PlatformAdapter:
     """Get adapter by slug, raises KeyError if not found."""
@@ -27,3 +35,8 @@ def get_adapter(slug: str) -> PlatformAdapter:
 def get_available_platforms() -> list[str]:
     """Get list of available platform slugs."""
     return list(PLATFORM_ADAPTERS.keys())
+
+
+def normalize_platform_slug(slug: str) -> str:
+    """Map internal platform slugs to normalized platform names for FE."""
+    return PLATFORM_SLUG_TO_NAME.get(slug, slug)
