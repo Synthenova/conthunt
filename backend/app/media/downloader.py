@@ -113,12 +113,7 @@ async def download_single_asset(
 ) -> None:
     """
     Download and store a single media asset.
-    
-    This function handles:
-    1. Downloading via httpx streaming
-    2. Computing SHA256
-    3. Uploading to GCS
-    4. Updating the database record
+    Exceptions are propagated to allow Cloud Tasks retries.
     """
     from app.db.session import get_db_connection
     
@@ -127,52 +122,46 @@ async def download_single_asset(
     source_url = asset["source_url"]
     asset_type = asset["asset_type"]
     
-    try:
-        # Download the file
-        async with http_client.stream(
-            "GET",
-            source_url,
-            timeout=settings.MEDIA_HTTP_TIMEOUT_S,
-            follow_redirects=True,
-        ) as response:
-            response.raise_for_status()
-            
-            # Read content and compute hash
-            content = await response.aread()
-            sha256_hash = hashlib.sha256(content).hexdigest()
-            mime_type = response.headers.get("content-type", "application/octet-stream")
-            
-            # Determine file extension
-            ext = get_file_extension(source_url, mime_type)
-            
-            # Build GCS key: media/{platform}/{external_id}/{asset_type}/{sha256}.{ext}
-            gcs_key = f"media/{platform}/{external_id}/{asset_type}/{sha256_hash}.{ext}"
-            
-            # Upload to GCS
-            gcs_uri = await async_gcs_client.upload_blob(
-                bucket_name=settings.GCS_BUCKET_MEDIA,
-                key=gcs_key,
-                data=content,
-                content_type=mime_type,
-            )
-            
-            # Update database
-            async with get_db_connection() as conn:
-                await update_asset_stored(
-                    conn=conn,
-                    asset_id=asset_id,
-                    gcs_uri=gcs_uri,
-                    sha256=sha256_hash,
-                    mime_type=mime_type,
-                    size_bytes=len(content),
-                )
-            
-            logger.info(f"Downloaded and stored asset {asset_id}: {gcs_uri}")
-            
-    except Exception as e:
-        logger.error(f"Failed to download asset {asset_id}: {e}")
+    # Download the file
+    async with http_client.stream(
+        "GET",
+        source_url,
+        timeout=settings.MEDIA_HTTP_TIMEOUT_S,
+        follow_redirects=True,
+    ) as response:
+        response.raise_for_status()
+        
+        # Read content and compute hash
+        content = await response.aread()
+        sha256_hash = hashlib.sha256(content).hexdigest()
+        mime_type = response.headers.get("content-type", "application/octet-stream")
+        
+        # Determine file extension
+        ext = get_file_extension(source_url, mime_type)
+        
+        # Build GCS key: media/{platform}/{external_id}/{asset_type}/{sha256}.{ext}
+        gcs_key = f"media/{platform}/{external_id}/{asset_type}/{sha256_hash}.{ext}"
+        
+        # Upload to GCS
+        gcs_uri = await async_gcs_client.upload_blob(
+            bucket_name=settings.GCS_BUCKET_MEDIA,
+            key=gcs_key,
+            data=content,
+            content_type=mime_type,
+        )
+        
+        # Update database
         async with get_db_connection() as conn:
-            await update_asset_failed(conn, asset_id, str(e))
+            await update_asset_stored(
+                conn=conn,
+                asset_id=asset_id,
+                gcs_uri=gcs_uri,
+                sha256=sha256_hash,
+                mime_type=mime_type,
+                size_bytes=len(content),
+            )
+        
+        logger.info(f"Downloaded and stored asset {asset_id}: {gcs_uri}")
 
 
 async def download_asset_with_claim(

@@ -53,71 +53,50 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
     """
     Background task: Run Gemini LLM and update analysis status.
     Called after creating a 'processing' record.
+    Exceptions are propagated to allow Cloud Tasks retries.
     """
     import time
     import traceback
     
     start_time = time.time()
-    start_time = time.time()
     logger.info(f"[ANALYSIS] Starting background task for media_asset_id={media_asset_id}, analysis_id={analysis_id}")
     logger.debug(f"[ANALYSIS] Video URI: {video_uri}")
     
-    try:
-        logger.info(f"[ANALYSIS] Building HumanMessage with video...")
-        message = HumanMessage(
-            content=[
-                {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
-                {      
-                    "type": "media",              
-                    "file_uri": video_uri,
-                    "mime_type": "video/mp4", 
-                }
-            ]
+    # 1. Build Message
+    logger.info(f"[ANALYSIS] Building HumanMessage with video...")
+    message = HumanMessage(
+        content=[
+            {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
+            {      
+                "type": "media",              
+                "file_uri": video_uri,
+                "mime_type": "video/mp4", 
+            }
+        ]
+    )
+    
+    # 2. Invoke LLM
+    logger.info(f"[ANALYSIS] Invoking Gemini LLM (structured output)...")
+    invoke_start = time.time()
+    result: VideoAnalysisResult = await structured_llm.ainvoke([message])
+    invoke_duration = time.time() - invoke_start
+    
+    logger.info(f"[ANALYSIS] Gemini LLM returned in {invoke_duration:.2f}s")
+    logger.info(f"[ANALYSIS] Result summary: {result.summary[:100] if result.summary else 'N/A'}...")
+    
+    # 3. Update to completed
+    logger.info(f"[ANALYSIS] Updating status to 'completed'...")
+    async with get_db_connection() as conn:
+        await update_analysis_status(
+            conn,
+            analysis_id=analysis_id,
+            status="completed",
+            analysis_result=result.model_dump(),
         )
-        
-        
-        logger.info(f"[ANALYSIS] Invoking Gemini LLM (structured output)...")
-        invoke_start = time.time()
-        result: VideoAnalysisResult = await structured_llm.ainvoke([message])
-        invoke_duration = time.time() - invoke_start
-        invoke_duration = time.time() - invoke_start
-        logger.info(f"[ANALYSIS] Gemini LLM returned in {invoke_duration:.2f}s")
-        logger.info(f"[ANALYSIS] Result summary: {result.summary[:100] if result.summary else 'N/A'}...")
-        
-        # Update to completed
-        # Update to completed
-        logger.info(f"[ANALYSIS] Updating status to 'completed'...")
-        async with get_db_connection() as conn:
-            await update_analysis_status(
-                conn,
-                analysis_id=analysis_id,
-                status="completed",
-                analysis_result=result.model_dump(),
-            )
-            await conn.commit()
-        
-        total_duration = time.time() - start_time
-        total_duration = time.time() - start_time
-        logger.info(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
-        
-    except Exception as e:
-        total_duration = time.time() - start_time
-        logger.error(f"[ANALYSIS] ❌ Failed for media_asset {media_asset_id} after {total_duration:.2f}s: {type(e).__name__}: {e}")
-        logger.error(f"[ANALYSIS] Traceback:\n{traceback.format_exc()}")
-        
-        # Update to failed
-        try:
-            async with get_db_connection() as conn:
-                await update_analysis_status(
-                    conn,
-                    analysis_id=analysis_id,
-                    status="failed",
-                    error=str(e),
-                )
-                await conn.commit()
-            logger.info(f"[ANALYSIS] Updated status to 'failed' for {analysis_id}")
-        except Exception as db_err:
-            logger.error(f"[ANALYSIS] Failed to update status to 'failed': {db_err}")
+        await conn.commit()
+    
+    total_duration = time.time() - start_time
+    logger.info(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
 
 
 

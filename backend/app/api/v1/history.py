@@ -18,6 +18,18 @@ from app.schemas import (
 )
 from app.services.cdn_signer import generate_signed_url
 from app.services.content_builder import extract_author_from_payload
+from app.platforms.registry import normalize_platform_slug
+
+
+def normalize_inputs_for_response(inputs: dict | None) -> dict:
+    if not inputs:
+        return {}
+    normalized: dict = {}
+    for slug, params in inputs.items():
+        platform = normalize_platform_slug(slug)
+        if platform not in normalized:
+            normalized[platform] = params
+    return normalized
 
 router = APIRouter()
 
@@ -53,7 +65,7 @@ async def list_searches(
             SearchHistoryItem(
                 id=s["id"],
                 query=s["query"],
-                inputs=s["inputs"],
+                inputs=normalize_inputs_for_response(s["inputs"]),
                 created_at=s["created_at"],
                 status=s.get("status", "completed"),
             )
@@ -154,14 +166,14 @@ async def get_search_detail(
     response = SearchDetailResponse(
         id=search_data["id"],
         query=search_data["query"],
-        inputs=search_data["inputs"],
+        inputs=normalize_inputs_for_response(search_data["inputs"]),
         mode=search_data["mode"],
         status=search_data.get("status", "completed"),
         created_at=search_data["created_at"],
         platform_calls=[
             PlatformCallInfo(
                 id=pc["id"],
-                platform=pc["platform"],
+                platform=normalize_platform_slug(pc["platform"]),
                 success=pc["success"],
                 http_status=pc["http_status"],
                 error=pc["error"],

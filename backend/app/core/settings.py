@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str
     DB_SCHEMA: str = "conthunt"
+    LOG_LEVEL: str = "DEBUG"
 
     # GCP / Firebase
     GCLOUD_PROJECT: str = "conthunt-dev"

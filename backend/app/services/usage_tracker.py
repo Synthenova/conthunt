@@ -8,6 +8,8 @@ from sqlalchemy import text
 from app.db.session import get_db_connection
 from app.core import logger
 
+from app.db import set_rls_user
+
 class UsageTracker:
     async def get_internal_user_id(self, conn, firebase_uid: str) -> Optional[UUID]:
         """Resolves Firebase UID to internal Postgres UUID."""
@@ -36,6 +38,9 @@ class UsageTracker:
                 if not user_id:
                     logger.warning(f"Usage tracking skipped: User {firebase_uid} not found in DB")
                     return
+
+                # Set RLS context for the background task
+                await set_rls_user(conn, user_id)
 
                 await conn.execute(
                     text("""
@@ -91,6 +96,9 @@ class UsageTracker:
         Checks if the user has exceeded their limit for the given feature.
         Raises HTTPException(403) if limit exceeded.
         """
+        # DEBUG LOG: Function Entry
+        logger.info(f"Checking limit for {firebase_uid} (role={role}, feature={feature})")
+
         async with get_db_connection() as conn:
             # 1. Resolve User ID
             user_id = await self.get_internal_user_id(conn, firebase_uid)
@@ -111,6 +119,7 @@ class UsageTracker:
             
             if not limits:
                 # No limits defined for this role/feature -> Allowed
+                logger.info(f"No limits defined for {role} / {feature}. Allowing.")
                 return
 
             for limit_row in limits:
@@ -120,7 +129,16 @@ class UsageTracker:
                 # 3. Get Current Usage
                 current_usage = await self.get_usage_for_period(conn, user_id, feature, period)
                 
+                logger.info(
+                    f"Usage Check: {firebase_uid} ({role}) - {feature} "
+                    f"[{period}]: {current_usage}/{limit_count}"
+                )
+                
                 if current_usage >= limit_count:
+                    logger.warning(
+                        f"Limit exceeded for {firebase_uid} ({role}): "
+                        f"{feature} usage={current_usage}, limit={limit_count}, period={period}"
+                    )
                     raise HTTPException(
                         status_code=403, 
                         detail=f"Usage limit exceeded for {feature} on {role} plan ({period} limit: {limit_count}. Used: {current_usage})"

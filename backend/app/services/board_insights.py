@@ -208,24 +208,14 @@ async def execute_board_insights(
     )
     structured_llm = llm.with_structured_output(BoardInsightsResult)
 
-    try:
-        result: BoardInsightsResult = await structured_llm.ainvoke([system_message, human_message])
-        async with get_db_connection() as conn:
-            await set_rls_user(conn, user_id)
-            await queries.update_board_insights_status(
-                conn,
-                insights_id=insights_id,
-                status="completed",
-                insights_result=result.model_dump(),
-                last_completed_at=datetime.utcnow(),
-            )
-    except Exception as exc:
-        logger.error(f"[INSIGHTS] Failed to build insights for {board_id}: {exc}", exc_info=True)
-        async with get_db_connection() as conn:
-            await set_rls_user(conn, user_id)
-            await queries.update_board_insights_status(
-                conn,
-                insights_id=insights_id,
-                status="failed",
-                error=str(exc),
-            )
+    # Allow exceptions to bubble up for Cloud Tasks retry
+    result: BoardInsightsResult = await structured_llm.ainvoke([system_message, human_message])
+    async with get_db_connection() as conn:
+        await set_rls_user(conn, user_id)
+        await queries.update_board_insights_status(
+            conn,
+            insights_id=insights_id,
+            status="completed",
+            insights_result=result.model_dump(),
+            last_completed_at=datetime.utcnow(),
+        )

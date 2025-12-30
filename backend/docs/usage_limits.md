@@ -57,7 +57,8 @@ Roles are defined in `conthunt.users` via a CHECK constraint. To add a new plan 
     -- Enterprise: 10,000 per month, also 500 per hour to prevent spikes
     INSERT INTO plan_limits (plan_role, feature, period, limit_count) VALUES
     ('enterprise', 'gemini_analysis', 'monthly', 10000),
-    ('enterprise', 'gemini_analysis', 'hourly', 500);
+    ('enterprise', 'gemini_analysis', 'hourly', 500),
+    ('enterprise', 'search_query', 'daily', 5000);
     ```
 
 ### 4. Remove a Limit
