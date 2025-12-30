@@ -42,7 +42,32 @@ function extractContextFromMessages(messages: ChatMessage[]): ExtractedContext {
             const chipContent = match[1]?.trim();
             if (!chipContent) continue;
 
-            // Check for board chip
+            let parsedChip: { type?: string; id?: string; label?: string } | null = null;
+            if (chipContent.startsWith("{") && chipContent.endsWith("}")) {
+                try {
+                    parsedChip = JSON.parse(chipContent);
+                } catch (e) {
+                    parsedChip = null;
+                }
+            }
+
+            if (parsedChip?.type === "board" && parsedChip.id) {
+                if (!seenBoardIds.has(parsedChip.id)) {
+                    seenBoardIds.add(parsedChip.id);
+                    boards.push({ id: parsedChip.id, label: parsedChip.label || parsedChip.id });
+                }
+                continue;
+            }
+
+            if (parsedChip?.type === "search" && parsedChip.id) {
+                if (!seenSearchIds.has(parsedChip.id)) {
+                    seenSearchIds.add(parsedChip.id);
+                    searches.push({ id: parsedChip.id, label: parsedChip.label || parsedChip.id });
+                }
+                continue;
+            }
+
+            // Check for legacy board chip
             const boardMatch = chipContent.match(BOARD_CHIP_RE);
             if (boardMatch) {
                 const id = boardMatch[1];
@@ -53,7 +78,7 @@ function extractContextFromMessages(messages: ChatMessage[]): ExtractedContext {
                 continue;
             }
 
-            // Check for search chip
+            // Check for legacy search chip
             const searchMatch = chipContent.match(SEARCH_CHIP_RE);
             if (searchMatch) {
                 const id = searchMatch[1];

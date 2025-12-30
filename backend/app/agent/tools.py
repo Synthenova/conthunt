@@ -4,12 +4,14 @@ These tools make authenticated API calls to the backend to fetch
 user data like boards, videos, and analysis.
 """
 import os
+from uuid import UUID
 from typing import Optional, List, Dict, Any
 import httpx
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 
 from app.core import get_settings
+from app.agent.analysis_inline import run_inline_video_analysis
 
 settings = get_settings()
 
@@ -139,14 +141,9 @@ async def get_video_analysis(
         if not headers.get("Authorization"):
             return {"error": "Authentication required. Please provide x-auth-token."}
 
-        url = f"{_get_api_base_url()}/video-analysis/{media_asset_id}"
-        
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, headers=headers)
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as e:
-        return {"error": f"Failed to get analysis: {e.response.text}"}
+        return await run_inline_video_analysis(UUID(media_asset_id))
+    except ValueError:
+        return {"error": "Invalid media_asset_id format."}
     except Exception as e:
         return {"error": f"Analysis error: {str(e)}"}
 

@@ -108,8 +108,22 @@ function truncateText(value: string, limit: number) {
     return value.slice(0, limit - 1).trimEnd() + '…';
 }
 
-function formatMediaFenceLabel(platform: string, label: string) {
-    return `${platform.toLowerCase()}::${label}`;
+function formatChipFence(chip: ContextChip) {
+    if (chip.type === 'media') {
+        return JSON.stringify({
+            type: 'media',
+            id: chip.media_asset_id,
+            title: chip.title,
+            platform: chip.platform,
+            label: chip.label,
+        });
+    }
+
+    return JSON.stringify({
+        type: chip.type,
+        id: chip.id,
+        label: chip.label,
+    });
 }
 
 function formatItemLine(item: SummaryItem) {
@@ -312,12 +326,7 @@ export function ChatInput({ context }: ChatInputProps) {
 
         // Only send chips fence, no detailed context block
         const chipFence = chips.length
-            ? chips.map((chip) => {
-                const label = chip.type === 'media'
-                    ? formatMediaFenceLabel(chip.platform, chip.label)
-                    : chip.label;
-                return `\`\`\`chip ${label}\`\`\``;
-            }).join(' ')
+            ? chips.map((chip) => `\`\`\`chip ${formatChipFence(chip)}\`\`\``).join(' ')
             : '';
 
         const fullMessage = [chipFence, messageText].filter(Boolean).join('\n\n');
