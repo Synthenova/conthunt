@@ -124,6 +124,7 @@ export default function ChatPage() {
 
     // State to hold results from multiple search streams
     const [resultsMap, setResultsMap] = useState<Record<string, FlatMediaItem[]>>({});
+    const [streamingSearchIds, setStreamingSearchIds] = useState<Record<string, boolean>>({});
     // rawSearchResults is less useful now that we filter by active ID, but checking logic...
     // We can probably remove it or keep it for the "All Results" aggregation if we wanted that later.
     // For now, let's keep the state but not use it for rendering.
@@ -265,6 +266,13 @@ export default function ChatPage() {
         });
     }, []);
 
+    const handleSearchStreamingChange = useCallback((id: string, isStreaming: boolean) => {
+        setStreamingSearchIds(prev => {
+            if (prev[id] === isStreaming) return prev;
+            return { ...prev, [id]: isStreaming };
+        });
+    }, []);
+
     // Flatten results for display
     useEffect(() => {
         // Aggregate all values from resultsMap
@@ -299,6 +307,7 @@ export default function ChatPage() {
                     key={id}
                     searchId={id}
                     onResults={handleSearchResults}
+                    onStreamingChange={handleSearchStreamingChange}
                 />
             ))}
 
@@ -379,7 +388,12 @@ export default function ChatPage() {
                                             className={`cursor-pointer hover:bg-white/10 ${activeSearchId === search.id ? "" : "border-white/10 text-white"}`}
                                             onClick={() => setActiveSearchId(search.id)}
                                         >
-                                            {search.label}
+                                            <span className="inline-flex items-center gap-2">
+                                                {search.label}
+                                                {streamingSearchIds[search.id] && (
+                                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                                )}
+                                            </span>
                                         </Badge>
                                     ))}
                                 </div>
