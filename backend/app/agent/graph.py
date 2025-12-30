@@ -9,25 +9,47 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import START, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from app.agent.tools import get_video_analysis
+from app.agent.tools import (
+    get_video_analysis,
+    get_board_items,
+    get_search_items,
+    search,
+)
 from app.core import get_settings
 
 settings = get_settings()
 
 # Define tools available to the agent
-tools = [get_video_analysis]
+tools = [get_video_analysis, get_board_items, get_search_items, search]
 
 # Base system prompt
-BASE_SYSTEM_PROMPT = """You are a helpful video assistant for the ContHunt platform. 
-You act on behalf of the user to help them find, analyze, and manage their saved video content.
-You will receive board/search context in the user's message when available.
+BASE_SYSTEM_PROMPT = """You are a helpful content assistant for the ContHunt platform.
+You help users find, analyze, and manage video content across multiple platforms.
 
 Tools available:
-- `get_video_analysis`: Get deep insights (summary, topics, hashtags) for a specific video using its media_asset_id.
+- `search(queries)`: Trigger searches for content. Takes list of {{keyword, platforms}}. Returns search IDs.
+- `get_search_items(search_id)`: Get video results from a completed search.
+- `get_board_items(board_id)`: Get videos from a user's board.
+- `get_video_analysis(media_asset_id)`: Get AI analysis (summary, topics, hashtags) for a video.
 
 Guidelines:
-- **Parallel Analysis**: When analyzing multiple videos (e.g., "analyze all videos in this board"), call `get_video_analysis` in PARALLEL for each video - make multiple simultaneous tool calls in a single response.
-- Always be concise and helpful.
+
+**Searching for Content:**
+- When user asks to search/find content, generate relevant keywords and call `search()`.
+- If user specifies platforms (e.g., "search TikTok"), use those. Otherwise, search all platforms.
+- The search() tool returns search IDs. You must then call `get_search_items()` to get results.
+- If get_search_items() says "still running", tell the user to wait and try again next turn.
+
+**Handling @mentions:**
+- If user mentions a board with @BoardName, call `get_board_items(board_id)` to get its contents.
+- If user mentions a search with @SearchName, call `get_search_items(search_id)` to get its results.
+
+**Video Analysis:**
+- When analyzing multiple videos, call `get_video_analysis` in PARALLEL for efficiency.
+
+**General:**
+- Be concise and helpful.
+- Show search results clearly with titles, platforms, and creators.
 """
 
 

@@ -5,6 +5,7 @@ import {
     ChevronDown,
     ChevronRight,
     History,
+    Home,
     LayoutDashboard,
     Loader2,
     MessageSquare,
@@ -38,9 +39,9 @@ import { useChatStore } from "@/lib/chatStore";
 
 const navItems = [
     {
-        title: "Search",
+        title: "Home",
         url: "/app",
-        icon: Search,
+        icon: Home,
     },
     {
         title: "History",
@@ -126,11 +127,8 @@ export function AppSidebar() {
     const handleOpenChat = (chat: (typeof allChats)[number]) => {
         setActiveChatId(chat.id);
         openSidebar();
-        if (chat.context_type === "board" && chat.context_id) {
-            router.push(`/app/boards/${chat.context_id}`);
-        } else if (chat.context_type === "search" && chat.context_id) {
-            router.push(`/app/searches/${chat.context_id}`);
-        }
+        // Always navigate to the chat page now
+        router.push(`/app/chats/${chat.id}`);
     };
 
     return (

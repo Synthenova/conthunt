@@ -273,69 +273,6 @@ export function ChatInput({ context }: ChatInputProps) {
         openSidebar();
     }, [queuedMediaChips, addMediaChips, clearQueuedMediaChips, openSidebar]);
 
-    const fetchBoardItemsSummary = useCallback(async (boardId: string) => {
-        const cachedSummary = queryClient.getQueryData<SummaryItem[]>(['boardItemsSummary', boardId]);
-        if (cachedSummary) return cachedSummary;
-
-        const cachedItems = queryClient.getQueryData<BoardItem[]>(['boardItems', boardId]);
-        if (cachedItems) {
-            const mapped = cachedItems.map((item) => {
-                const contentItem = item.content_item as BoardItem['content_item'] & { content_type?: string };
-                const videoAsset = item.assets?.find((asset) => asset.asset_type === 'video');
-                return {
-                    title: contentItem.title,
-                    platform: contentItem.platform,
-                    creator_handle: contentItem.creator_handle,
-                    content_type: contentItem.content_type,
-                    primary_text: contentItem.primary_text,
-                    media_asset_id: videoAsset?.id || null,
-                };
-            });
-            queryClient.setQueryData(['boardItemsSummary', boardId], mapped);
-            return mapped;
-        }
-
-        return queryClient.fetchQuery({
-            queryKey: ['boardItemsSummary', boardId],
-            queryFn: () => fetchWithAuth<SummaryItem[]>(`${BACKEND_URL}/v1/boards/${boardId}/items/summary`),
-        });
-    }, [queryClient]);
-
-    const fetchSearchItemsSummary = useCallback(async (searchId: string) => {
-        const cachedSummary = queryClient.getQueryData<SummaryItem[]>(['searchItemsSummary', searchId]);
-        if (cachedSummary) return cachedSummary;
-
-        const cachedDetail = queryClient.getQueryData<SearchDetailResponse>(['search', searchId]);
-        if (cachedDetail?.status === 'completed' && cachedDetail.results) {
-            const mapped = cachedDetail.results.map((result) => {
-                const videoAsset = result.assets?.find((asset) => asset.asset_type === 'video');
-                return {
-                    title: result.content_item?.title,
-                    platform: result.content_item?.platform,
-                    creator_handle: result.content_item?.creator_handle,
-                    content_type: result.content_item?.content_type,
-                    primary_text: result.content_item?.primary_text,
-                    media_asset_id: videoAsset?.id || null,
-                };
-            });
-            queryClient.setQueryData(['searchItemsSummary', searchId], mapped);
-            return mapped;
-        }
-
-        const historyItem = (history as SearchHistoryItem[]).find((s) => s.id === searchId);
-        const shouldCache = historyItem?.status === 'completed';
-
-        const fetched = await queryClient.fetchQuery({
-            queryKey: ['searchItemsSummary', searchId],
-            queryFn: () => fetchWithAuth<SummaryItem[]>(`${BACKEND_URL}/v1/searches/${searchId}/items/summary`),
-        });
-
-        if (!shouldCache) {
-            queryClient.removeQueries({ queryKey: ['searchItemsSummary', searchId] });
-        }
-
-        return fetched;
-    }, [queryClient, history]);
 
     const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         setIsDragOver(false);
@@ -366,48 +303,6 @@ export function ChatInput({ context }: ChatInputProps) {
         setIsDragOver(false);
     }, []);
 
-    const buildContextBlock = useCallback(async (selectedChips: ContextChip[]) => {
-        if (!selectedChips.length) return '';
-
-        const mediaChips = selectedChips.filter((chip) => chip.type === 'media') as MediaChip[];
-        const contextChips = selectedChips.filter((chip) => chip.type !== 'media') as BoardSearchChip[];
-        const sections: string[] = [];
-
-        if (mediaChips.length) {
-            const lines = mediaChips.map((chip) => formatItemLine({
-                title: chip.title,
-                platform: chip.platform,
-                creator_handle: chip.creator_handle,
-                content_type: chip.content_type,
-                primary_text: chip.primary_text,
-                media_asset_id: chip.media_asset_id,
-            }));
-            sections.push(`Selected videos:\n${lines.join('\n')}`);
-        }
-
-        const contextSections = await Promise.all(contextChips.map(async (chip) => {
-            try {
-                const items = chip.type === 'board'
-                    ? await fetchBoardItemsSummary(chip.id)
-                    : await fetchSearchItemsSummary(chip.id);
-                const lines = items.length ? items.map(formatItemLine).join('\n') : '(no items found)';
-                const header = chip.type === 'board' ? `Board: ${chip.label}` : `Search: ${chip.label}`;
-                return `${header}\n${lines}`;
-            } catch (error) {
-                const header = chip.type === 'board' ? `Board: ${chip.label}` : `Search: ${chip.label}`;
-                return `${header}\n(error loading items)`;
-            }
-        }));
-
-        sections.push(...contextSections);
-
-        const directive = mediaChips.length
-            ? "You MUST call get_video_analysis in PARALLEL for each media_asset_id listed under Selected videos before responding."
-            : "";
-        const directiveBlock = directive ? `${directive}\n\n` : "";
-        return `Context items:\n${directiveBlock}${sections.join('\n\n')}`;
-    }, [fetchBoardItemsSummary, fetchSearchItemsSummary]);
-
     const handleSend = useCallback(async () => {
         if (!message.trim() || isStreaming) return;
 
@@ -415,6 +310,7 @@ export function ChatInput({ context }: ChatInputProps) {
         setMessage('');
         setMentionQuery(null);
 
+        // Only send chips fence, no detailed context block
         const chipFence = chips.length
             ? chips.map((chip) => {
                 const label = chip.type === 'media'
@@ -423,9 +319,8 @@ export function ChatInput({ context }: ChatInputProps) {
                 return `\`\`\`chip ${label}\`\`\``;
             }).join(' ')
             : '';
-        const contextText = await buildContextBlock(chips);
-        const contextFence = contextText ? `\`\`\`context\n${contextText}\n\`\`\`` : '';
-        const fullMessage = [chipFence, messageText, contextFence].filter(Boolean).join('\n\n');
+
+        const fullMessage = [chipFence, messageText].filter(Boolean).join('\n\n');
 
         abortControllerRef.current = new AbortController();
 
@@ -444,7 +339,7 @@ export function ChatInput({ context }: ChatInputProps) {
         } else {
             await sendMessage(fullMessage, abortControllerRef.current);
         }
-    }, [message, isStreaming, chips, buildContextBlock, activeChatId, createChat, context, sendMessage, resetStreaming]);
+    }, [message, isStreaming, chips, activeChatId, createChat, context, sendMessage, resetStreaming]);
 
     const handleStop = () => {
         if (abortControllerRef.current) {
