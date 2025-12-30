@@ -233,6 +233,14 @@ async def analyze_video(
     Returns immediately with 'processing' status. Poll to check completion.
     Also triggers 12Labs indexing in the background.
     """
+    # 0. Check Usage Limits
+    from app.services.usage_tracker import usage_tracker
+    await usage_tracker.check_limit(
+        firebase_uid=_user["uid"], 
+        role=_user["role"], 
+        feature="gemini_analysis"
+    )
+
     # Check if this is a YouTube video (TwelveLabs can't handle YouTube URLs directly)
     async with get_db_connection() as conn:
         media_asset = await get_media_asset_by_id(conn, media_asset_id)
@@ -249,4 +257,16 @@ async def analyze_video(
         )
     
     # Run non-blocking Gemini analysis (via Cloud Tasks)
-    return await run_gemini_analysis(media_asset_id, background_tasks=background_tasks, use_cloud_tasks=True)
+    response = await run_gemini_analysis(media_asset_id, background_tasks=background_tasks, use_cloud_tasks=True)
+    
+    # Track usage (only if not cached)
+    if not response.cached:
+        background_tasks.add_task(
+            usage_tracker.record_usage,
+            firebase_uid=_user["uid"],
+            feature="gemini_analysis",
+            quantity=1,
+            context={"media_asset_id": str(media_asset_id)}
+        )
+        
+    return response
