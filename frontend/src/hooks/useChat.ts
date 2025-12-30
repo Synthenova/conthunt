@@ -7,8 +7,17 @@ import { auth } from '@/lib/firebaseClient';
 import { useChatStore, Chat, ChatMessage } from '@/lib/chatStore';
 import { BACKEND_URL } from '@/lib/api';
 
+async function waitForAuth() {
+    return new Promise<typeof auth.currentUser>((resolve) => {
+        const unsubscribe = auth.onAuthStateChanged((user) => {
+            unsubscribe();
+            resolve(user);
+        });
+    });
+}
+
 async function getAuthToken(): Promise<string> {
-    const user = auth.currentUser;
+    const user = auth.currentUser || await waitForAuth();
     if (!user) throw new Error('User not authenticated');
     return user.getIdToken();
 }

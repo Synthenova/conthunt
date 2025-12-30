@@ -162,19 +162,7 @@ export default function ChatPage() {
         openSidebar();
     }, [chatId, setActiveChatId, openSidebar]);
 
-    // Check for pending message from homepage
-    useEffect(() => {
-        const pendingMessage = sessionStorage.getItem("pendingChatMessage");
-        if (pendingMessage && chatId) {
-            sessionStorage.removeItem("pendingChatMessage");
-            // Small delay to ensure the chat is ready
-            const timer = setTimeout(() => {
-                abortControllerRef.current = new AbortController();
-                sendMessage(pendingMessage, abortControllerRef.current, chatId);
-            }, 500);
-            return () => clearTimeout(timer);
-        }
-    }, [chatId, sendMessage]);
+    // Pending message flow removed; homepage now sends directly.
 
     // Extract context from messages
     const context = useMemo(() => {
@@ -353,6 +341,7 @@ export default function ChatPage() {
                 ) : (
                     <>
                         {/* Boards Section */}
+                        {/*
                         {hasBoards && (
                             <section className="space-y-4">
                                 <div className="flex items-center gap-2">
@@ -394,6 +383,7 @@ export default function ChatPage() {
                                 </Tabs>
                             </section>
                         )}
+                        */}
 
                         {/* Searches Section */}
                         {hasSearches && (

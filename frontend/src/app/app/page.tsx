@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useCreateChat } from "@/hooks/useChat";
+import { useCreateChat, useSendMessage } from "@/hooks/useChat";
 import { useChatStore } from "@/lib/chatStore";
 import {
     PromptInput,
@@ -17,6 +17,7 @@ export default function HomePage() {
     const [message, setMessage] = useState("");
     const router = useRouter();
     const createChat = useCreateChat();
+    const { sendMessage } = useSendMessage();
     const { openSidebar } = useChatStore();
 
     const handleSubmit = async () => {
@@ -33,11 +34,11 @@ export default function HomePage() {
                 contextId: undefined,
             });
 
+            // Send first message immediately to avoid missing /send on first chat
+            await sendMessage(messageText, new AbortController(), chat.id);
+
             // Navigate to chat page
             router.push(`/app/chats/${chat.id}`);
-
-            // Store the pending message to send after navigation
-            sessionStorage.setItem("pendingChatMessage", messageText);
         } catch (error) {
             console.error("Failed to create chat:", error);
         }
