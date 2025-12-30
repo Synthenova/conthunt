@@ -161,7 +161,7 @@ async def download_single_asset(
                 size_bytes=len(content),
             )
         
-        logger.info(f"Downloaded and stored asset {asset_id}: {gcs_uri}")
+        # logger.info(f"Downloaded and stored asset {asset_id}: {gcs_uri}")
 
 
 async def download_asset_with_claim(
