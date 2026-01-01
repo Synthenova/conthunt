@@ -28,6 +28,7 @@ function BillingReturnContent() {
     const subscriptionId = searchParams.get("subscription_id");
 
     useEffect(() => {
+        if (!auth) return;
         // Listen for auth changes to get the latest role (claims)
         const unsubscribe = auth.onIdTokenChanged(async (user) => {
             if (user) {
@@ -63,6 +64,10 @@ function BillingReturnContent() {
     const handleSubscribe = async (plan: "creator" | "pro_research") => {
         try {
             setLoading(plan);
+            if (!auth) {
+                toast.error("Auth not available yet.");
+                return;
+            }
             const user = auth.currentUser;
             if (!user) {
                 toast.error("Please log in to subscribe.");

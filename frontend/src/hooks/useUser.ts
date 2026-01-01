@@ -19,6 +19,7 @@ export interface UserProfile {
 }
 
 async function fetchMe(): Promise<UserProfile | null> {
+    if (!auth) return null;
     const user = auth.currentUser;
     if (!user) return null;
 
@@ -41,6 +42,7 @@ export function useUser() {
     const [isAuthReady, setIsAuthReady] = useState(false);
 
     useEffect(() => {
+        if (!auth) return;
         const unsubscribe = auth.onAuthStateChanged(() => {
             setIsAuthReady(true);
         });
@@ -50,13 +52,13 @@ export function useUser() {
     const query = useQuery({
         queryKey: ["userMe"],
         queryFn: fetchMe,
-        enabled: isAuthReady && !!auth.currentUser,
+        enabled: !!auth && isAuthReady && !!auth.currentUser,
         staleTime: 60 * 1000, // 1 minute
     });
 
     return {
         ...query,
-        user: auth.currentUser,
+        user: auth ? auth.currentUser : null,
         profile: query.data,
         isAuthLoading: !isAuthReady,
     };
