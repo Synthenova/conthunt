@@ -1,3 +1,4 @@
+import { AsyncImage } from "@/components/ui/async-image";
 import { GlassCard } from "@/components/ui/glass-card";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Play, Heart, MessageCircle, Share2, Volume2, VolumeX } from "lucide-react";
@@ -115,7 +116,7 @@ export function MediaCard({
 
     return (
         <GlassCard
-            className="group relative overflow-hidden h-full flex flex-col border-0 bg-black"
+            className="group relative overflow-hidden h-full flex flex-col border-0 bg-surface/40 backdrop-blur-md shadow-2xl shadow-black/20"
             onMouseEnter={() => handleHover(true)}
             onMouseLeave={() => handleHover(false)}
             hoverEffect={false} // Disable default glass hover effect for custom handling
@@ -123,14 +124,13 @@ export function MediaCard({
             <div className="relative w-full h-full">
                 <AspectRatio ratio={9 / 16} className="h-full">
                     {/* Thumbnail */}
-                    <img
+                    <AsyncImage
                         src={thumbnail}
                         alt={title}
                         className={cn(
                             "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
                             isPlaying && (videoUrl || youtubeId) ? 'opacity-0' : 'opacity-100'
                         )}
-                        loading="lazy"
                         referrerPolicy="no-referrer"
                     />
 
@@ -187,13 +187,13 @@ export function MediaCard({
                                     aria-label={`${platformLabel} link`}
                                     title={platformLabel}
                                 >
-                                    <Badge className="relative bg-black/50 backdrop-blur-md border-white/40 hover:bg-black/70 uppercase text-[10px] flex items-center gap-1 pr-2 transition-[padding] duration-200 group-hover:pr-5">
+                                    <Badge className="relative glass border-white/20 hover:bg-glass-hover uppercase text-[10px] flex items-center gap-1 pr-2 transition-[padding] duration-200 group-hover:pr-5 text-white">
                                         <i className={cn("bi", platformIconClass, "text-[14px]")} aria-hidden="true" />
                                         <i className="bi bi-box-arrow-up-right text-[13px] opacity-0 transition-opacity duration-200 absolute right-1 group-hover:opacity-100" aria-hidden="true" />
                                     </Badge>
                                 </a>
                             ) : (
-                                <Badge className="bg-black/50 backdrop-blur-md border-white/40 hover:bg-black/70 uppercase text-[10px] flex items-center gap-1">
+                                <Badge className="glass border-white/20 hover:bg-glass-hover uppercase text-[10px] flex items-center gap-1 text-white">
                                     <i className={cn("bi", platformIconClass, "text-[14px]")} aria-hidden="true" />
                                 </Badge>
                             )}
@@ -249,13 +249,10 @@ export function MediaCard({
                         <div className="flex items-center gap-2">
                             <div className="h-8 w-8 rounded-full bg-zinc-800 border-2 border-white/20 overflow-hidden flex-shrink-0">
                                 {creatorImage ? (
-                                    <img
+                                    <AsyncImage
                                         src={creatorImage}
                                         alt={creatorName}
                                         className="h-full w-full object-cover"
-                                        onError={(e) => {
-                                            (e.target as HTMLImageElement).style.display = 'none';
-                                        }}
                                     />
                                 ) : (
                                     <div className="h-full w-full flex items-center justify-center text-white/50 font-bold text-xs bg-black">

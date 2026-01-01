@@ -7,7 +7,7 @@ import { ChatMessageList } from './ChatMessageList';
 import { ChatInput } from './ChatInput';
 import { cn } from '@/lib/utils';
 import { usePathname } from 'next/navigation';
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 import { useChatList } from '@/hooks/useChat';
 
 export function ChatSidebar() {
@@ -37,6 +37,22 @@ export function ChatSidebar() {
         type: context?.type,
         id: context?.id,
     });
+    const contextKey = useMemo(() => {
+        return context ? `${context.type}:${context.id}` : 'none';
+    }, [context]);
+    const prevContextKey = useRef(contextKey);
+
+    useEffect(() => {
+        if (chatIdFromPath) {
+            prevContextKey.current = contextKey;
+            return;
+        }
+
+        if (context && prevContextKey.current !== contextKey) {
+            setActiveChatId(null);
+            prevContextKey.current = contextKey;
+        }
+    }, [chatIdFromPath, context, contextKey, setActiveChatId]);
 
     useEffect(() => {
         if (chatIdFromPath) {
@@ -85,7 +101,7 @@ export function ChatSidebar() {
                         <ChatHeader />
                         <div className="relative flex-1 min-h-0 flex flex-col">
                         <ChatHistoryPanel context={context} />
-                        <ChatMessageList />
+                        <ChatMessageList isContextLoading={!!context && isLoading} />
                     </div>
                     <ChatInput context={context} />
                 </div>

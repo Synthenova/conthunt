@@ -9,6 +9,7 @@ interface UseClientResultSortOptions {
 export function useClientResultSort(rawResults: any[], options: UseClientResultSortOptions = {}) {
     const [clientSort, setClientSort] = useState<ClientSortOption>("default");
     const [clientDateFilter, setClientDateFilter] = useState<ClientDateFilter>("all");
+    const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
     const { resultsAreFlat = false } = options;
 
     const baseResults = useMemo(() => {
@@ -17,8 +18,24 @@ export function useClientResultSort(rawResults: any[], options: UseClientResultS
             : transformSearchResults(rawResults || []);
     }, [rawResults, resultsAreFlat]);
 
+    const platforms = useMemo(() => {
+        const set = new Set<string>();
+        baseResults.forEach(item => {
+            if (item.platform) set.add(item.platform.toLowerCase());
+        });
+        return Array.from(set).sort();
+    }, [baseResults]);
+
     const flatResults = useMemo(() => {
         let results: FlatMediaItem[] = [...baseResults];
+
+        // 0. Platform Filtering
+        if (selectedPlatforms.length > 0) {
+            results = results.filter(item => {
+                const p = String(item.platform || "").toLowerCase();
+                return selectedPlatforms.includes(p);
+            });
+        }
 
         // 1. Client-Side Filtering (Date)
         if (clientDateFilter !== "all") {
@@ -72,7 +89,7 @@ export function useClientResultSort(rawResults: any[], options: UseClientResultS
         }
 
         return results;
-    }, [baseResults, clientSort, clientDateFilter]);
+    }, [baseResults, clientSort, clientDateFilter, selectedPlatforms]);
 
     return {
         baseResults,
@@ -80,6 +97,9 @@ export function useClientResultSort(rawResults: any[], options: UseClientResultS
         clientSort,
         setClientSort,
         clientDateFilter,
-        setClientDateFilter
+        setClientDateFilter,
+        platforms,
+        selectedPlatforms,
+        setSelectedPlatforms
     };
 }

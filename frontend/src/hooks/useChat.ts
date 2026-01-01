@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { auth } from '@/lib/firebaseClient';
@@ -115,8 +115,9 @@ export function useDeleteChat() {
 // Fetch messages for a chat
 export function useChatMessages(chatId: string | null) {
     const setMessages = useChatStore((s) => s.setMessages);
+    const activeChatId = useChatStore((s) => s.activeChatId);
 
-    return useQuery({
+    const query = useQuery({
         queryKey: ['chat-messages', chatId],
         queryFn: async () => {
             if (!chatId) return { messages: [] };
@@ -139,12 +140,24 @@ export function useChatMessages(chatId: string | null) {
             // If we have temp messages, ensure we don't duplicate if they are already in fetched
             // (Simple duplication check based on content/timestamp could be added if needed, 
             // but for now assume temp ID means not yet in backend)
-            setMessages([...messages, ...tempMsgs]);
+            if (useChatStore.getState().activeChatId === chatId) {
+                setMessages([...messages, ...tempMsgs]);
+            }
             return { messages };
         },
         enabled: !!chatId,
         staleTime: 10000,
     });
+
+    useEffect(() => {
+        if (!chatId || activeChatId !== chatId || !query.data?.messages) return;
+        const currentMsgs = useChatStore.getState().messages;
+        const tempMsgs = currentMsgs.filter(m => m.id.startsWith('temp-'));
+        const merged = [...query.data.messages, ...tempMsgs];
+        setMessages(merged);
+    }, [activeChatId, chatId, query.dataUpdatedAt, query.data?.messages, setMessages]);
+
+    return query;
 }
 
 // Send a message and stream the response

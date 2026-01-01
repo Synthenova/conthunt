@@ -6,6 +6,7 @@ const PUBLIC_PATHS = [
     "/api/csrf",
     "/api/sessionLogin",
     "/api/sessionLogout",
+    "/images",
 ];
 
 export function middleware(req: NextRequest) {

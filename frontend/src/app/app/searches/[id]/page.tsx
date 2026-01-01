@@ -32,39 +32,6 @@ export default function SearchDetailPage() {
         return map;
     }, [allFlatResults]);
 
-    const mergedPlatformCalls = useMemo(() => {
-        if (!platformCalls || platformCalls.length === 0) return [];
-
-        const merged = new Map<string, any>();
-
-        for (const call of platformCalls) {
-            const platform = String(call.platform || "").toLowerCase();
-            const key = platform || "unknown";
-            const existing = merged.get(key);
-
-            if (!existing) {
-                merged.set(key, {
-                    ...call,
-                    platform: platform || call.platform,
-                    response_meta: {
-                        ...(call.response_meta || {}),
-                        items_count: call.response_meta?.items_count || 0,
-                    },
-                });
-                continue;
-            }
-
-            existing.success = existing.success || call.success;
-            existing.duration_ms = Math.max(existing.duration_ms || 0, call.duration_ms || 0);
-            existing.response_meta = {
-                ...(existing.response_meta || {}),
-                ...(call.response_meta || {}),
-                items_count: (existing.response_meta?.items_count || 0) + (call.response_meta?.items_count || 0),
-            };
-        }
-
-        return Array.from(merged.values());
-    }, [platformCalls]);
 
     if (isLoading) {
         return (
@@ -92,35 +59,41 @@ export default function SearchDetailPage() {
     }
 
     return (
-        <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8">
+        <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8 relative">
+            {/* Deep Space Background Gradients */}
+            <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
+                <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-500/10 rounded-full blur-[120px]" />
+                <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-primary/10 rounded-full blur-[120px]" />
+            </div>
+
             {/* Header */}
             <div className="flex flex-col gap-4">
                 <div className="flex items-center gap-2 text-muted-foreground hover:text-white transition-colors">
                     <ArrowLeft className="h-4 w-4" />
-                    <Link href="/app/history">Back to History</Link>
+                    <Link href="/app/history" className="text-sm font-medium">Back to History</Link>
                 </div>
 
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                         <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-                            <span className="bg-primary/20 p-2 rounded-lg"><Search className="h-6 w-6 text-primary" /></span>
+                            <span className="glass p-2.5 rounded-xl block shadow-xl shadow-primary/10"><Search className="h-6 w-6 text-primary" /></span>
                             {search?.query || "Searching..."}
                         </h1>
-                        <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-4 mt-3 text-sm text-muted-foreground">
                             {search?.created_at && (
-                                <span className="flex items-center gap-1">
-                                    <Calendar className="h-3 w-3" />
+                                <span className="flex items-center gap-2 glass px-3 py-1 rounded-full border-white/10">
+                                    <Calendar className="h-3.5 w-3.5" />
                                     {formatDistanceToNow(new Date(search.created_at), { addSuffix: true })}
                                 </span>
                             )}
                             {isStreaming && (
-                                <Badge variant="secondary" className="flex items-center gap-1">
+                                <Badge variant="secondary" className="flex items-center gap-2 glass border-primary/20 text-primary">
                                     <Loader2 className="h-3 w-3 animate-spin" />
                                     Searching...
                                 </Badge>
                             )}
                             {!isStreaming && search?.status === "completed" && (
-                                <Badge variant="default" className="uppercase text-[10px]">
+                                <Badge variant="default" className="uppercase text-[10px] glass border-white/20">
                                     Completed
                                 </Badge>
                             )}
@@ -129,32 +102,12 @@ export default function SearchDetailPage() {
                 </div>
             </div>
 
-            {/* Platform Stats */}
-            {mergedPlatformCalls.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {mergedPlatformCalls.map((call: any) => (
-                        <GlassCard key={call.id} className="p-4 flex flex-col gap-2">
-                            <div className="flex justify-between items-center">
-                                <span className="font-semibold capitalize text-white">{call.platform.replace('_', ' ')}</span>
-                                <Badge variant={call.success ? "default" : "destructive"} className="text-[10px]">
-                                    {call.success ? "Success" : "Failed"}
-                                </Badge>
-                            </div>
-                            <div className="flex justify-between text-xs text-muted-foreground mt-2">
-                                <span>{(call.duration_ms / 1000).toFixed(2)}s</span>
-                                <span>{call.response_meta?.items_count || 0} items</span>
-                            </div>
-                        </GlassCard>
-                    ))}
-                </div>
-            )}
-
             {/* Results */}
             <div className="space-y-4">
-                <h2 className="text-xl font-semibold border-b border-white/10 pb-2">
+                {/* <h2 className="text-xl font-semibold border-b border-white/10 pb-2">
                     Results ({flatResults.length})
                     {isStreaming && <Loader2 className="inline-block h-4 w-4 animate-spin ml-2" />}
-                </h2>
+                </h2> */}
                 <ClientFilteredResults
                     results={results}
                     loading={isStreaming && results.length === 0}

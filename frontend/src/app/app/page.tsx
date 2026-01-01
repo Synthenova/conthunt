@@ -65,16 +65,16 @@ export default function HomePage() {
                     </div>
                 </div>
             )}
-            {/* Background Gradients */}
+            {/* Deep Space Background Gradients */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
-                <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-purple-500/10 rounded-full blur-[120px]" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-500/10 rounded-full blur-[120px]" />
+                <div className="absolute top-[-20%] left-[-10%] w-[70%] h-[70%] bg-blue-600/10 rounded-full blur-[160px] animate-pulse" />
+                <div className="absolute bottom-[-20%] right-[-10%] w-[70%] h-[70%] bg-primary/10 rounded-full blur-[160px]" />
             </div>
 
             <div className="w-full max-w-2xl px-4 flex flex-col items-center gap-8">
                 {/* Hero Text */}
                 <div className="text-center space-y-3">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full glass border-primary/20 text-primary text-sm animate-in fade-in slide-in-from-bottom-4 duration-1000">
                         <Sparkles className="h-4 w-4" />
                         AI-Powered Content Discovery
                     </div>
@@ -92,7 +92,7 @@ export default function HomePage() {
                     onValueChange={setMessage}
                     onSubmit={handleSubmit}
                     isLoading={createChat.isPending || isSubmitting}
-                    className="w-full bg-secondary/50 border-white/10"
+                    className="w-full glass border-glass-border shadow-2xl shadow-primary/5"
                 >
                     <PromptInputTextarea
                         placeholder="Find me viral cooking videos..."
@@ -124,7 +124,7 @@ export default function HomePage() {
                         <button
                             key={suggestion}
                             onClick={() => setMessage(suggestion)}
-                            className="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-sm text-muted-foreground hover:bg-white/10 hover:text-white transition-colors"
+                            className="px-4 py-2 rounded-xl glass-card text-sm text-muted-foreground hover:text-white transition-all hover:scale-105 active:scale-95"
                         >
                             {suggestion}
                         </button>

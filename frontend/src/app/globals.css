@@ -7,8 +7,13 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  /* Glass System Tokens */
+  --color-glass: var(--glass);
+  --color-glass-hover: var(--glass-hover);
+  --color-glass-border: var(--glass-border);
+  --color-surface: var(--surface);
+
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -80,11 +85,18 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* Light mode fallbacks for glass (optional, as app is dark-first) */
+  --glass: rgba(0, 0, 0, 0.05);
+  --glass-hover: rgba(0, 0, 0, 0.08);
+  --glass-border: rgba(0, 0, 0, 0.1);
+  --surface: #ffffff;
 }
 
 .dark {
-  /* Deep Blue/Zinc Base for Glassmorphism */
-  --background: oklch(0.1 0.03 260);
+  /* Deep Space Black Base for Glassmorphism */
+  /* Using Hex #07090C directly or its OKLCH approximate equivalent */
+  --background: #07090C;
   --foreground: oklch(0.985 0 0);
 
   --card: oklch(0.14 0.04 260 / 0.7);
@@ -94,7 +106,7 @@
   --popover-foreground: oklch(0.985 0 0);
 
   /* Vibrant Electric Blue Primary */
-  --primary: oklch(0.6 0.2 260);
+  --primary: #3B82F6;
   --primary-foreground: oklch(0.985 0 0);
 
   --secondary: oklch(0.25 0.06 260);
@@ -103,7 +115,8 @@
   --muted: oklch(0.2 0.04 260);
   --muted-foreground: oklch(0.7 0.02 260);
 
-  --accent: oklch(0.25 0.06 260);
+  /* Accent matching Primary for consistency in Glass UI */
+  --accent: #3B82F6;
   --accent-foreground: oklch(0.985 0 0);
 
   --destructive: oklch(0.5 0.2 25);
@@ -111,11 +124,11 @@
   --input: oklch(0.25 0.05 260 / 0.4);
   --ring: oklch(0.6 0.2 260);
 
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
+  /* Glass System Values */
+  --glass: rgba(255, 255, 255, 0.03);
+  --glass-hover: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --surface: #0D1118;
 
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
@@ -127,53 +140,6 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-@layer utilities {
-  .glass {
-    @apply backdrop-blur-xl bg-background/60 border border-white/10 shadow-lg;
-  }
-
-  .glass-card {
-    @apply backdrop-blur-md bg-white/5 border border-white/10 hover:bg-white/10 transition-colors duration-300;
-  }
-
-  .glass-input {
-    @apply backdrop-blur-sm bg-white/5 border-white/10 focus:border-primary/50 focus:ring-primary/20 transition-all;
-  }
-}
-
-/* Scrollbar hiding utility - outside @layer for proper specificity */
-.scrollbar-none,
-.scrollbar-none * {
-  -ms-overflow-style: none !important;
-  scrollbar-width: none !important;
-}
-
-.scrollbar-none::-webkit-scrollbar,
-.scrollbar-none *::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-}
-
-/* Dark scrollbar for elements that need visible scrollbars */
-.scrollbar-dark::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.scrollbar-dark::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.scrollbar-dark::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 3px;
-}
-
-.scrollbar-dark::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -181,6 +147,25 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  /* Custom Scrollbar for Glass UI */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
   }
 
   @keyframes shimmer {
@@ -191,5 +176,33 @@
     100% {
       background-position: -200% 0;
     }
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply backdrop-blur-xl bg-glass border border-glass-border shadow-lg;
+  }
+
+  .glass-card {
+    @apply backdrop-blur-md bg-surface border border-glass-border hover:bg-glass-hover transition-colors duration-300;
+  }
+
+  .glass-input {
+    @apply backdrop-blur-sm bg-glass border-glass-border focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all;
+  }
+
+  /* Scrollbar hiding utility */
+  .scrollbar-none,
+  .scrollbar-none * {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+
+  .scrollbar-none::-webkit-scrollbar,
+  .scrollbar-none *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
   }
 }

@@ -30,6 +30,9 @@ export function ClientFilteredResults({
         setClientSort,
         clientDateFilter,
         setClientDateFilter,
+        platforms,
+        selectedPlatforms,
+        setSelectedPlatforms,
     } = useClientResultSort(results, { resultsAreFlat });
 
     useEffect(() => {
@@ -48,6 +51,9 @@ export function ClientFilteredResults({
                     onSortChange={setClientSort}
                     dateFilter={clientDateFilter}
                     onDateFilterChange={setClientDateFilter}
+                    platforms={platforms}
+                    selectedPlatforms={selectedPlatforms}
+                    onPlatformsChange={setSelectedPlatforms}
                     totalResults={flatResults.length}
                 />
             )}

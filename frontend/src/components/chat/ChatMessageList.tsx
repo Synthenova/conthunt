@@ -91,7 +91,7 @@ function parseMessageSegments(content: string): MessageSegment[] {
     return segments;
 }
 
-export function ChatMessageList() {
+export function ChatMessageList({ isContextLoading = false }: { isContextLoading?: boolean }) {
     const {
         messages,
         activeChatId,
@@ -99,7 +99,15 @@ export function ChatMessageList() {
         streamingContent,
     } = useChatStore();
 
-    const { isLoading } = useChatMessages(activeChatId);
+    const { isLoading, isFetching } = useChatMessages(activeChatId);
+
+    if (isContextLoading) {
+        return (
+            <div className="flex-1 flex items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+        );
+    }
 
     // Empty state - no active chat
     if (!activeChatId) {
@@ -119,7 +127,7 @@ export function ChatMessageList() {
     }
 
     // Loading messages
-    if (isLoading) {
+    if (isLoading || (isFetching && messages.length === 0)) {
         return (
             <div className="flex-1 flex items-center justify-center">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -152,7 +160,7 @@ export function ChatMessageList() {
                                 markdown={msg.type === 'ai'}
                                 className={
                                     msg.type === 'human'
-                                        ? 'bg-secondary max-w-[85%] text-foreground whitespace-pre-wrap'
+                                        ? 'glass max-w-[85%] text-foreground whitespace-pre-wrap shadow-lg border-primary/20 bg-primary/10'
                                         : 'bg-transparent max-w-[95%] text-foreground p-0'
                                 }
                             >
@@ -163,7 +171,7 @@ export function ChatMessageList() {
                                             return (
                                                 <span
                                                     key={`${msg.id}-chip-${index}`}
-                                                    className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
+                                                    className="inline-flex items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10"
                                                 >
                                                     {chipMeta.icon === "board" && (
                                                         <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />

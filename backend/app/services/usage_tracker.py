@@ -144,5 +144,34 @@ class UsageTracker:
                         detail=f"Usage limit exceeded for {feature} on {role} plan ({period} limit: {limit_count}. Used: {current_usage})"
                     )
 
+    async def get_usage_summary(self, firebase_uid: str, role: str) -> list:
+        """Returns a list of usage vs limits for all features for this role."""
+        async with get_db_connection() as conn:
+            user_id = await self.get_internal_user_id(conn, firebase_uid)
+            if not user_id:
+                return []
+
+            result = await conn.execute(
+                text("SELECT feature, period, limit_count FROM plan_limits WHERE plan_role = :role"),
+                {"role": role}
+            )
+            # Use fetchall() and access by index for compatibility
+            limits = result.fetchall()
+            
+            summary = []
+            for limit_row in limits:
+                feature = limit_row[0] # feature
+                period = limit_row[1]  # period
+                limit_count = limit_row[2] # limit_count
+                
+                current_usage = await self.get_usage_for_period(conn, user_id, feature, period)
+                summary.append({
+                    "feature": feature,
+                    "period": period,
+                    "limit": limit_count,
+                    "used": current_usage
+                })
+            return summary
+
 # Global instance
 usage_tracker = UsageTracker()

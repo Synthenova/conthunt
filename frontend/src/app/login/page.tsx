@@ -96,12 +96,14 @@ export default function LoginPage() {
                     </div>
                 </div>
             </div>
-            <div className="bg-muted relative hidden lg:block">
+            <div className="bg-black relative hidden lg:block overflow-hidden">
                 <img
-                    src="/placeholder.svg"
-                    alt="Image"
-                    className="absolute inset-0 h-full w-full object-cover dark:brightness-[0.2] dark:grayscale"
+                    src="/images/login_hero.png"
+                    alt="Conthunt Branding"
+                    className="absolute inset-0 h-full w-full object-cover opacity-60 scale-105 animate-pulse duration-[10000ms]"
                 />
+                <div className="absolute inset-0 bg-gradient-to-r from-background via-transparent to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
             </div>
         </div>
     );

@@ -150,6 +150,7 @@ export default function ChatPage() {
     // State to hold results from multiple search streams
     const [resultsMap, setResultsMap] = useState<Record<string, FlatMediaItem[]>>({});
     const [streamingSearchIds, setStreamingSearchIds] = useState<Record<string, boolean>>({});
+    const [loadingSearchIds, setLoadingSearchIds] = useState<Record<string, boolean>>({});
     // rawSearchResults is less useful now that we filter by active ID, but checking logic...
     // We can probably remove it or keep it for the "All Results" aggregation if we wanted that later.
     // For now, let's keep the state but not use it for rendering.
@@ -286,6 +287,13 @@ export default function ChatPage() {
         });
     }, []);
 
+    const handleSearchLoadingChange = useCallback((id: string, isLoading: boolean) => {
+        setLoadingSearchIds(prev => {
+            if (prev[id] === isLoading) return prev;
+            return { ...prev, [id]: isLoading };
+        });
+    }, []);
+
     // Flatten results for display
     useEffect(() => {
         // Aggregate all values from resultsMap
@@ -322,6 +330,7 @@ export default function ChatPage() {
                     searchId={id}
                     onResults={handleSearchResults}
                     onStreamingChange={handleSearchStreamingChange}
+                    onLoadingChange={handleSearchLoadingChange}
                 />
             ))}
 
@@ -431,7 +440,7 @@ export default function ChatPage() {
                                     <ClientFilteredResults
                                         key={activeSearchId} // Force re-mount on change
                                         results={resultsMap[activeSearchId] || []}
-                                        loading={false}
+                                        loading={(!!streamingSearchIds[activeSearchId] || !!loadingSearchIds[activeSearchId]) && (resultsMap[activeSearchId]?.length ?? 0) === 0}
                                         resultsAreFlat
                                         onAllResultsChange={setAllResults}
                                     />

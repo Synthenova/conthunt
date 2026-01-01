@@ -36,6 +36,7 @@
     "firebase": "^10.14.1",
     "firebase-admin": "^13.6.0",
     "firebaseui": "^6.1.0",
+    "framer-motion": "^12.23.26",
     "jszip": "^3.10.1",
     "lucide-react": "^0.561.0",
     "marked": "^17.0.1",

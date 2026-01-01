@@ -163,10 +163,10 @@ export default function BoardDetailPage() {
 
     return (
         <div className="min-h-screen bg-background relative">
-            {/* Background Gradients */}
+            {/* Deep Space Background Gradients */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
-                <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-purple-500/10 rounded-full blur-[120px]" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-500/10 rounded-full blur-[120px]" />
+                <div className="absolute top-[-20%] left-[-10%] w-[70%] h-[70%] bg-blue-600/10 rounded-full blur-[160px] animate-pulse" />
+                <div className="absolute bottom-[-20%] right-[-10%] w-[70%] h-[70%] bg-primary/10 rounded-full blur-[160px]" />
             </div>
 
             <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8">
@@ -197,16 +197,16 @@ export default function BoardDetailPage() {
                 </div>
 
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-                    <TabsList className="bg-white/5 border border-white/10">
-                        <TabsTrigger value="videos" className="text-white">
+                    <TabsList className="glass border-white/10 p-1 rounded-2xl">
+                        <TabsTrigger value="videos" className="text-white rounded-xl data-[state=active]:glass">
                             <Video className="h-4 w-4" />
                             Videos ({board.item_count})
                         </TabsTrigger>
-                        <TabsTrigger value="insights" className="text-white">
+                        <TabsTrigger value="insights" className="text-white rounded-xl data-[state=active]:glass">
                             <Sparkles className="h-4 w-4" />
                             Insights
                             {newVideosCount > 0 ? (
-                                <Badge variant="secondary" className="ml-2 bg-white/10 text-white">
+                                <Badge variant="secondary" className="ml-2 glass border-white/10 text-white">
                                     {newVideosCount} new
                                 </Badge>
                             ) : null}
@@ -349,18 +349,18 @@ export default function BoardDetailPage() {
                                 </GlassCard>
                             ) : (
                                 <div className="grid gap-4 lg:grid-cols-2">
-                                    <Card className="bg-white/5 border-white/10">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0">
+                                    <Card className="glass border-white/10 overflow-hidden">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <Sparkles className="h-4 w-4 text-amber-300" />
                                                 Top Hooks
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="space-y-3">
+                                        <CardContent className="space-y-3 pt-4">
                                             {(insights?.insights?.top_hooks || []).map((hook, index) => (
                                                 <div
                                                     key={`${hook}-${index}`}
-                                                    className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-white"
+                                                    className="rounded-xl border border-white/10 glass bg-white/5 px-4 py-3 text-sm text-white shadow-inner"
                                                 >
                                                     "{hook}"
                                                 </div>
@@ -368,23 +368,23 @@ export default function BoardDetailPage() {
                                         </CardContent>
                                     </Card>
 
-                                    <Card className="bg-white/5 border-white/10">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0">
+                                    <Card className="glass border-white/10 overflow-hidden">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <Target className="h-4 w-4 text-emerald-300" />
                                                 Common Angles
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="space-y-3">
+                                        <CardContent className="space-y-3 pt-4">
                                             {(insights?.insights?.common_angles || []).map((angle, index) => (
                                                 <div key={`${angle.label}-${index}`} className="space-y-2">
                                                     <div className="flex items-center justify-between text-sm text-white">
                                                         <span>{angle.label}</span>
-                                                        <span className="text-muted-foreground">{angle.percentage}%</span>
+                                                        <span className="text-muted-foreground text-xs font-mono">{angle.percentage}%</span>
                                                     </div>
-                                                    <div className="h-2 rounded-full bg-white/10">
+                                                    <div className="h-1.5 rounded-full glass bg-white/5">
                                                         <div
-                                                            className="h-2 rounded-full bg-emerald-400/70"
+                                                            className="h-full rounded-full bg-emerald-400/70 shadow-[0_0_10px_rgba(52,211,153,0.3)]"
                                                             style={{ width: `${Math.min(Math.max(angle.percentage, 0), 100)}%` }}
                                                         />
                                                     </div>
@@ -393,71 +393,76 @@ export default function BoardDetailPage() {
                                         </CardContent>
                                     </Card>
 
-                                    <Card className="bg-white/5 border-white/10 lg:col-span-2">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0">
+                                    <Card className="glass border-white/10 overflow-hidden lg:col-span-2">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <FileText className="h-4 w-4 text-blue-300" />
                                                 Creative Brief
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="grid gap-4 lg:grid-cols-3 text-sm text-white/90">
-                                            <div className="space-y-1">
-                                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Target Audience</p>
-                                                <p>{insights?.insights?.creative_brief?.target_audience}</p>
+                                        <CardContent className="grid gap-6 lg:grid-cols-3 text-sm text-white/90 pt-4">
+                                            <div className="space-y-2">
+                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Target Audience</p>
+                                                <p className="leading-relaxed">{insights?.insights?.creative_brief?.target_audience}</p>
                                             </div>
-                                            <div className="space-y-1">
-                                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Key Message</p>
-                                                <p>{insights?.insights?.creative_brief?.key_message}</p>
+                                            <div className="space-y-2">
+                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Key Message</p>
+                                                <p className="leading-relaxed">{insights?.insights?.creative_brief?.key_message}</p>
                                             </div>
-                                            <div className="space-y-1">
-                                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Recommended Format</p>
-                                                <p>{insights?.insights?.creative_brief?.recommended_format}</p>
+                                            <div className="space-y-2">
+                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Recommended Format</p>
+                                                <p className="leading-relaxed">{insights?.insights?.creative_brief?.recommended_format}</p>
                                             </div>
                                         </CardContent>
                                     </Card>
 
-                                    <Card className="bg-white/5 border-white/10">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0">
+                                    <Card className="glass border-white/10 overflow-hidden">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <PenLine className="h-4 w-4 text-pink-300" />
                                                 Script Ideas
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="space-y-3">
+                                        <CardContent className="space-y-3 pt-4">
                                             {(insights?.insights?.script_ideas || []).map((idea, index) => (
                                                 <div
                                                     key={`${idea}-${index}`}
-                                                    className="rounded-lg border border-dashed border-white/10 bg-white/5 px-4 py-3 text-sm text-white"
+                                                    className="rounded-xl border border-dashed border-white/10 glass bg-white/5 px-4 py-3 text-sm text-white"
                                                 >
-                                                    {index + 1}. {idea}
+                                                    <span className="text-pink-300/50 font-mono mr-2">{String(index + 1).padStart(2, '0')}</span>
+                                                    {idea}
                                                 </div>
                                             ))}
                                         </CardContent>
                                     </Card>
 
-                                    <Card className="bg-white/5 border-white/10">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0">
+                                    <Card className="glass border-white/10 overflow-hidden">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <MessageCircle className="h-4 w-4 text-orange-300" />
                                                 Objections & CTAs
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="space-y-4 text-sm text-white/90">
-                                            <div className="space-y-2">
-                                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Common Objections</p>
-                                                {(insights?.insights?.objections || []).map((objection, index) => (
-                                                    <div key={`${objection}-${index}`} className="rounded-lg bg-white/5 px-3 py-2">
-                                                        {objection}
-                                                    </div>
-                                                ))}
+                                        <CardContent className="space-y-6 text-sm text-white/90 pt-4">
+                                            <div className="space-y-3">
+                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Common Objections</p>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {(insights?.insights?.objections || []).map((objection, index) => (
+                                                        <div key={`${objection}-${index}`} className="rounded-full glass border-white/10 px-3 py-1.5 text-xs">
+                                                            {objection}
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </div>
-                                            <div className="space-y-2">
-                                                <p className="text-xs uppercase tracking-wide text-muted-foreground">Effective CTAs</p>
-                                                {(insights?.insights?.ctas || []).map((cta, index) => (
-                                                    <div key={`${cta}-${index}`} className="rounded-lg bg-white/5 px-3 py-2">
-                                                        {cta}
-                                                    </div>
-                                                ))}
+                                            <div className="space-y-3">
+                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Effective CTAs</p>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {(insights?.insights?.ctas || []).map((cta, index) => (
+                                                        <div key={`${cta}-${index}`} className="rounded-full glass bg-white/5 border-orange-300/20 px-3 py-1.5 text-xs text-orange-100">
+                                                            {cta}
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </div>
                                         </CardContent>
                                     </Card>
@@ -478,10 +483,10 @@ export default function BoardDetailPage() {
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel className="bg-transparent border-white/10 hover:bg-white/5">
+                        <AlertDialogCancel disabled={isDeletingBoard} className="bg-transparent border-white/10 hover:bg-white/5">
                             Cancel
                         </AlertDialogCancel>
-                        <AlertDialogAction
+                        <Button
                             onClick={handleDeleteBoard}
                             className="bg-red-600 hover:bg-red-700"
                             disabled={isDeletingBoard}
@@ -489,8 +494,8 @@ export default function BoardDetailPage() {
                             {isDeletingBoard ? (
                                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
                             ) : null}
-                            Delete Board
-                        </AlertDialogAction>
+                            {isDeletingBoard ? "Deleting..." : "Delete Board"}
+                        </Button>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
@@ -505,10 +510,10 @@ export default function BoardDetailPage() {
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel className="bg-transparent border-white/10 hover:bg-white/5">
+                        <AlertDialogCancel disabled={isRemovingFromBoard} className="bg-transparent border-white/10 hover:bg-white/5">
                             Cancel
                         </AlertDialogCancel>
-                        <AlertDialogAction
+                        <Button
                             onClick={handleRemoveSelected}
                             className="bg-red-600 hover:bg-red-700"
                             disabled={isRemovingFromBoard}
@@ -516,8 +521,8 @@ export default function BoardDetailPage() {
                             {isRemovingFromBoard ? (
                                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
                             ) : null}
-                            Remove
-                        </AlertDialogAction>
+                            {isRemovingFromBoard ? "Removing..." : "Remove"}
+                        </Button>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
