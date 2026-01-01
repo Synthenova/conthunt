@@ -54,7 +54,7 @@ export default function HomePage() {
     };
 
     return (
-        <div className="min-h-screen bg-background relative flex items-center justify-center">
+        <div className="min-h-screen bg-background relative flex items-center justify-center animate-in fade-in duration-300">
             {isSubmitting && (
                 <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm">
                     <div className="flex flex-col items-center gap-3 text-center">
