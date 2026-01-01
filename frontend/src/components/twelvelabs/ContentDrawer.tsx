@@ -33,7 +33,8 @@ const ANALYSIS_NOT_READY_STATUSES = new Set([404, 409, 425]);
 const MEDIA_BASE_VH = 0.6;
 const MEDIA_MIN_HEIGHT_PX = 320;
 const MEDIA_MAX_HEIGHT_PX = 560;
-const MEDIA_SHRINK_RATE = 0.6;
+const MEDIA_COLLAPSE_THRESHOLD = 1;
+const MEDIA_COLLAPSE_RATIO = 0.5;
 
 interface ContentDrawerProps {
     isOpen: boolean;
@@ -58,6 +59,7 @@ export function ContentDrawer({
     const [isPlaying, setIsPlaying] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
     const [mediaHeight, setMediaHeight] = useState<number | null>(null);
+    const [isMediaCollapsed, setIsMediaCollapsed] = useState(false);
     const analysisNotReadyRetries = useRef(0);
     const videoRef = useRef<HTMLVideoElement>(null);
     const youtubeRef = useRef<HTMLIFrameElement>(null);
@@ -224,6 +226,7 @@ export function ContentDrawer({
             setAnalyzing(false);
             setPolling(false);
             setIsPlaying(true);
+            setIsMediaCollapsed(false);
             analysisNotReadyRetries.current = 0;
             lastSeekTimeRef.current = null;
         }
@@ -235,6 +238,13 @@ export function ContentDrawer({
         }
     }, [isOpen]);
 
+    const setHeightFromBase = useCallback((collapsed: boolean) => {
+        const baseHeight = baseMediaHeightRef.current;
+        if (!baseHeight) return;
+        const ratio = collapsed ? MEDIA_COLLAPSE_RATIO : 1;
+        setMediaHeight(Math.round(baseHeight * ratio));
+    }, []);
+
     useEffect(() => {
         if (!isOpen) return;
 
@@ -244,7 +254,7 @@ export function ContentDrawer({
                 Math.max(MEDIA_MIN_HEIGHT_PX, window.innerHeight * MEDIA_BASE_VH)
             );
             baseMediaHeightRef.current = baseHeight;
-            setMediaHeight(baseHeight);
+            setHeightFromBase(isMediaCollapsed);
         };
 
         updateBaseHeight();
@@ -253,7 +263,12 @@ export function ContentDrawer({
         return () => {
             window.removeEventListener("resize", updateBaseHeight);
         };
-    }, [isOpen]);
+    }, [isOpen, isMediaCollapsed, setHeightFromBase]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        setHeightFromBase(isMediaCollapsed);
+    }, [isOpen, isMediaCollapsed, setHeightFromBase]);
 
     const handleViewportScroll = useCallback(() => {
         if (scrollRafRef.current !== null) return;
@@ -261,22 +276,13 @@ export function ContentDrawer({
             scrollRafRef.current = null;
             const viewport = viewportRef.current;
             if (!viewport) return;
-            const baseHeight = baseMediaHeightRef.current;
-            if (!baseHeight) return;
-            const maxShrink = baseHeight - MEDIA_MIN_HEIGHT_PX;
-            const shrink = Math.min(viewport.scrollTop * MEDIA_SHRINK_RATE, maxShrink);
-            setMediaHeight(Math.round(baseHeight - shrink));
+            const shouldCollapse = viewport.scrollTop > MEDIA_COLLAPSE_THRESHOLD;
+            setIsMediaCollapsed(prev => (prev === shouldCollapse ? prev : shouldCollapse));
         });
     }, []);
 
-    useEffect(() => {
-        const viewport = viewportRef.current;
-        if (!viewport) return;
-
-        viewport.addEventListener("scroll", handleViewportScroll, { passive: true });
-        return () => {
-            viewport.removeEventListener("scroll", handleViewportScroll);
-        };
+    const handleViewportScrollEvent = useCallback(() => {
+        handleViewportScroll();
     }, [handleViewportScroll]);
 
     useEffect(() => {
@@ -350,7 +356,13 @@ export function ContentDrawer({
                 <div className="relative w-full bg-[#0A0A0A] px-5 pt-5 pb-4 shrink-0">
                     <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/[0.06] to-transparent pointer-events-none" />
                     <div
-                        className="relative mx-auto aspect-[9/16] rounded-2xl overflow-hidden bg-black shadow-[0_20px_50px_rgba(0,0,0,0.6)] ring-1 ring-white/10 group"
+                        className={cn(
+                            "relative mx-auto aspect-[9/16] rounded-2xl overflow-hidden bg-black ring-1 ring-white/10 group",
+                            "transition-[height,box-shadow] duration-300 ease-out",
+                            isMediaCollapsed
+                                ? "shadow-[0_12px_30px_rgba(0,0,0,0.45)]"
+                                : "shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
+                        )}
                         style={{ height: mediaHeight ? `${mediaHeight}px` : "60vh" }}
                     >
                         {!isPlaying ? (
@@ -420,7 +432,11 @@ export function ContentDrawer({
                     </div>
                 </div>
 
-                <ScrollArea className="flex-1 min-h-0 bg-[#0E0E0E]" viewportRef={viewportRef}>
+                <ScrollArea
+                    className="flex-1 min-h-0 bg-[#0E0E0E]"
+                    viewportRef={viewportRef}
+                    onViewportScroll={handleViewportScrollEvent}
+                >
                     <div className="px-5 pt-6 pb-8 space-y-6 border-t border-white/5 bg-gradient-to-b from-white/[0.03] to-transparent rounded-t-3xl">
                         {/* Title & Metadata */}
                         <div>

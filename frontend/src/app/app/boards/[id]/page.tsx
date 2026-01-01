@@ -349,14 +349,14 @@ export default function BoardDetailPage() {
                                 </GlassCard>
                             ) : (
                                 <div className="grid gap-4 lg:grid-cols-2">
-                                    <Card className="glass border-white/10 overflow-hidden">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
+                                    <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <Sparkles className="h-4 w-4 text-amber-300" />
                                                 Top Hooks
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="space-y-3 pt-4">
+                                        <CardContent className="space-y-3 pt-4 pb-6">
                                             {(insights?.insights?.top_hooks || []).map((hook, index) => (
                                                 <div
                                                     key={`${hook}-${index}`}
@@ -368,14 +368,14 @@ export default function BoardDetailPage() {
                                         </CardContent>
                                     </Card>
 
-                                    <Card className="glass border-white/10 overflow-hidden">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
+                                    <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <Target className="h-4 w-4 text-emerald-300" />
                                                 Common Angles
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="space-y-3 pt-4">
+                                        <CardContent className="space-y-3 pt-4 pb-6">
                                             {(insights?.insights?.common_angles || []).map((angle, index) => (
                                                 <div key={`${angle.label}-${index}`} className="space-y-2">
                                                     <div className="flex items-center justify-between text-sm text-white">
@@ -393,14 +393,14 @@ export default function BoardDetailPage() {
                                         </CardContent>
                                     </Card>
 
-                                    <Card className="glass border-white/10 overflow-hidden lg:col-span-2">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
+                                    <Card className="glass border-white/10 overflow-hidden lg:col-span-2 gap-0 py-0">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <FileText className="h-4 w-4 text-blue-300" />
                                                 Creative Brief
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="grid gap-6 lg:grid-cols-3 text-sm text-white/90 pt-4">
+                                        <CardContent className="grid gap-6 lg:grid-cols-3 text-sm text-white/90 pt-4 pb-6">
                                             <div className="space-y-2">
                                                 <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Target Audience</p>
                                                 <p className="leading-relaxed">{insights?.insights?.creative_brief?.target_audience}</p>
@@ -416,14 +416,14 @@ export default function BoardDetailPage() {
                                         </CardContent>
                                     </Card>
 
-                                    <Card className="glass border-white/10 overflow-hidden">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
+                                    <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <PenLine className="h-4 w-4 text-pink-300" />
                                                 Script Ideas
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="space-y-3 pt-4">
+                                        <CardContent className="space-y-3 pt-4 pb-6">
                                             {(insights?.insights?.script_ideas || []).map((idea, index) => (
                                                 <div
                                                     key={`${idea}-${index}`}
@@ -436,14 +436,14 @@ export default function BoardDetailPage() {
                                         </CardContent>
                                     </Card>
 
-                                    <Card className="glass border-white/10 overflow-hidden">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/5">
+                                    <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
+                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
                                             <CardTitle className="flex items-center gap-2 text-white">
                                                 <MessageCircle className="h-4 w-4 text-orange-300" />
                                                 Objections & CTAs
                                             </CardTitle>
                                         </CardHeader>
-                                        <CardContent className="space-y-6 text-sm text-white/90 pt-4">
+                                        <CardContent className="space-y-6 text-sm text-white/90 pt-4 pb-6">
                                             <div className="space-y-3">
                                                 <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Common Objections</p>
                                                 <div className="flex flex-wrap gap-2">
