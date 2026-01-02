@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { ChatSidebar } from "./ChatSidebar";
 import { ChatToggleButton } from "./ChatToggleButton";
 
-export function ChatSidebarGate() {
+export function ChatSidebarGate({ maxWidth }: { maxWidth?: number } = {}) {
     const pathname = usePathname();
     const hideChat = pathname === "/app" || pathname === "/app/";
 
@@ -12,7 +12,7 @@ export function ChatSidebarGate() {
 
     return (
         <>
-            <ChatSidebar />
+            <ChatSidebar maxWidth={maxWidth} />
             <ChatToggleButton />
         </>
     );

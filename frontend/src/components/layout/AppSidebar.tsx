@@ -122,13 +122,31 @@ import { PanelLeft, PanelLeftClose, Menu } from 'lucide-react';
 
 // ... (other imports remain, remove ChevronRight/Left if unused)
 
-export function AppSidebar() {
+export function AppSidebar({
+    collapsed,
+    forcedCollapsed = false,
+    overlay = false,
+    onCollapsedChange,
+}: {
+    collapsed?: boolean;
+    forcedCollapsed?: boolean;
+    overlay?: boolean;
+    onCollapsedChange?: (next: boolean) => void;
+} = {}) {
     const pathname = usePathname();
     const router = useRouter();
     const isDesktop = useMediaQuery("(min-width: 768px)");
 
     // Desktop: collapse state. Mobile: open state (overlay).
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    const [internalCollapsed, setInternalCollapsed] = useState(false);
+    const isCollapsed = collapsed ?? internalCollapsed;
+    const setCollapsed = (next: boolean) => {
+        if (onCollapsedChange) {
+            onCollapsedChange(next);
+            return;
+        }
+        setInternalCollapsed(next);
+    };
     const [isMobileOpen, setIsMobileOpen] = useState(false);
 
     const [activeTab, setActiveTab] = useState<'boards' | 'chats' | 'searches'>('chats');
@@ -420,7 +438,8 @@ export function AppSidebar() {
     // Desktop View
     return (
         <aside className={cn(
-            "relative z-40 h-full bg-background border-r border-white/5 flex flex-col transition-all duration-300 ease-in-out font-main",
+            "bg-background border-r border-white/5 flex flex-col transition-all duration-300 ease-in-out font-main",
+            overlay ? "fixed inset-y-0 left-0 z-50 shadow-2xl" : "relative z-40 h-full",
             isCollapsed ? "w-20" : "w-[280px]"
         )}>
             {/* Header with Integrated Toggle */}
@@ -436,7 +455,7 @@ export function AppSidebar() {
                             </span>
                         </div>
                         <button
-                            onClick={() => setIsCollapsed(true)}
+                            onClick={() => setCollapsed(true)}
                             className="text-gray-500 hover:text-white transition-colors"
                         >
                             <PanelLeftClose size={20} />
@@ -444,7 +463,9 @@ export function AppSidebar() {
                     </>
                 ) : (
                     <button
-                        onClick={() => setIsCollapsed(false)}
+                        onClick={() => {
+                            setCollapsed(false);
+                        }}
                         className="w-10 h-10 rounded-xl bg-surface border border-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:scale-105 transition-all shadow-sm"
                     >
                         <PanelLeft size={20} />

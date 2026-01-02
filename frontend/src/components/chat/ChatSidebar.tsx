@@ -10,7 +10,7 @@ import { usePathname } from 'next/navigation';
 import { useMemo, useEffect, useRef, useState } from 'react';
 import { useChatList } from '@/hooks/useChat';
 
-export function ChatSidebar() {
+export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
     const { isOpen, activeChatId, setActiveChatId } = useChatStore();
     const pathname = usePathname();
     const [sidebarWidth, setSidebarWidth] = useState(420);
@@ -79,7 +79,9 @@ export function ChatSidebar() {
             if (!isResizing.current) return;
             const delta = resizeStartX.current - event.clientX;
             const nextWidth = resizeStartWidth.current + delta;
-            const clamped = Math.min(640, Math.max(320, nextWidth));
+            const max = typeof maxWidth === "number" ? maxWidth : 640;
+            const min = Math.min(320, max);
+            const clamped = Math.min(max, Math.max(min, nextWidth));
             setSidebarWidth(clamped);
         };
 
@@ -97,6 +99,13 @@ export function ChatSidebar() {
             window.removeEventListener('mouseup', handleMouseUp);
         };
     }, []);
+
+    useEffect(() => {
+        if (typeof maxWidth !== "number") return;
+        if (sidebarWidth > maxWidth) {
+            setSidebarWidth(maxWidth);
+        }
+    }, [maxWidth, sidebarWidth]);
 
     return (
         <>
@@ -121,7 +130,7 @@ export function ChatSidebar() {
                         ? "translate-x-0 lg:w-[var(--sidebar-width)] lg:min-w-[var(--sidebar-width)]"
                         : "translate-x-full lg:w-0 lg:min-w-0 lg:overflow-hidden"
                 )}
-                style={{ ['--sidebar-width' as any]: `${sidebarWidth}px` }}
+                style={{ ['--sidebar-width' as any]: `${Math.max(0, Math.min(sidebarWidth, maxWidth ?? sidebarWidth))}px` }}
             >
                 <div
                     className="absolute left-0 top-0 hidden h-full w-3 cursor-col-resize lg:block z-10 bg-white/5 hover:bg-white/10 transition-colors"
