@@ -140,7 +140,7 @@ export default function BoardsPage() {
 
             {/* Grid */}
             {isLoadingBoards ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     <BoardCardSkeleton />
                     <BoardCardSkeleton />
                     <BoardCardSkeleton />
@@ -149,7 +149,7 @@ export default function BoardsPage() {
                     <BoardCardSkeleton />
                 </div>
             ) : (
-                <StaggerContainer className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-12">
+                <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-12">
                     <AnimatePresence mode="popLayout">
                         {filteredBoards.map((board) => {
                             const previewUrls = (board.preview_urls || []).filter(Boolean);

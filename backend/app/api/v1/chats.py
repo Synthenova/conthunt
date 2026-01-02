@@ -311,8 +311,12 @@ async def send_message(
             raise HTTPException(status_code=404, detail="Chat not found")
         
     # Trigger Background Task
+    user_message: dict = {"role": "user", "content": request.message}
+    if request.client_id:
+        user_message["additional_kwargs"] = {"client_id": request.client_id}
+
     inputs = {
-        "messages": [{"role": "user", "content": request.message}],
+        "messages": [user_message],
     }
     
     # Runtime context (not persisted) - includes auth token for tools

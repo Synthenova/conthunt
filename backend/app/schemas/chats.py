@@ -38,6 +38,7 @@ class CreateChatRequest(BaseModel):
 
 class SendMessageRequest(BaseModel):
     message: str
+    client_id: Optional[str] = None
 
 class Message(BaseModel):
     id: Optional[str] = None

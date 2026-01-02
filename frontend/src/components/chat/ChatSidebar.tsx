@@ -7,12 +7,16 @@ import { ChatMessageList } from './ChatMessageList';
 import { ChatInput } from './ChatInput';
 import { cn } from '@/lib/utils';
 import { usePathname } from 'next/navigation';
-import { useMemo, useEffect, useRef } from 'react';
+import { useMemo, useEffect, useRef, useState } from 'react';
 import { useChatList } from '@/hooks/useChat';
 
 export function ChatSidebar() {
     const { isOpen, activeChatId, setActiveChatId } = useChatStore();
     const pathname = usePathname();
+    const [sidebarWidth, setSidebarWidth] = useState(420);
+    const isResizing = useRef(false);
+    const resizeStartX = useRef(0);
+    const resizeStartWidth = useRef(420);
 
     const chatIdFromPath = useMemo(() => {
         if (!pathname) return null;
@@ -70,6 +74,30 @@ export function ChatSidebar() {
         }
     }, [chatIdFromPath, context, chats, isLoading, activeChatId, setActiveChatId]);
 
+    useEffect(() => {
+        const handleMouseMove = (event: MouseEvent) => {
+            if (!isResizing.current) return;
+            const delta = resizeStartX.current - event.clientX;
+            const nextWidth = resizeStartWidth.current + delta;
+            const clamped = Math.min(640, Math.max(320, nextWidth));
+            setSidebarWidth(clamped);
+        };
+
+        const handleMouseUp = () => {
+            if (!isResizing.current) return;
+            isResizing.current = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, []);
+
     return (
         <>
             {/* Mobile overlay backdrop */}
@@ -88,14 +116,28 @@ export function ChatSidebar() {
                     // Mobile: fixed overlay with full viewport height
                     "fixed inset-y-0 right-0 z-50 w-[90%] max-w-[420px] h-screen",
                     // Desktop: part of flex layout, constrained to viewport
-                    "lg:relative lg:z-0 lg:h-full",
+                    "lg:relative lg:z-0 lg:h-full lg:max-w-none",
                     isOpen
-                        ? "translate-x-0 lg:w-[420px] lg:min-w-[420px]"
+                        ? "translate-x-0 lg:w-[var(--sidebar-width)] lg:min-w-[var(--sidebar-width)]"
                         : "translate-x-full lg:w-0 lg:min-w-0 lg:overflow-hidden"
                 )}
+                style={{ ['--sidebar-width' as any]: `${sidebarWidth}px` }}
             >
+                <div
+                    className="absolute left-0 top-0 hidden h-full w-3 cursor-col-resize lg:block z-10 bg-white/5 hover:bg-white/10 transition-colors"
+                    onMouseDown={(event) => {
+                        isResizing.current = true;
+                        resizeStartX.current = event.clientX;
+                        resizeStartWidth.current = sidebarWidth;
+                        document.body.style.cursor = 'col-resize';
+                        document.body.style.userSelect = 'none';
+                    }}
+                />
+                <div className="absolute left-0 top-0 hidden h-full w-3 lg:block pointer-events-none">
+                    <div className="h-full w-px bg-white/20" />
+                </div>
                 <div className={cn(
-                    "flex flex-col h-full w-[420px] max-w-full",
+                    "flex flex-col h-full w-full max-w-full",
                     !isOpen && "lg:invisible"
                 )}>
                         <ChatHeader />

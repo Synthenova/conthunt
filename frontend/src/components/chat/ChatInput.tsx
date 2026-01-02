@@ -378,7 +378,7 @@ export function ChatInput({ context }: ChatInputProps) {
     const searchResults = searchOptions.slice(0, 5);
 
     return (
-        <div className="relative px-4 pb-4 pt-2 border-t border-white/10">
+        <div className="relative px-4 pb-4 pt-2">
             {mentionQuery !== null && (
                 <div className="absolute bottom-full left-4 right-4 mb-2 rounded-xl border border-white/10 bg-background/95 backdrop-blur-xl shadow-lg z-20">
                     <div className="p-3 space-y-3">

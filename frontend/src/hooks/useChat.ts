@@ -135,7 +135,16 @@ export function useChatMessages(chatId: string | null) {
 
             // Preserve optimistic messages that haven't been saved yet
             const currentMsgs = useChatStore.getState().messages;
-            const tempMsgs = currentMsgs.filter(m => m.id.startsWith('temp-'));
+            const fetchedClientIds = new Set(
+                messages
+                    .filter((m) => m.type === 'human' && m.additional_kwargs?.client_id)
+                    .map((m) => m.additional_kwargs!.client_id as string)
+            );
+            const tempMsgs = currentMsgs.filter((m) => {
+                if (!m.id.startsWith('temp-')) return false;
+                const clientId = m.additional_kwargs?.client_id;
+                return !clientId || !fetchedClientIds.has(clientId);
+            });
 
             // If we have temp messages, ensure we don't duplicate if they are already in fetched
             // (Simple duplication check based on content/timestamp could be added if needed, 
@@ -152,7 +161,16 @@ export function useChatMessages(chatId: string | null) {
     useEffect(() => {
         if (!chatId || activeChatId !== chatId || !query.data?.messages) return;
         const currentMsgs = useChatStore.getState().messages;
-        const tempMsgs = currentMsgs.filter(m => m.id.startsWith('temp-'));
+        const fetchedClientIds = new Set(
+            query.data.messages
+                .filter((m) => m.type === 'human' && m.additional_kwargs?.client_id)
+                .map((m) => m.additional_kwargs!.client_id as string)
+        );
+        const tempMsgs = currentMsgs.filter((m) => {
+            if (!m.id.startsWith('temp-')) return false;
+            const clientId = m.additional_kwargs?.client_id;
+            return !clientId || !fetchedClientIds.has(clientId);
+        });
         const merged = [...query.data.messages, ...tempMsgs];
         setMessages(merged);
     }, [activeChatId, chatId, query.dataUpdatedAt, query.data?.messages, setMessages]);
@@ -192,12 +210,16 @@ export function useSendMessage() {
         const token = await getAuthToken();
         const controller = abortController || new AbortController();
 
-        // Optimistically add user message
+        // Optimistically add user message with a client id for reconciliation
+        const clientId = typeof crypto?.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `client-${Date.now()}`;
         const tempUserMsgId = `temp-${Date.now()}`;
         addMessage({
             id: tempUserMsgId,
             type: 'human',
             content: message,
+            additional_kwargs: { client_id: clientId },
         });
 
         startStreaming();
@@ -210,7 +232,7 @@ export function useSendMessage() {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ message }),
+                body: JSON.stringify({ message, client_id: clientId }),
                 signal: controller.signal,
             });
 
