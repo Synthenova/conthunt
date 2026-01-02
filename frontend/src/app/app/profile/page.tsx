@@ -40,8 +40,8 @@ export default function ProfilePage() {
     };
 
     const roleGradients: Record<string, string> = {
-        free: "from-slate-400 to-slate-600",
-        creator: "from-blue-400 to-indigo-600",
+        free: "from-zinc-400 to-zinc-600",
+        creator: "from-primary to-zinc-400",
         pro_research: "from-amber-400 to-orange-600"
     };
 
@@ -53,7 +53,7 @@ export default function ProfilePage() {
                     <div className="relative group">
                         <div className={cn(
                             "absolute inset-0 blur-3xl opacity-20 group-hover:opacity-40 transition-opacity rounded-full bg-gradient-to-br",
-                            profile?.role ? roleGradients[profile.role] : "from-primary to-purple-600"
+                            profile?.role ? roleGradients[profile.role] : "from-primary to-zinc-600"
                         )} />
                         <div className="w-24 h-24 md:w-32 md:h-32 rounded-3xl bg-white/5 border border-white/10 flex items-center justify-center text-4xl font-bold relative overflow-hidden">
                             {user?.photoURL ? (
@@ -125,7 +125,7 @@ export default function ProfilePage() {
 
                                     <div className="relative h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
                                         <div
-                                            className="absolute inset-y-0 left-0 bg-primary shadow-[0_0_10px_rgba(59,130,246,0.5)] transition-all duration-1000 ease-out"
+                                            className="absolute inset-y-0 left-0 bg-primary shadow-[0_0_10px_rgba(206,206,206,0.5)] transition-all duration-1000 ease-out"
                                             style={{ width: `${Math.min((item.used / item.limit) * 100, 100)}%` }}
                                         />
                                     </div>

@@ -13,6 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { motion } from "framer-motion";
+import { cn } from "@/lib/utils";
 import { FolderOpen, Search, Loader2 } from "lucide-react";
 import { FlatMediaItem, transformToMediaItem } from "@/lib/transformers";
 
@@ -417,21 +419,31 @@ export default function ChatPage() {
                                 </div>
 
                                 {/* Keyword Filters - Single Select */}
-                                <div className="flex flex-wrap gap-2">
+                                {/* Keyword Filters - Glass Box Tabs */}
+                                <div className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-9 items-center w-fit max-w-full overflow-x-auto no-scrollbar">
                                     {displaySearches.map((search) => (
-                                        <Badge
+                                        <button
                                             key={search.id}
-                                            variant={activeSearchId === search.id ? "secondary" : "outline"}
-                                            className={`cursor-pointer hover:bg-white/10 ${activeSearchId === search.id ? "" : "border-white/10 text-white"}`}
                                             onClick={() => setActiveSearchId(search.id)}
+                                            className={cn(
+                                                "relative px-4 h-full flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0",
+                                                activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
+                                            )}
                                         >
-                                            <span className="inline-flex items-center gap-2">
+                                            {activeSearchId === search.id && (
+                                                <motion.div
+                                                    layoutId="search-keyword-pill"
+                                                    className="absolute inset-0 rounded-lg glass-pill"
+                                                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                                                />
+                                            )}
+                                            <span className="relative z-10 mix-blend-normal flex items-center gap-2">
                                                 {search.label}
                                                 {streamingSearchIds[search.id] && (
                                                     <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
                                                 )}
                                             </span>
-                                        </Badge>
+                                        </button>
                                     ))}
                                 </div>
 

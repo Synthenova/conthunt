@@ -14,8 +14,18 @@ export function GlassPanel({
     intensity = "medium",
     ...props
 }: GlassPanelProps) {
+    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!hoverEffect) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        e.currentTarget.style.setProperty("--mouse-x", `${x}px`);
+        e.currentTarget.style.setProperty("--mouse-y", `${y}px`);
+    };
+
     return (
         <div
+            onMouseMove={handleMouseMove}
             className={cn(
                 "rounded-xl border border-white/10 transition-all duration-300",
                 "glass", // Always apply base glass effect
@@ -32,7 +42,7 @@ export function GlassPanel({
                 intensity === "high" && "bg-white/10",
 
                 // Hover effects
-                hoverEffect && "hover:bg-white/10 hover:border-white/20 hover:shadow-2xl hover:shadow-primary/10 hover:-translate-y-0.5",
+                hoverEffect && "hover:bg-white/10 hover:border-white/20 hover:shadow-2xl hover:shadow-primary/10 hover:-translate-y-0.5 light-torch",
                 className
             )}
             {...props}

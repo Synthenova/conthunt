@@ -19,10 +19,10 @@ import { useState } from "react"
 export type ToolPart = {
   type: string
   state:
-    | "input-streaming"
-    | "input-available"
-    | "output-available"
-    | "output-error"
+  | "input-streaming"
+  | "input-available"
+  | "output-available"
+  | "output-error"
   input?: Record<string, unknown>
   output?: Record<string, unknown>
   toolCallId?: string
@@ -43,7 +43,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
   const getStateIcon = () => {
     switch (state) {
       case "input-streaming":
-        return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+        return <Loader2 className="h-4 w-4 animate-spin text-primary" />
       case "input-available":
         return <Settings className="h-4 w-4 text-orange-500" />
       case "output-available":
@@ -63,7 +63,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+              "bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary"
             )}
           >
             Processing
@@ -201,7 +201,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
             )}
 
             {toolCallId && (
-              <div className="text-muted-foreground border-t border-blue-200 pt-2 text-xs">
+              <div className="text-muted-foreground border-t border-border pt-2 text-xs">
                 <span className="font-mono">Call ID: {toolCallId}</span>
               </div>
             )}

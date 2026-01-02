@@ -196,7 +196,7 @@ export default function BoardsPage() {
                                                 </div>
                                             ) : (
                                                 <div className="w-full h-full flex items-center justify-center relative">
-                                                    <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-blue-600/5" />
+                                                    <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-primary/5" />
                                                     <div className="relative z-10 flex flex-col items-center gap-2">
                                                         <div className="w-12 h-12 rounded-full border border-white/10 flex items-center justify-center bg-white/5 shadow-inner group-hover:scale-110 transition-transform duration-500">
                                                             <Film className="text-gray-500 group-hover:text-primary transition-colors" size={20} />

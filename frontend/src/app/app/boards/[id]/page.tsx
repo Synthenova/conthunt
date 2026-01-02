@@ -9,8 +9,9 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { motion } from "framer-motion";
+import { cn } from "@/lib/utils";
 import { ClientFilteredResults } from "@/components/search/ClientFilteredResults";
 import { SelectionBar } from "@/components/boards/SelectionBar";
 import {
@@ -165,7 +166,7 @@ export default function BoardDetailPage() {
         <div className="min-h-screen bg-background relative">
             {/* Deep Space Background Gradients */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
-                <div className="absolute top-[-20%] left-[-10%] w-[70%] h-[70%] bg-blue-600/10 rounded-full blur-[160px] animate-pulse" />
+                <div className="absolute top-[-20%] left-[-10%] w-[70%] h-[70%] bg-primary/10 rounded-full blur-[160px] animate-pulse" />
                 <div className="absolute bottom-[-20%] right-[-10%] w-[70%] h-[70%] bg-primary/10 rounded-full blur-[160px]" />
             </div>
 
@@ -196,59 +197,78 @@ export default function BoardDetailPage() {
                     </div>
                 </div>
 
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-                    <TabsList className="glass border-white/10 p-1 rounded-2xl">
-                        <TabsTrigger value="videos" className="text-white rounded-xl data-[state=active]:glass">
-                            <Video className="h-4 w-4" />
-                            Videos ({board.item_count})
-                        </TabsTrigger>
-                        <TabsTrigger value="insights" className="text-white rounded-xl data-[state=active]:glass">
-                            <Sparkles className="h-4 w-4" />
-                            Insights
-                            {newVideosCount > 0 ? (
-                                <Badge variant="secondary" className="ml-2 glass border-white/10 text-white">
-                                    {newVideosCount} new
-                                </Badge>
-                            ) : null}
-                        </TabsTrigger>
-                    </TabsList>
+                {/* Custom Glass Pill Tabs */}
+                <div className="space-y-6">
+                    <div className="flex p-1 bg-white/5 glass-nav rounded-full relative h-9 items-center max-w-[280px]">
+                        {(['videos', 'insights'] as const).map((tab) => (
+                            <button
+                                key={tab}
+                                onClick={() => setActiveTab(tab)}
+                                className={cn(
+                                    "flex-1 h-full flex items-center justify-center text-xs font-bold uppercase tracking-wider rounded-full transition-all relative z-10",
+                                    activeTab === tab ? "text-white" : "text-gray-500 hover:text-gray-300"
+                                )}
+                            >
+                                {activeTab === tab && (
+                                    <motion.div
+                                        layoutId="board-tab-pill"
+                                        className="absolute inset-0 rounded-full glass-pill"
+                                        style={{ borderRadius: 9999 }}
+                                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                                    />
+                                )}
+                                <span className="relative z-10 mix-blend-normal flex items-center gap-2">
+                                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                                    {tab === 'videos' && newVideosCount > 0 && (
+                                        <Badge variant="secondary" className="bg-white/10 text-white text-[10px] px-1 py-0 h-3.5 min-w-3.5 flex items-center justify-center">
+                                            {newVideosCount}
+                                        </Badge>
+                                    )}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
 
-                    <TabsContent value="videos">
-                        {isItemsLoading ? (
-                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                                {[...Array(8)].map((_, i) => (
-                                    <div key={i} className="aspect-[9/16] rounded-xl overflow-hidden">
-                                        <Skeleton className="h-full w-full" />
-                                    </div>
-                                ))}
-                            </div>
-                        ) : transformedItems.length === 0 ? (
-                            <GlassCard className="p-12 text-center flex flex-col items-center gap-4">
-                                <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
-                                    <FolderOpen className="h-8 w-8 text-muted-foreground" />
+                    {/* Videos Content */}
+                    {activeTab === 'videos' && (
+                        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            {isItemsLoading ? (
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                                    {[...Array(8)].map((_, i) => (
+                                        <div key={i} className="aspect-[9/16] rounded-xl overflow-hidden">
+                                            <Skeleton className="h-full w-full" />
+                                        </div>
+                                    ))}
                                 </div>
-                                <h3 className="text-xl font-medium">This board is empty</h3>
-                                <p className="text-muted-foreground">
-                                    Go to Search and add content to this board
-                                </p>
-                                <Button asChild className="mt-4">
-                                    <Link href="/app">
-                                        <Plus className="h-4 w-4 mr-2" />
-                                        Go to Search
-                                    </Link>
-                                </Button>
-                            </GlassCard>
-                        ) : (
-                            <ClientFilteredResults
-                                results={transformedItems}
-                                loading={false}
-                                resultsAreFlat
-                            />
-                        )}
-                    </TabsContent>
+                            ) : transformedItems.length === 0 ? (
+                                <GlassCard className="p-12 text-center flex flex-col items-center gap-4">
+                                    <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
+                                        <FolderOpen className="h-8 w-8 text-muted-foreground" />
+                                    </div>
+                                    <h3 className="text-xl font-medium">This board is empty</h3>
+                                    <p className="text-muted-foreground">
+                                        Go to Search and add content to this board
+                                    </p>
+                                    <Button asChild className="mt-4">
+                                        <Link href="/app">
+                                            <Plus className="h-4 w-4 mr-2" />
+                                            Go to Search
+                                        </Link>
+                                    </Button>
+                                </GlassCard>
+                            ) : (
+                                <ClientFilteredResults
+                                    results={transformedItems}
+                                    loading={false}
+                                    resultsAreFlat
+                                />
+                            )}
+                        </div>
+                    )}
 
-                    <TabsContent value="insights">
-                        <div className="space-y-6">
+                    {/* Insights Content */}
+                    {activeTab === 'insights' && (
+                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                                 <div className="space-y-1">
                                     <div className="flex items-center gap-2">
@@ -264,11 +284,6 @@ export default function BoardDetailPage() {
                                     </p>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
-                                    {newVideosCount > 0 ? (
-                                        <Badge variant="secondary" className="bg-white/10 text-white">
-                                            {newVideosCount} new videos
-                                        </Badge>
-                                    ) : null}
                                     {isProcessingInsights ? (
                                         <Badge variant="outline" className="border-white/10 text-muted-foreground">
                                             Updating...
@@ -396,7 +411,7 @@ export default function BoardDetailPage() {
                                     <Card className="glass border-white/10 overflow-hidden lg:col-span-2 gap-0 py-0">
                                         <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
                                             <CardTitle className="flex items-center gap-2 text-white">
-                                                <FileText className="h-4 w-4 text-blue-300" />
+                                                <FileText className="h-4 w-4 text-zinc-300" />
                                                 Creative Brief
                                             </CardTitle>
                                         </CardHeader>
@@ -469,8 +484,8 @@ export default function BoardDetailPage() {
                                 </div>
                             )}
                         </div>
-                    </TabsContent>
-                </Tabs>
+                    )}
+                </div>
             </div>
 
             {/* Delete Board Confirmation Dialog */}
@@ -534,7 +549,6 @@ export default function BoardDetailPage() {
                 removeDisabled={isRemovingFromBoard || selectedCount === 0}
                 disabledBoardIds={[boardId]}
             />
-
-        </div>
+        </div >
     );
 }

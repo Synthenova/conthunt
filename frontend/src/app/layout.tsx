@@ -1,15 +1,21 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Plus_Jakarta_Sans, Space_Grotesk, DM_Sans } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
+import { GridTorch } from "@/components/ui/grid-torch";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const plusJakartaSans = Plus_Jakarta_Sans({
+  variable: "--font-main",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-card",
+  subsets: ["latin"],
+});
+
+const dmSans = DM_Sans({
+  variable: "--font-nav",
   subsets: ["latin"],
 });
 
@@ -26,8 +32,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${plusJakartaSans.variable} ${spaceGrotesk.variable} ${dmSans.variable} antialiased bg-background text-foreground`}
       >
+        <GridTorch />
         <Providers>
           {children}
         </Providers>
