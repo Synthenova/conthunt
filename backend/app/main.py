@@ -64,6 +64,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://conthunt-frontend-976912795426.us-central1.run.app",
+        "https://conthunt-lp-976912795426.us-central1.run.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],

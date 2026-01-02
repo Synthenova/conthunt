@@ -21,8 +21,10 @@ click==8.3.1
 cloudpickle==3.1.2
 cryptography==44.0.3
 distro==1.9.0
+dnspython==2.8.0
 docstring_parser==0.17.0
 dodopayments==1.66.2
+email-validator==2.3.0
 fastapi==0.124.4
 filetype==1.2.0
 firebase_admin==7.1.0
@@ -96,6 +98,7 @@ proto-plus==1.26.1
 protobuf==6.33.2
 psycopg==3.3.2
 psycopg-binary==3.3.2
+psycopg-pool==3.3.0
 pyarrow==22.0.0
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
