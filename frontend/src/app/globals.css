@@ -20,6 +20,8 @@
 :root {
     /* Brand Colors - Premium Monochrome */
     --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 0%;
+    /* Black text on white primary */
     /* White */
     --accent: 0 0% 80.8%;
     /* #CECECE - Premium Silver */
@@ -175,7 +177,7 @@
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-radius: 69px;
-    /* Ensure pseudo-element positions correctly */
+    /* Fixed positioning removed as per user request to fix context issues */
 }
 
 /* Gradient Border Pseudo-element */
@@ -198,7 +200,9 @@
 }
 
 /* Refined Glass Button Style */
-.glass-button {
+.glass-button,
+.glass-button-red,
+.glass-button-white {
     background: linear-gradient(136.19deg, rgba(3, 3, 3, 0.45) 47.93%, rgba(26, 26, 26, 0.3) 100%);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
@@ -214,7 +218,9 @@
     cursor: pointer;
 }
 
-.glass-button::before {
+.glass-button::before,
+.glass-button-red::before,
+.glass-button-white::before {
     content: "";
     position: absolute;
     inset: 0;
@@ -231,6 +237,40 @@
 .glass-button:hover {
     background: linear-gradient(136.19deg, rgba(10, 10, 10, 0.6) 47.93%, rgba(40, 40, 40, 0.4) 100%);
     box-shadow: 0 0 40px rgba(255, 255, 255, 0.05);
+}
+
+/* Glass Button - Red Variant (Delete) */
+.glass-button-red {
+    background: linear-gradient(136.19deg, rgba(69, 10, 10, 0.6) 47.93%, rgba(127, 29, 29, 0.4) 100%);
+    color: #fca5a5;
+    border: 1px solid rgba(248, 113, 113, 0.2);
+}
+
+.glass-button-red::before {
+    background: linear-gradient(170deg, rgba(239, 68, 68, 0.5) 0%, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0) 60%, rgba(239, 68, 68, 0.5) 100%);
+}
+
+.glass-button-red:hover {
+    background: linear-gradient(136.19deg, rgba(127, 29, 29, 0.8) 47.93%, rgba(153, 27, 27, 0.6) 100%);
+    box-shadow: 0 0 40px rgba(220, 38, 38, 0.15);
+    color: white;
+}
+
+/* Glass Button - White Variant (Primary Action) */
+.glass-button-white {
+    background: linear-gradient(136.19deg, rgba(255, 255, 255, 0.9) 47.93%, rgba(255, 255, 255, 0.7) 100%);
+    color: black;
+    font-weight: 600;
+}
+
+.glass-button-white::before {
+    background: linear-gradient(170deg, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0) 40%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 1) 100%);
+}
+
+.glass-button-white:hover {
+    background: linear-gradient(136.19deg, rgba(255, 255, 255, 1) 47.93%, rgba(240, 240, 240, 0.9) 100%);
+    box-shadow: 0 0 40px rgba(255, 255, 255, 0.3);
+    color: black;
 }
 
 /* Dark Zone - Central column that blocks grid torch under content */

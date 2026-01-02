@@ -13,18 +13,20 @@ import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search } from 'lucid
 
 type MessageSegment = { type: 'text' | 'chip'; value: string };
 
+import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
+
 const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
 const CONTEXT_FENCE_RE = /```context[\s\S]*?```/g;
 const PLATFORM_PREFIX_RE = /^([a-z0-9_]+)::\s*(.+)$/i;
 const CHIP_LABEL_LIMIT = 10;
 
-function getPlatformIconClass(platform: string): string {
+function getPlatformIcon(platform: string) {
     const normalized = platform.toLowerCase();
-    if (normalized.includes('tiktok')) return 'bi-tiktok';
-    if (normalized.includes('instagram')) return 'bi-instagram';
-    if (normalized.includes('youtube')) return 'bi-youtube';
-    if (normalized.includes('pinterest')) return 'bi-pinterest';
-    return 'bi-globe';
+    if (normalized.includes('tiktok')) return FaTiktok;
+    if (normalized.includes('instagram')) return FaInstagram;
+    if (normalized.includes('youtube')) return FaYoutube;
+    if (normalized.includes('pinterest')) return FaPinterest;
+    return FaGlobe;
 }
 
 function parseChipLabel(label: string) {
@@ -36,7 +38,7 @@ function parseChipLabel(label: string) {
                 const platform = parsed.platform || "";
                 return {
                     text,
-                    iconClass: platform ? getPlatformIconClass(platform) : undefined,
+                    Icon: platform ? getPlatformIcon(platform) : undefined,
                 };
             }
             if (parsed?.type === "board") {
@@ -57,7 +59,7 @@ function parseChipLabel(label: string) {
 
     const platform = match[1];
     const text = match[2];
-    return { text, iconClass: getPlatformIconClass(platform) };
+    return { text, Icon: getPlatformIcon(platform) };
 }
 
 function truncateLabel(value: string) {
@@ -179,8 +181,8 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                                     {chipMeta.icon === "search" && (
                                                         <Search className="h-3.5 w-3.5 text-muted-foreground" />
                                                     )}
-                                                    {chipMeta.iconClass && (
-                                                        <i className={`bi ${chipMeta.iconClass} text-[12px]`} aria-hidden="true" />
+                                                    {chipMeta.Icon && (
+                                                        <chipMeta.Icon className="text-[12px]" />
                                                     )}
                                                     <span className="truncate" title={chipMeta.text}>
                                                         {truncateLabel(chipMeta.text)}

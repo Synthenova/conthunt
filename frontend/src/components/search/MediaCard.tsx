@@ -1,12 +1,13 @@
 import { AsyncImage } from "@/components/ui/async-image";
 import { GlassCard } from "@/components/ui/glass-card";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
-import { Play, Heart, MessageCircle, Share2, Volume2, VolumeX } from "lucide-react";
+import { Play, Heart, MessageCircle, Share2, Volume2, VolumeX, ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useSearchStore } from "@/lib/store";
+import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 
 interface MediaCardProps {
     item: any;
@@ -37,7 +38,6 @@ export function MediaCard({
     const videoUrl = item.video_url || item.media_url;
     const link = item.url || item.link || item.web_url;
     const platformLabel = formatPlatformLabel(platform);
-    const platformIconClass = getPlatformIconClass(platform);
 
     // Stats
     const views = item.view_count || item.play_count || 0;
@@ -114,6 +114,8 @@ export function MediaCard({
         };
     }, [isPlaying, isYouTube, onHoverTimeChange]);
 
+    const PlatformIcon = getPlatformIcon(platform);
+
     return (
         <GlassCard
             className="group relative overflow-hidden h-full flex flex-col border-0 bg-surface/40 backdrop-blur-md shadow-2xl shadow-black/20"
@@ -167,18 +169,11 @@ export function MediaCard({
                     )}
 
                     {/* Gradient Overlay (Bottom) */}
-                    {/* Hides on play for clean view */}
-                    {/* Gradient Overlay (Bottom) */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
-
-                    {/* Checkbox / Selection Placeholder (Always Visible) */}
-                    {/* Assuming the parent handles the actual checkbox rendering via absolute positioning on top of this card, 
-                        but if we need to reserve space or handle it here, we leave top-left clear. 
-                        For now, just the Platform Badge which hides on hover. */}
 
                     {/* Platform Badge */}
                     {showBadge && (
-                        <div className="absolute top-2 left-2">
+                        <div className="absolute top-2 left-2 z-20">
                             {link ? (
                                 <a
                                     href={link}
@@ -187,14 +182,14 @@ export function MediaCard({
                                     aria-label={`${platformLabel} link`}
                                     title={platformLabel}
                                 >
-                                    <Badge className="relative glass border-white/20 hover:bg-glass-hover uppercase text-[10px] flex items-center gap-1 pr-2 transition-[padding] duration-200 group-hover:pr-5 text-white">
-                                        <i className={cn("bi", platformIconClass, "text-[14px]")} aria-hidden="true" />
-                                        <i className="bi bi-box-arrow-up-right text-[13px] opacity-0 transition-opacity duration-200 absolute right-1 group-hover:opacity-100" aria-hidden="true" />
+                                    <Badge className="bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black text-white uppercase text-[10px] flex items-center gap-1.5 px-2 py-1 transition-all duration-300 group-hover/badge:pr-2 shadow-lg">
+                                        <PlatformIcon className="text-[14px]" />
+                                        <ExternalLink className="w-3 h-3 opacity-0 w-0 group-hover:opacity-100 group-hover:w-3 transition-all duration-300" />
                                     </Badge>
                                 </a>
                             ) : (
-                                <Badge className="glass border-white/20 hover:bg-glass-hover uppercase text-[10px] flex items-center gap-1 text-white">
-                                    <i className={cn("bi", platformIconClass, "text-[14px]")} aria-hidden="true" />
+                                <Badge className="bg-black/90 backdrop-blur-md border border-white/20 text-white uppercase text-[10px] flex items-center gap-1.5 px-2 py-1 shadow-lg">
+                                    <PlatformIcon className="text-[14px]" />
                                 </Badge>
                             )}
                         </div>
@@ -238,8 +233,6 @@ export function MediaCard({
                                 <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(shares)}</span>
                             </div>
                         )}
-
-                        {null}
                     </div>
 
 
@@ -284,7 +277,7 @@ export function MediaCard({
                             )}
                         </div>
 
-                        {/* Views display (optional, can stay here or be removed) */}
+                        {/* Views display */}
                         <div className="flex items-center gap-1 text-[10px] text-white/70">
                             <Play className="h-3 w-3 fill-white/70" /> {formatNumber(views)} views
                         </div>
@@ -306,11 +299,11 @@ function formatPlatformLabel(platform: string): string {
     return platform.replace(/_/g, " ");
 }
 
-function getPlatformIconClass(platform: string): string {
+function getPlatformIcon(platform: string) {
     const normalized = platform.toLowerCase();
-    if (normalized.includes("tiktok")) return "bi-tiktok";
-    if (normalized.includes("instagram")) return "bi-instagram";
-    if (normalized.includes("youtube")) return "bi-youtube";
-    if (normalized.includes("pinterest")) return "bi-pinterest";
-    return "bi-globe";
+    if (normalized.includes("tiktok")) return FaTiktok;
+    if (normalized.includes("instagram")) return FaInstagram;
+    if (normalized.includes("youtube")) return FaYoutube;
+    if (normalized.includes("pinterest")) return FaPinterest;
+    return FaGlobe;
 }

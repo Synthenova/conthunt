@@ -7,6 +7,9 @@ import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRef } from "react";
 
+import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
+import { ExternalLink } from "lucide-react";
+
 interface SelectableMediaCardProps {
     item: any;
     platform: string;
@@ -24,6 +27,8 @@ export function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: 
     const platformLabel = formatPlatformLabel(platform);
     const lastHoverTimeRef = useRef(0);
     const hoverStartRef = useRef<number | null>(null);
+
+    const PlatformIcon = getPlatformIcon(platform);
 
     const handleSelect = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -96,14 +101,14 @@ export function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: 
                         aria-label={`${platformLabel} link`}
                         title={platformLabel}
                     >
-                        <Badge className="relative bg-black/50 backdrop-blur-md border-white/40 hover:bg-black/70 uppercase text-[10px] flex items-center gap-1 pr-2 transition-[padding] duration-200 group-hover/select:pr-5">
-                            <i className={cn("bi", getPlatformIconClass(platform), "text-[14px]")} aria-hidden="true" />
-                            <i className="bi bi-box-arrow-up-right text-[13px] opacity-0 transition-opacity duration-200 absolute right-1 group-hover/select:opacity-100" aria-hidden="true" />
+                        <Badge className="relative bg-black/50 backdrop-blur-md border-white/40 hover:bg-black/70 uppercase text-[10px] flex items-center gap-1.5 pr-2 transition-[padding] duration-200 group-hover/select:pr-5">
+                            <PlatformIcon className="text-[14px]" />
+                            <ExternalLink className="w-3 h-3 opacity-0 w-0 group-hover/select:opacity-100 group-hover/select:w-3 transition-all duration-300" />
                         </Badge>
                     </a>
                 ) : (
-                    <Badge className="bg-black/50 backdrop-blur-md border-white/40 hover:bg-black/70 uppercase text-[10px] flex items-center gap-1">
-                        <i className={cn("bi", getPlatformIconClass(platform), "text-[14px]")} aria-hidden="true" />
+                    <Badge className="bg-black/50 backdrop-blur-md border-white/40 hover:bg-black/70 uppercase text-[10px] flex items-center gap-1.5">
+                        <PlatformIcon className="text-[14px]" />
                     </Badge>
                 )}
             </div>
@@ -129,13 +134,13 @@ export function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: 
     );
 }
 
-function getPlatformIconClass(platform: string): string {
+function getPlatformIcon(platform: string) {
     const normalized = platform.toLowerCase();
-    if (normalized.includes("tiktok")) return "bi-tiktok";
-    if (normalized.includes("instagram")) return "bi-instagram";
-    if (normalized.includes("youtube")) return "bi-youtube";
-    if (normalized.includes("pinterest")) return "bi-pinterest";
-    return "bi-globe";
+    if (normalized.includes("tiktok")) return FaTiktok;
+    if (normalized.includes("instagram")) return FaInstagram;
+    if (normalized.includes("youtube")) return FaYoutube;
+    if (normalized.includes("pinterest")) return FaPinterest;
+    return FaGlobe;
 }
 
 function formatPlatformLabel(platform: string): string {

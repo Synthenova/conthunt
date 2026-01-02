@@ -189,7 +189,7 @@ export default function BoardDetailPage() {
                         </div>
 
                         <div className="flex items-center gap-2">
-                            <Button variant="destructive" size="sm" onClick={() => setShowDeleteDialog(true)}>
+                            <Button variant="ghost" size="sm" onClick={() => setShowDeleteDialog(true)} className="glass-button-red h-9 px-4">
                                 <Trash2 className="h-4 w-4 mr-2" />
                                 Delete Board
                             </Button>
@@ -249,7 +249,7 @@ export default function BoardDetailPage() {
                                     <p className="text-muted-foreground">
                                         Go to Search and add content to this board
                                     </p>
-                                    <Button asChild className="mt-4">
+                                    <Button asChild className="mt-4 glass-button-white hover:text-black">
                                         <Link href="/app">
                                             <Plus className="h-4 w-4 mr-2" />
                                             Go to Search
@@ -292,7 +292,7 @@ export default function BoardDetailPage() {
                                     <Button
                                         onClick={handleRefreshInsights}
                                         disabled={isRefreshingInsights || isProcessingInsights}
-                                        className="gap-2"
+                                        className="gap-2 glass-button-white hover:text-black"
                                     >
                                         {isRefreshingInsights || isProcessingInsights ? (
                                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -313,7 +313,7 @@ export default function BoardDetailPage() {
                                     <p className="text-muted-foreground">
                                         Add videos to this board to generate insights.
                                     </p>
-                                    <Button asChild className="mt-4">
+                                    <Button asChild className="mt-4 glass-button-white hover:text-black">
                                         <Link href="/app">
                                             <Plus className="h-4 w-4 mr-2" />
                                             Go to Search
@@ -352,7 +352,7 @@ export default function BoardDetailPage() {
                                     <Button
                                         onClick={handleRefreshInsights}
                                         disabled={isRefreshingInsights || isProcessingInsights}
-                                        className="gap-2"
+                                        className="gap-2 glass-button-white hover:text-black"
                                     >
                                         {isRefreshingInsights || isProcessingInsights ? (
                                             <Loader2 className="h-4 w-4 animate-spin" />
