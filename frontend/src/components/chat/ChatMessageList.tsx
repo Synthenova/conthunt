@@ -215,7 +215,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                 {isStreaming && !streamingContent && (
                     <Message className="justify-start">
                         <div className="text-foreground p-2">
-                            <TextShimmer duration={2} spread={15}>
+                            <TextShimmer duration={4} spread={15}>
                                 Generating response...
                             </TextShimmer>
                         </div>

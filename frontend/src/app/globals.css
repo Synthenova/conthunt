@@ -15,6 +15,18 @@
 
     --color-surface: hsl(var(--surface));
     --color-surface-hover: hsl(var(--surface-hover));
+
+    --animate-shimmer: shimmer 8s infinite linear;
+
+    @keyframes shimmer {
+        0% {
+            background-position: 0% 50%;
+        }
+
+        100% {
+            background-position: 200% 50%;
+        }
+    }
 }
 
 :root {
@@ -42,6 +54,8 @@
     --border: 0 0% 20%;
     --ring: 0 0% 80.8%;
     /* Match accent */
+
+    --muted-foreground: 0 0% 60%;
 }
 
 @layer base {

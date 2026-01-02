@@ -18,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { ArrowUp, Square, X, LayoutDashboard, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 
 type ChatContext = { type: 'board' | 'search'; id: string };
 
@@ -137,13 +138,13 @@ function formatItemLine(item: SummaryItem) {
     });
 }
 
-function getPlatformIconClass(platform: string): string {
+function getPlatformIcon(platform: string) {
     const normalized = platform.toLowerCase();
-    if (normalized.includes('tiktok')) return 'bi-tiktok';
-    if (normalized.includes('instagram')) return 'bi-instagram';
-    if (normalized.includes('youtube')) return 'bi-youtube';
-    if (normalized.includes('pinterest')) return 'bi-pinterest';
-    return 'bi-globe';
+    if (normalized.includes('tiktok')) return FaTiktok;
+    if (normalized.includes('instagram')) return FaInstagram;
+    if (normalized.includes('youtube')) return FaYoutube;
+    if (normalized.includes('pinterest')) return FaPinterest;
+    return FaGlobe;
 }
 
 async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -423,7 +424,7 @@ export function ChatInput({ context }: ChatInputProps) {
                                     </div>
                                 ) : (
                                     searchResults.map((search) => {
-                                        const platforms = Object.keys(search.inputs || {}).map((key) => getPlatformIconClass(key));
+                                        const platforms = Object.keys(search.inputs || {}).map((key) => getPlatformIcon(key));
                                         const uniquePlatforms = Array.from(new Set(platforms));
                                         return (
                                             <button
@@ -434,8 +435,8 @@ export function ChatInput({ context }: ChatInputProps) {
                                             >
                                                 <span className="truncate">{search.query}</span>
                                                 <span className="flex items-center gap-1 text-muted-foreground">
-                                                    {uniquePlatforms.map((icon) => (
-                                                        <i key={`${search.id}-${icon}`} className={`bi ${icon} text-xs`} aria-hidden="true" />
+                                                    {uniquePlatforms.map((Icon, idx) => (
+                                                        <Icon key={`${search.id}-icon-${idx}`} className="text-xs" />
                                                     ))}
                                                 </span>
                                             </button>
@@ -463,43 +464,46 @@ export function ChatInput({ context }: ChatInputProps) {
             >
                 {chips.length > 0 && (
                     <div className="flex flex-wrap gap-2 px-2 pt-2">
-                        {chips.map((chip) => (
-                            <span
-                                key={`${chip.type}-${chip.id}`}
-                                className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
-                            >
-                                {chip.type === 'board' && (
-                                    <>
-                                        <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
-                                        <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
-                                    </>
-                                )}
-                                {chip.type === 'search' && (
-                                    <>
-                                        <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                                        <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
-                                    </>
-                                )}
-                                {chip.type === 'media' && (
-                                    <>
-                                        <i className={cn("bi", getPlatformIconClass(chip.platform), "text-[12px]")} aria-hidden="true" />
-                                        <span className="truncate" title={chip.title}>
-                                            {truncateText(chip.title, CHIP_TITLE_LIMIT)}
-                                        </span>
-                                    </>
-                                )}
-                                {!chip.locked && (
-                                    <button
-                                        type="button"
-                                        onClick={() => handleRemoveChip(chip)}
-                                        className="rounded-full hover:text-foreground"
-                                        aria-label={`Remove ${chip.label}`}
-                                    >
-                                        <X className="h-3 w-3" />
-                                    </button>
-                                )}
-                            </span>
-                        ))}
+                        {chips.map((chip) => {
+                            const PlatformIcon = chip.type === 'media' ? getPlatformIcon(chip.platform) : null;
+                            return (
+                                <span
+                                    key={`${chip.type}-${chip.id}`}
+                                    className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
+                                >
+                                    {chip.type === 'board' && (
+                                        <>
+                                            <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                            <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
+                                        </>
+                                    )}
+                                    {chip.type === 'search' && (
+                                        <>
+                                            <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                            <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
+                                        </>
+                                    )}
+                                    {chip.type === 'media' && PlatformIcon && (
+                                        <>
+                                            <PlatformIcon className="text-[12px]" />
+                                            <span className="truncate" title={chip.title}>
+                                                {truncateText(chip.title, CHIP_TITLE_LIMIT)}
+                                            </span>
+                                        </>
+                                    )}
+                                    {!chip.locked && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleRemoveChip(chip)}
+                                            className="rounded-full hover:text-foreground"
+                                            aria-label={`Remove ${chip.label}`}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    )}
+                                </span>
+                            );
+                        })}
                     </div>
                 )}
                 <PromptInputTextarea
