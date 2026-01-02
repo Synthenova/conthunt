@@ -27,7 +27,7 @@ const navItems = [
     { title: "Home", path: "/app", icon: Home },
     { title: "Boards", path: "/app/boards", icon: LayoutGrid },
     { title: "Chats", path: "/app/chats", icon: MessageSquare },
-    { title: "Searches", path: "/app/searches", icon: Search },
+    // { title: "Searches", path: "/app/searches", icon: Search },
 ];
 
 export function AppSidebar() {
@@ -59,9 +59,12 @@ export function AppSidebar() {
             : history.length;
 
     const handleOpenChat = (chatId: string) => {
+        const targetPath = `/app/chats/${chatId}`;
         setActiveChatId(chatId);
         openSidebar();
-        router.push(`/app/chats/${chatId}`);
+        if (pathname !== targetPath) {
+            router.push(targetPath);
+        }
     };
 
     const isActive = (path: string) => {
@@ -196,7 +199,7 @@ export function AppSidebar() {
 
                         {/* Tabs */}
                         <div className="flex p-1 bg-white/5 rounded-lg mb-4">
-                            {(['boards', 'chats', 'searches'] as const).map((tab) => (
+                            {(['boards', 'chats'] as const).map((tab) => (
                                 <button
                                     key={tab}
                                     onClick={() => setActiveTab(tab)}
@@ -270,7 +273,7 @@ export function AppSidebar() {
                                         )
                                     )}
 
-                                    {activeTab === 'searches' && (
+                                    {/* {activeTab === 'searches' && (
                                         isLoadingHistory ? (
                                             <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-gray-600" /></div>
                                         ) : history.length > 0 ? (
@@ -293,7 +296,7 @@ export function AppSidebar() {
                                         ) : (
                                             <div className="px-3 py-8 text-[10px] text-gray-500 text-center border border-dashed border-white/5 rounded-xl">No search history</div>
                                         )
-                                    )}
+                                    )} */}
                                     <button
                                         onClick={() => {
                                             if (activeTab === 'boards') {
@@ -372,29 +375,8 @@ export function AppSidebar() {
                                     No active chats
                                 </div>
                             )
-                        ) : (
-                            isLoadingHistory ? (
-                                <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-gray-500" /></div>
-                            ) : history.length > 0 ? (
-                                history.map((item: any) => (
-                                    <button
-                                        key={item.id}
-                                        onClick={() => {
-                                            router.push(`/app/searches/${item.id}`);
-                                            setIsRecentsModalOpen(false);
-                                        }}
-                                        className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-white/5 transition-all text-left"
-                                    >
-                                        <Search size={14} className="shrink-0 opacity-60" />
-                                        <span className="text-sm truncate font-medium">{item.query}</span>
-                                    </button>
-                                ))
-                            ) : (
-                                <div className="px-3 py-8 text-xs text-gray-500 text-center border border-dashed border-white/10 rounded-xl">
-                                    No search history
-                                </div>
-                            )
-                        )}
+                        ) : null}
+                        {/* Searches modal list hidden for now. */}
                     </div>
                 </DialogContent>
             </Dialog>

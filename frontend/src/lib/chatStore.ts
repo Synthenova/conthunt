@@ -99,7 +99,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Active chat
     activeChatId: null,
-    setActiveChatId: (id) => set({ activeChatId: id, messages: [], showHistory: false, canvasSearchIds: new Set(), canvasSearchKeywords: {} }),
+    setActiveChatId: (id) => set((state) => {
+        if (state.activeChatId === id) {
+            return { activeChatId: id };
+        }
+        return {
+            activeChatId: id,
+            messages: [],
+            showHistory: false,
+            canvasSearchIds: new Set(),
+            canvasSearchKeywords: {},
+        };
+    }),
     resetToNewChat: () => set({ activeChatId: null, messages: [], showHistory: false, canvasSearchIds: new Set(), canvasSearchKeywords: {} }),
 
     // Messages
