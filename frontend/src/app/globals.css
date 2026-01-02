@@ -113,6 +113,30 @@
     @apply bg-white/5 backdrop-blur-md border border-white/10;
 }
 
+/* Glass Pill - Premium Active Indicator */
+.glass-pill {
+    background: linear-gradient(136.19deg, rgba(3, 3, 3, 0.45) 47.93%, rgba(26, 26, 26, 0.3) 100%);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 9999px;
+    /* Default fully rounded */
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.02);
+}
+
+.glass-pill::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(170deg, rgba(128, 128, 128, 0.6) 0%, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0) 60%, rgba(128, 128, 128, 0.6) 100%);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+}
+
 /* Glassmorphism Utilities */
 .glass-panel {
     background: rgba(255, 255, 255, 0.02);
@@ -152,7 +176,6 @@
     -webkit-backdrop-filter: blur(20px);
     border-radius: 69px;
     /* Ensure pseudo-element positions correctly */
-    position: fixed;
 }
 
 /* Gradient Border Pseudo-element */
