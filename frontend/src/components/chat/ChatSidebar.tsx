@@ -10,6 +10,8 @@ import { usePathname } from 'next/navigation';
 import { useMemo, useEffect, useRef, useState } from 'react';
 import { useChatList } from '@/hooks/useChat';
 
+import { GripVertical } from 'lucide-react';
+
 export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
     const { isOpen, activeChatId, setActiveChatId } = useChatStore();
     const pathname = usePathname();
@@ -66,11 +68,11 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
             return;
         }
 
-        if (!context || isLoading) return;
-
-        const nextChatId = chats?.[0]?.id ?? null;
-        if (nextChatId !== activeChatId) {
-            setActiveChatId(nextChatId);
+        if (context || isLoading) {
+            const nextChatId = chats?.[0]?.id ?? null;
+            if (nextChatId !== activeChatId) {
+                setActiveChatId(nextChatId);
+            }
         }
     }, [chatIdFromPath, context, chats, isLoading, activeChatId, setActiveChatId]);
 
@@ -133,7 +135,7 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                 style={{ ['--sidebar-width' as any]: `${Math.max(0, Math.min(sidebarWidth, maxWidth ?? sidebarWidth))}px` }}
             >
                 <div
-                    className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-50 hidden lg:flex h-12 w-4 items-center justify-center cursor-col-resize"
+                    className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-50 hidden lg:flex h-12 w-6 items-center justify-center cursor-col-resize group"
                     onMouseDown={(event) => {
                         isResizing.current = true;
                         resizeStartX.current = event.clientX;
@@ -142,7 +144,9 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                         document.body.style.userSelect = 'none';
                     }}
                 >
-                    <div className="h-8 w-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors shadow-sm" />
+                    <div className="flex h-8 w-3 items-center justify-center rounded-full bg-background border border-border/40 shadow-sm transition-all group-hover:bg-accent group-hover:scale-110">
+                        <GripVertical className="h-4 w-4 text-muted-foreground/40 group-hover:text-black" />
+                    </div>
                 </div>
                 <div className="absolute left-0 top-0 hidden h-full w-3 lg:block pointer-events-none">
                     <div className="h-full w-px bg-white/20" />

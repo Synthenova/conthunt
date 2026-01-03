@@ -63,7 +63,7 @@ export function MentionDropdown({
 
     return (
         <div className="absolute bottom-full left-4 right-4 mb-2 z-20 w-fit min-w-[300px] animate-in fade-in slide-in-from-bottom-2">
-            <div className="bg-black text-foreground rounded-md border border-white/10 p-1 shadow-md overflow-hidden">
+            <div className="bg-zinc-900 text-foreground rounded-md border border-white/10 p-1 shadow-md overflow-hidden">
                 {/* Boards Section */}
                 <Collapsible
                     open={isBoardsOpen}
@@ -73,7 +73,7 @@ export function MentionDropdown({
                     <CollapsibleTrigger asChild>
                         <Button
                             variant="ghost"
-                            className="w-full justify-between h-8 px-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground rounded-sm"
+                            className="w-full justify-between h-8 px-2 text-sm font-medium hover:bg-zinc-800 hover:text-foreground rounded-sm"
                         >
                             <span className="flex items-center gap-2">
                                 <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
@@ -96,7 +96,7 @@ export function MentionDropdown({
                                     <button
                                         key={board.id}
                                         onClick={() => onSelect('board', board)}
-                                        className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent hover:text-accent-foreground text-sm flex items-center gap-2 group transition-colors outline-none focus:bg-accent focus:text-accent-foreground"
+                                        className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-zinc-800 hover:text-foreground text-sm flex items-center gap-2 group transition-colors outline-none focus:bg-zinc-800 focus:text-foreground"
                                     >
                                         <div className="w-1 h-1 rounded-full bg-muted-foreground/50 group-hover:bg-primary transition-colors" />
                                         <span className="truncate">{board.name}</span>
@@ -118,7 +118,7 @@ export function MentionDropdown({
                     <CollapsibleTrigger asChild>
                         <Button
                             variant="ghost"
-                            className="w-full justify-between h-8 px-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground rounded-sm"
+                            className="w-full justify-between h-8 px-2 text-sm font-medium hover:bg-zinc-800 hover:text-foreground rounded-sm"
                         >
                             <span className="flex items-center gap-2">
                                 <Search className="h-4 w-4 text-muted-foreground" />
@@ -144,7 +144,7 @@ export function MentionDropdown({
                                         <button
                                             key={search.id}
                                             onClick={() => onSelect('search', search)}
-                                            className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent hover:text-accent-foreground text-sm flex items-center justify-between gap-2 group transition-colors outline-none focus:bg-accent focus:text-accent-foreground"
+                                            className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-zinc-800 hover:text-foreground text-sm flex items-center justify-between gap-2 group transition-colors outline-none focus:bg-zinc-800 focus:text-foreground"
                                         >
                                             <div className="flex items-center gap-2 min-w-0">
                                                 <div className="w-1 h-1 rounded-full bg-muted-foreground/50 group-hover:bg-primary transition-colors flex-shrink-0" />
