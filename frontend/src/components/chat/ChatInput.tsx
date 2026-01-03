@@ -341,10 +341,10 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
             : '';
 
         const fullMessage = [chipFence, messageText].filter(Boolean).join('\n\n');
-        const tagPayload = chips
+        const tagPayload: { type: 'board' | 'search' | 'media'; id: string; label?: string }[] = chips
             .filter((chip) => chip.type === 'board' || chip.type === 'search' || chip.type === 'media')
             .map((chip) => ({
-                type: chip.type,
+                type: chip.type as 'board' | 'search' | 'media',
                 id: chip.id,
                 label: chip.type === 'media' ? (chip as MediaChip).title || chip.label : chip.label,
             }));
