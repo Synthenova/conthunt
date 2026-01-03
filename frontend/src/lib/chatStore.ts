@@ -53,6 +53,7 @@ interface ChatState {
     activeChatId: string | null;
     setActiveChatId: (id: string | null) => void;
     resetToNewChat: () => void;
+    isNewChatPending: boolean;
 
     // Messages for active chat
     messages: ChatMessage[];
@@ -116,6 +117,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Active chat
     activeChatId: null,
+    isNewChatPending: false,
     setActiveChatId: (id) => set((state) => {
         if (state.activeChatId === id) {
             return { activeChatId: id };
@@ -126,9 +128,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
             showHistory: false,
             canvasSearchIds: new Set(),
             canvasSearchKeywords: {},
+            isNewChatPending: false,
         };
     }),
-    resetToNewChat: () => set({ activeChatId: null, messages: [], showHistory: false, canvasSearchIds: new Set(), canvasSearchKeywords: {} }),
+    resetToNewChat: () => set({
+        activeChatId: null,
+        messages: [],
+        showHistory: false,
+        canvasSearchIds: new Set(),
+        canvasSearchKeywords: {},
+        isNewChatPending: true,
+    }),
 
     // Messages
     messages: [],

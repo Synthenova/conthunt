@@ -501,11 +501,7 @@ export default function ChatPage() {
                                                             )}
                                                         >
                                                             {activeSearchId === search.id && (
-                                                                <motion.div
-                                                                    layoutId="search-keyword-pill"
-                                                                    className="absolute inset-0 rounded-lg glass-pill"
-                                                                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                                                                />
+                                                                <div className="absolute inset-0 rounded-lg glass-pill" />
                                                             )}
                                                             <span className="relative z-10 mix-blend-normal flex items-center gap-2">
                                                                 {search.label}

@@ -13,7 +13,7 @@ import { useChatList } from '@/hooks/useChat';
 import { GripVertical } from 'lucide-react';
 
 export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
-    const { isOpen, activeChatId, setActiveChatId } = useChatStore();
+    const { isOpen, activeChatId, setActiveChatId, isNewChatPending } = useChatStore();
     const pathname = usePathname();
     const [sidebarWidth, setSidebarWidth] = useState(420);
     const isResizing = useRef(false);
@@ -47,10 +47,12 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
         return context ? `${context.type}:${context.id}` : 'none';
     }, [context]);
     const prevContextKey = useRef(contextKey);
+    const prevChatIdFromPath = useRef<string | null>(null);
 
     useEffect(() => {
         if (chatIdFromPath) {
             prevContextKey.current = contextKey;
+            prevChatIdFromPath.current = chatIdFromPath;
             return;
         }
 
@@ -58,23 +60,29 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
             setActiveChatId(null);
             prevContextKey.current = contextKey;
         }
+        prevChatIdFromPath.current = null;
     }, [chatIdFromPath, context, contextKey, setActiveChatId]);
 
     useEffect(() => {
         if (chatIdFromPath) {
-            if (chatIdFromPath !== activeChatId) {
-                setActiveChatId(chatIdFromPath);
+            const prevChatId = prevChatIdFromPath.current;
+            if (!isNewChatPending && (chatIdFromPath !== prevChatId || !activeChatId)) {
+                if (chatIdFromPath !== activeChatId) {
+                    setActiveChatId(chatIdFromPath);
+                }
             }
             return;
         }
 
         if (context || isLoading) {
-            const nextChatId = chats?.[0]?.id ?? null;
-            if (nextChatId !== activeChatId) {
-                setActiveChatId(nextChatId);
+            if (!activeChatId && !isNewChatPending) {
+                const nextChatId = chats?.[0]?.id ?? null;
+                if (nextChatId !== activeChatId) {
+                    setActiveChatId(nextChatId);
+                }
             }
         }
-    }, [chatIdFromPath, context, chats, isLoading, activeChatId, setActiveChatId]);
+    }, [chatIdFromPath, context, chats, isLoading, activeChatId, isNewChatPending, setActiveChatId]);
 
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {

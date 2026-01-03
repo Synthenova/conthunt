@@ -232,21 +232,7 @@
 
 /* Gradient Border Pseudo-element */
 .glass-nav::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 69px;
-    padding: 1px;
-    background: linear-gradient(170deg, rgba(128, 128, 128, 0.6) 0%, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0) 60%, rgba(128, 128, 128, 0.6) 100%);
-    -webkit-mask:
-        linear-gradient(#fff 0 0) content-box,
-        linear-gradient(#fff 0 0);
-    mask:
-        linear-gradient(#fff 0 0) content-box,
-        linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    pointer-events: none;
+    content: none;
 }
 
 /* Refined Glass Button Style */

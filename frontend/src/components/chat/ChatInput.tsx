@@ -6,6 +6,7 @@ import { useChatStore, MediaChipInput } from '@/lib/chatStore';
 import { useSendMessage, useCreateChat } from '@/hooks/useChat';
 import { useBoards } from '@/hooks/useBoards';
 import { useSearch } from '@/hooks/useSearch';
+import { usePathname, useRouter } from 'next/navigation';
 import { auth } from '@/lib/firebaseClient';
 import { BACKEND_URL } from '@/lib/api';
 import { BoardItem } from '@/lib/types/boards';
@@ -176,6 +177,8 @@ export function ChatInput({ context }: ChatInputProps) {
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const queryClient = useQueryClient();
+    const router = useRouter();
+    const pathname = usePathname();
     const { boards, isLoadingBoards, getBoard } = useBoards();
     const { history, isLoadingHistory, getSearch } = useSearch();
 
@@ -192,6 +195,10 @@ export function ChatInput({ context }: ChatInputProps) {
 
     const boardQuery = getBoard(context?.type === 'board' ? context.id : '');
     const searchQuery = getSearch(context?.type === 'search' ? context.id : '');
+    const isChatRoute = useMemo(() => {
+        if (!pathname) return false;
+        return /^\/app\/chats\/[^/]+\/?$/.test(pathname);
+    }, [pathname]);
 
     const contextLabel = useMemo(() => {
         if (!context?.id) return null;
@@ -342,6 +349,9 @@ export function ChatInput({ context }: ChatInputProps) {
                     contextType: context?.type,
                     contextId: context?.id,
                 });
+                if (isChatRoute) {
+                    router.push(`/app/chats/${chat.id}`);
+                }
                 await sendMessage(fullMessage, abortControllerRef.current, chat.id);
             } catch (err) {
                 console.error('Failed to create chat:', err);

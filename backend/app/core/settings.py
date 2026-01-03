@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # Media download behavior
     MEDIA_DOWNLOAD_ENABLED: bool = True
     MEDIA_MAX_CONCURRENCY: int = 4
-    MEDIA_HTTP_TIMEOUT_S: int = 40
+    MEDIA_HTTP_TIMEOUT_S: int = 60
     RAW_UPLOAD_ENABLED: bool = True
 
     # TwelveLabs Video Analysis

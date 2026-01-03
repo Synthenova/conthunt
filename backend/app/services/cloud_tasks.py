@@ -5,6 +5,7 @@ from google.cloud import tasks_v2
 from google.protobuf import timestamp_pb2
 
 from app.core import get_settings, logger
+from app.db.session import get_db_connection
 
 class CloudTasksService:
     def __init__(self):
@@ -71,7 +72,7 @@ class CloudTasksService:
         """
         try:
             if not payload:
-                 payload = {}
+                payload = {}
                  
             if uri == "/v1/tasks/gemini/analyze":
                 from app.api.v1.analysis import _execute_gemini_analysis
@@ -91,16 +92,23 @@ class CloudTasksService:
                 
             elif uri == "/v1/tasks/media/download":
                 from app.media.downloader import download_asset_with_claim
+                from app.media.downloader import update_asset_failed
                 from uuid import UUID
                 import httpx
-                
+
                 async with httpx.AsyncClient(timeout=self.settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
-                    await download_asset_with_claim(
-                        http_client=client,
-                        asset_id=UUID(payload["asset_id"]),
-                        platform=payload["platform"],
-                        external_id=payload["external_id"]
-                    )
+                    try:
+                        await download_asset_with_claim(
+                            http_client=client,
+                            asset_id=UUID(payload["asset_id"]),
+                            platform=payload["platform"],
+                            external_id=payload["external_id"]
+                        )
+                    except Exception as download_err:
+                        # Fail-fast locally: mark asset failed so it doesn't stay stuck in 'downloading'
+                        async with get_db_connection() as conn:
+                            await update_asset_failed(conn, UUID(payload["asset_id"]), str(download_err))
+                        raise
             
             elif uri == "/v1/tasks/raw/archive":
                 from app.storage.raw_archive import upload_raw_compressed
