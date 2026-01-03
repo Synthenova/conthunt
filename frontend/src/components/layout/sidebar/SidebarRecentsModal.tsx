@@ -1,8 +1,9 @@
 "use client";
 
-import React from 'react';
-import { Search, Loader2, MessageSquare } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Search, Loader2, MessageSquare, Pencil } from 'lucide-react';
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { useRenameChat } from "@/hooks/useChat";
 
 interface SidebarRecentsModalProps {
     isOpen: boolean;
@@ -25,6 +26,40 @@ export const SidebarRecentsModal = ({
     router,
     groupedChats
 }: SidebarRecentsModalProps) => {
+    const [editingChatId, setEditingChatId] = useState<string | null>(null);
+    const [editingTitle, setEditingTitle] = useState('');
+    const editInputRef = useRef<HTMLInputElement | null>(null);
+    const renameChat = useRenameChat();
+
+    useEffect(() => {
+        if (editingChatId) {
+            editInputRef.current?.focus();
+            editInputRef.current?.select();
+        }
+    }, [editingChatId]);
+
+    const startChatEdit = (chatId: string, title?: string) => {
+        setEditingChatId(chatId);
+        setEditingTitle(title || '');
+    };
+
+    const cancelChatEdit = () => {
+        setEditingChatId(null);
+        setEditingTitle('');
+    };
+
+    const commitChatEdit = async () => {
+        if (!editingChatId) return;
+        const nextTitle = editingTitle.trim();
+        const targetChatId = editingChatId;
+        cancelChatEdit();
+        if (!nextTitle) return;
+        try {
+            await renameChat.mutateAsync({ chatId: targetChatId, title: nextTitle });
+        } catch (err) {
+            console.error(err);
+        }
+    };
 
     return (
         <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -61,17 +96,61 @@ export const SidebarRecentsModal = ({
                                         <div className="px-3 mb-2 text-[11px] font-medium text-gray-500">{group}</div>
                                         <div className="space-y-0.5">
                                             {groupChats.map((chat: any) => (
-                                                <button
+                                                <div
                                                     key={chat.id}
+                                                    role="button"
+                                                    tabIndex={0}
                                                     onClick={() => {
+                                                        if (editingChatId === chat.id) return;
                                                         handleOpenChat(chat.id);
                                                         onOpenChange(false);
                                                     }}
-                                                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-all text-left group"
+                                                    onKeyDown={(event) => {
+                                                        if (editingChatId === chat.id) return;
+                                                        if (event.key === 'Enter' || event.key === ' ') {
+                                                            event.preventDefault();
+                                                            handleOpenChat(chat.id);
+                                                            onOpenChange(false);
+                                                        }
+                                                    }}
+                                                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-all text-left group relative"
                                                 >
                                                     <MessageSquare size={16} className="shrink-0 opacity-70 group-hover:opacity-100 transition-opacity" />
-                                                    <span className="text-sm truncate">{chat.title || "New Chat"}</span>
-                                                </button>
+                                                    {editingChatId === chat.id ? (
+                                                        <input
+                                                            ref={editInputRef}
+                                                            value={editingTitle}
+                                                            onChange={(event) => setEditingTitle(event.target.value)}
+                                                            onKeyDown={(event) => {
+                                                                if (event.key === 'Enter') {
+                                                                    event.preventDefault();
+                                                                    commitChatEdit();
+                                                                }
+                                                                if (event.key === 'Escape') {
+                                                                    event.preventDefault();
+                                                                    cancelChatEdit();
+                                                                }
+                                                            }}
+                                                            onBlur={cancelChatEdit}
+                                                            className="w-full bg-transparent text-sm text-white placeholder:text-gray-500 outline-none"
+                                                        />
+                                                    ) : (
+                                                        <span className="text-sm truncate">{chat.title || "New Chat"}</span>
+                                                    )}
+                                                    {editingChatId !== chat.id && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                startChatEdit(chat.id, chat.title);
+                                                            }}
+                                                            className="ml-auto text-gray-400 hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                            aria-label="Rename chat"
+                                                        >
+                                                            <Pencil size={14} />
+                                                        </button>
+                                                    )}
+                                                </div>
                                             ))}
                                         </div>
                                     </div>

@@ -1,18 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useBoards } from "@/hooks/useBoards";
 import { useSearchStore } from "@/lib/store";
-import { GlassCard } from "@/components/ui/glass-card";
+import { BoardGlassCard } from "@/components/ui/board-glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { ClientFilteredResults } from "@/components/search/ClientFilteredResults";
+import { BoardFilterBar } from "@/components/boards/BoardFilterBar";
+import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
+import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { SelectionBar } from "@/components/boards/SelectionBar";
 import {
     AlertDialog,
@@ -25,7 +27,6 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-    ArrowLeft,
     Trash2,
     Plus,
     Loader2,
@@ -71,10 +72,23 @@ export default function BoardDetailPage() {
     const [showRemoveDialog, setShowRemoveDialog] = useState(false);
 
     // Transform board items to flat media format for cards
-    const transformedItems = (items || []).map(item => {
-        const flat = transformToMediaItem({ content_item: item.content_item, assets: item.assets });
-        return flat;
-    });
+    const transformedItems = useMemo(() => {
+        return (items || []).map(item => {
+            const flat = transformToMediaItem({ content_item: item.content_item, assets: item.assets });
+            return flat;
+        });
+    }, [items]);
+
+    const {
+        flatResults,
+        clientSort,
+        setClientSort,
+        clientDateFilter,
+        setClientDateFilter,
+        platforms,
+        selectedPlatforms,
+        setSelectedPlatforms,
+    } = useClientResultSort(transformedItems, { resultsAreFlat: true });
 
     const selectedCount = selectedItems.length;
 
@@ -99,12 +113,12 @@ export default function BoardDetailPage() {
     const hasInsights = Boolean(insights?.insights);
     const isProcessingInsights = insights?.status === "processing";
 
-    useEffect(() => {
-        if (!insights) return;
-        if (insights.status === "completed" || insights.status === "failed") {
-            setShouldPollInsights(false);
-        }
-    }, [insights]);
+    // useEffect(() => {
+    //     if (!insights) return;
+    //     if (insights.status === "completed" || insights.status === "failed") {
+    //         setShouldPollInsights(false);
+    //     }
+    // }, [insights]);
 
     const handleDeleteBoard = async () => {
         try {
@@ -173,11 +187,6 @@ export default function BoardDetailPage() {
             <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8">
                 {/* Header */}
                 <div className="flex flex-col gap-4">
-                    <div className="flex items-center gap-2 text-muted-foreground hover:text-white transition-colors">
-                        <ArrowLeft className="h-4 w-4" />
-                        <Link href="/app/boards">Boards</Link>
-                    </div>
-
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <div>
                             <h1 className="text-3xl font-bold text-white">
@@ -189,6 +198,9 @@ export default function BoardDetailPage() {
                         </div>
 
                         <div className="flex items-center gap-2">
+                            <div className="glass-button h-9 px-4 flex items-center justify-center text-xs font-medium text-muted-foreground border rounded-full border-white/10 !cursor-default">
+                                {transformedItems.length} Videos
+                            </div>
                             <Button variant="ghost" size="sm" onClick={() => setShowDeleteDialog(true)} className="glass-button-red h-9 px-4">
                                 <Trash2 className="h-4 w-4 mr-2" />
                                 Delete Board
@@ -197,36 +209,50 @@ export default function BoardDetailPage() {
                     </div>
                 </div>
 
-                {/* Custom Glass Pill Tabs */}
+                {/* Custom Glass Pill Tabs & Filters */}
                 <div className="space-y-6">
-                    <div className="flex p-1 bg-white/5 glass-nav rounded-full relative h-9 items-center max-w-[280px]">
-                        {(['videos', 'insights'] as const).map((tab) => (
-                            <button
-                                key={tab}
-                                onClick={() => setActiveTab(tab)}
-                                className={cn(
-                                    "flex-1 h-full flex items-center justify-center text-xs font-bold uppercase tracking-wider rounded-full transition-all relative z-10",
-                                    activeTab === tab ? "text-white" : "text-gray-500 hover:text-gray-300"
-                                )}
-                            >
-                                {activeTab === tab && (
-                                    <motion.div
-                                        layoutId="board-tab-pill"
-                                        className="absolute inset-0 rounded-full glass-pill"
-                                        style={{ borderRadius: 9999 }}
-                                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                                    />
-                                )}
-                                <span className="relative z-10 mix-blend-normal flex items-center gap-2">
-                                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                                    {tab === 'videos' && newVideosCount > 0 && (
-                                        <Badge variant="secondary" className="bg-white/10 text-white text-[10px] px-1 py-0 h-3.5 min-w-3.5 flex items-center justify-center">
-                                            {newVideosCount}
-                                        </Badge>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex p-1 bg-white/5 glass-nav rounded-full relative h-9 items-center max-w-[280px]">
+                            {(['videos', 'insights'] as const).map((tab) => (
+                                <button
+                                    key={tab}
+                                    onClick={() => setActiveTab(tab)}
+                                    className={cn(
+                                        "flex-1 h-full flex items-center justify-center text-xs font-bold uppercase tracking-wider rounded-full transition-all relative z-10 px-6",
+                                        activeTab === tab ? "text-white" : "text-gray-500 hover:text-gray-300"
                                     )}
-                                </span>
-                            </button>
-                        ))}
+                                >
+                                    {activeTab === tab && (
+                                        <motion.div
+                                            layoutId="board-tab-pill"
+                                            className="absolute inset-0 rounded-full glass-pill"
+                                            style={{ borderRadius: 9999 }}
+                                            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                                        />
+                                    )}
+                                    <span className="relative z-10 mix-blend-normal flex items-center gap-2">
+                                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                                        {tab === 'videos' && newVideosCount > 0 && (
+                                            <Badge variant="secondary" className="bg-white/10 text-white text-[10px] px-1 py-0 h-3.5 min-w-3.5 flex items-center justify-center">
+                                                {newVideosCount}
+                                            </Badge>
+                                        )}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+
+                        {activeTab === 'videos' && (
+                            <BoardFilterBar
+                                sort={clientSort}
+                                onSortChange={setClientSort}
+                                dateFilter={clientDateFilter}
+                                onDateFilterChange={setClientDateFilter}
+                                platforms={platforms}
+                                selectedPlatforms={selectedPlatforms}
+                                onPlatformsChange={setSelectedPlatforms}
+                            />
+                        )}
                     </div>
 
                     {/* Videos Content */}
@@ -241,7 +267,7 @@ export default function BoardDetailPage() {
                                     ))}
                                 </div>
                             ) : transformedItems.length === 0 ? (
-                                <GlassCard className="p-12 text-center flex flex-col items-center gap-4">
+                                <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4">
                                     <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
                                         <FolderOpen className="h-8 w-8 text-muted-foreground" />
                                     </div>
@@ -255,12 +281,12 @@ export default function BoardDetailPage() {
                                             Go to Search
                                         </Link>
                                     </Button>
-                                </GlassCard>
+                                </BoardGlassCard>
                             ) : (
-                                <ClientFilteredResults
-                                    results={transformedItems}
+                                <SelectableResultsGrid
+                                    results={flatResults}
                                     loading={false}
-                                    resultsAreFlat
+                                    analysisDisabled={false}
                                 />
                             )}
                         </div>
@@ -305,7 +331,7 @@ export default function BoardDetailPage() {
                             </div>
 
                             {transformedItems.length === 0 ? (
-                                <GlassCard className="p-12 text-center flex flex-col items-center gap-4">
+                                <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4">
                                     <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
                                         <FolderOpen className="h-8 w-8 text-muted-foreground" />
                                     </div>
@@ -319,7 +345,7 @@ export default function BoardDetailPage() {
                                             Go to Search
                                         </Link>
                                     </Button>
-                                </GlassCard>
+                                </BoardGlassCard>
                             ) : isInsightsLoading && !hasInsights ? (
                                 <div className="grid gap-4 lg:grid-cols-2">
                                     {[...Array(4)].map((_, i) => (
@@ -338,7 +364,7 @@ export default function BoardDetailPage() {
                                     ))}
                                 </div>
                             ) : !hasInsights ? (
-                                <GlassCard className="p-12 text-center flex flex-col items-center gap-4">
+                                <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4">
                                     <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
                                         <Sparkles className="h-8 w-8 text-muted-foreground" />
                                     </div>
@@ -361,7 +387,7 @@ export default function BoardDetailPage() {
                                         )}
                                         {isProcessingInsights ? "Working..." : "Update insights"}
                                     </Button>
-                                </GlassCard>
+                                </BoardGlassCard>
                             ) : (
                                 <div className="grid gap-4 lg:grid-cols-2">
                                     <Card className="glass border-white/10 overflow-hidden gap-0 py-0">

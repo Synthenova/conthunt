@@ -108,3 +108,36 @@ async def delete_chat(conn: AsyncConnection, chat_id: UUID) -> None:
         text("UPDATE conthunt.chats SET deleted_at = NOW() WHERE id = :id"),
         {"id": chat_id}
     )
+
+@log_query_timing
+async def update_chat_title(
+    conn: AsyncConnection,
+    chat_id: UUID,
+    title: str,
+) -> Optional[ChatSchema]:
+    """Update a chat title and return the updated record."""
+    row = await conn.execute(
+        text("""
+            UPDATE conthunt.chats
+            SET title = :title,
+                updated_at = NOW()
+            WHERE id = :id
+              AND deleted_at IS NULL
+            RETURNING id, user_id, thread_id, title, context_type, context_id, status, created_at, updated_at
+        """),
+        {"id": chat_id, "title": title}
+    )
+    res = row.fetchone()
+    if not res:
+        return None
+    return ChatSchema(
+        id=res[0],
+        user_id=res[1],
+        thread_id=res[2],
+        title=res[3],
+        context_type=res[4],
+        context_id=res[5],
+        status=res[6],
+        created_at=res[7],
+        updated_at=res[8],
+    )

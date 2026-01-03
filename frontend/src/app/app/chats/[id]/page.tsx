@@ -6,7 +6,6 @@ import { useChatStore, ChatMessage } from "@/lib/chatStore";
 import { useChatMessages, useSendMessage } from "@/hooks/useChat";
 import { useBoards } from "@/hooks/useBoards";
 import { ChatInput } from "@/components/chat/ChatInput";
-import { ClientFilteredResults } from "@/components/search/ClientFilteredResults";
 import { SelectionBar } from "@/components/boards/SelectionBar";
 import { SearchStreamer } from "@/components/search/SearchStreamer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,6 +16,10 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { FolderOpen, Search, Loader2 } from "lucide-react";
 import { FlatMediaItem, transformToMediaItem } from "@/lib/transformers";
+import { useClientResultSort } from "@/hooks/useClientResultSort";
+import { BoardFilterBar } from "@/components/boards/BoardFilterBar";
+import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
+import { SearchIcon, SearchIconHandle } from "@/components/ui/search";
 
 // Regex to extract chips from messages
 const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
@@ -140,11 +143,12 @@ export default function ChatPage() {
     const params = useParams();
     const chatId = params.id as string;
 
-    const { setActiveChatId, messages, openSidebar, canvasSearchIds } = useChatStore();
+    const { setActiveChatId, messages, openSidebar, canvasSearchIds, chats } = useChatStore();
     const { isLoading: isLoadingMessages } = useChatMessages(chatId);
     const { sendMessage } = useSendMessage();
     const { getBoard, getBoardItems } = useBoards();
     const abortControllerRef = useRef<AbortController | null>(null);
+    const searchIconRef = useRef<SearchIconHandle>(null);
 
     const [activeBoardTab, setActiveBoardTab] = useState<string | null>(null);
     const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
@@ -159,13 +163,17 @@ export default function ChatPage() {
     const [rawSearchResults, setRawSearchResults] = useState<FlatMediaItem[]>([]);
     const [allResults, setAllResults] = useState<FlatMediaItem[]>([]);
 
+    // Find current chat title
+    const activeChatTitle = useMemo(() => {
+        const chat = chats.find(c => c.id === chatId);
+        return chat?.title || "Chat";
+    }, [chats, chatId]);
+
     // Set active chat on mount
     useEffect(() => {
         setActiveChatId(chatId);
         openSidebar();
     }, [chatId, setActiveChatId, openSidebar]);
-
-    // Pending message flow removed; homepage now sends directly.
 
     // Extract context from messages
     const context = useMemo(() => {
@@ -182,9 +190,6 @@ export default function ChatPage() {
             if (!knownSearches.has(id)) {
                 // Try to get keyword from store
                 const keyword = useChatStore.getState().canvasSearchKeywords[id];
-                // Only add if we have a keyword or user wants to see "loading" state (but they asked to remove generic badge)
-                // Actually, if we have a keyword, show it. If not, maybe skip until we do? 
-                // Or better: show the keyword if available.
                 if (keyword) {
                     combined.push({ id, label: keyword });
                 }
@@ -198,41 +203,14 @@ export default function ChatPage() {
         return displaySearches.map(s => s.id);
     }, [displaySearches]);
 
-
-    // Determine known labels map for live searches that might not be in history yet
-    // This is tricky because live searches come from stream events which might not have the keyword 
-    // accessible in the same way until the message is finalized. 
-    // However, we can try to look it up from the context if available.
-
     // Effect: Auto-select latest search
     useEffect(() => {
-        // If we have search IDs and no active one, OR if a new search ID appears that is "later" in the list
-        // (assuming the list order implies recency or we just pick the last one)
         if (allSearchIds.length > 0) {
-            // Pick the last one (most recent usually)
             const latestId = allSearchIds[allSearchIds.length - 1];
-            // Only switch if we don't have one active, or if the list grew (new search started)
-            // But we don't want to jump around if user selected something else.
-            // Simple logic: if activeSearchId is not in the list, or if we want to "follow" new searches...
-
-            // Let's just default to the last one if nothing is selected.
-            // Ideally we'd detect "newly added" ID and switch to it.
             setActiveSearchId(prev => {
                 if (!prev || !allSearchIds.includes(prev)) return latestId;
-                // If the user hasn't manually switched (hard to know), we might auto-switch.
-                // For now, sticking to "if not set" or "if invalid" is safest.
-                // But user asked to "show only one... default to top keyword filter" (usually validation of latest intent).
-                // Let's force switch if the list length grew? 
-                // A simplified approach: Just use the last one if current is null.
                 return prev;
             });
-
-            // To auto-switch on NEW search:
-            if (allSearchIds.length > 0) {
-                const last = allSearchIds[allSearchIds.length - 1];
-                // If the last ID is NOT the current active ID, and it was just added... 
-                // We can rely on a ref to track previous length
-            }
         }
     }, [allSearchIds]);
 
@@ -273,10 +251,6 @@ export default function ChatPage() {
     // Handle search results update
     const handleSearchResults = useCallback((id: string, items: FlatMediaItem[]) => {
         setResultsMap(prev => {
-            // Simple optimization: if length same and first item id same, assume no change (rudimentary)
-            // Better to just update. React usually handles comparison well.
-            // But we want to avoid infinite re-renders if the array reference is new but content same.
-            // JSON stringify comparison is safe enough for small lists.
             if (JSON.stringify(prev[id]) === JSON.stringify(items)) return prev;
             return { ...prev, [id]: items };
         });
@@ -323,6 +297,23 @@ export default function ChatPage() {
     const hasContent = hasBoards || hasSearches;
     const isInitialLoading = isLoadingMessages && messages.length === 0 && !hasContent;
 
+    // --- Filter Logic ---
+    const activeResults = useMemo(() => {
+        if (!activeSearchId) return [];
+        return resultsMap[activeSearchId] || [];
+    }, [activeSearchId, resultsMap]);
+
+    const {
+        flatResults: filteredResults,
+        clientSort,
+        setClientSort,
+        clientDateFilter,
+        setClientDateFilter,
+        platforms,
+        selectedPlatforms,
+        setSelectedPlatforms,
+    } = useClientResultSort(activeResults, { resultsAreFlat: true });
+
     return (
         <div className="flex h-full">
             {/* Render SearchStreamers (Hidden) */}
@@ -337,134 +328,122 @@ export default function ChatPage() {
             ))}
 
             {/* Canvas (left/center) */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                {isInitialLoading ? (
-                    <div className="h-full flex items-center justify-center">
-                        <GlassCard className="p-12 text-center flex flex-col items-center gap-4 max-w-md">
-                            <div className="h-12 w-12 rounded-full bg-white/5 flex items-center justify-center">
-                                <Loader2 className="h-6 w-6 text-muted-foreground animate-spin" />
-                            </div>
-                            <h3 className="text-lg font-medium text-white">Loading chat</h3>
-                            <p className="text-muted-foreground">
-                                Fetching your conversation history and results.
-                            </p>
-                        </GlassCard>
-                    </div>
-                ) : !hasContent ? (
-                    <div className="h-full flex items-center justify-center">
-                        <GlassCard className="p-12 text-center flex flex-col items-center gap-4 max-w-md">
-                            <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
-                                <Search className="h-8 w-8 text-muted-foreground" />
-                            </div>
-                            <h3 className="text-xl font-medium text-white">Canvas</h3>
-                            <p className="text-muted-foreground">
-                                Start a conversation to search for content. Results will appear here as you explore.
-                            </p>
-                        </GlassCard>
-                    </div>
-                ) : (
-                    <>
-                        {/* Boards Section */}
-                        {/*
-                        {hasBoards && (
-                            <section className="space-y-4">
-                                <div className="flex items-center gap-2">
-                                    <FolderOpen className="h-5 w-5 text-muted-foreground" />
-                                    <h2 className="text-lg font-semibold text-white">Boards</h2>
-                                    <Badge variant="secondary">{context.boards.length}</Badge>
+            <div className="flex-1 overflow-y-auto min-h-0">
+                <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8">
+                    {isInitialLoading ? (
+                        <div className="h-[60vh] flex items-center justify-center">
+                            <GlassCard className="p-12 text-center flex flex-col items-center gap-4 max-w-md">
+                                <div className="h-12 w-12 rounded-full bg-white/5 flex items-center justify-center">
+                                    <Loader2 className="h-6 w-6 text-muted-foreground animate-spin" />
                                 </div>
-
-                                <Tabs value={activeBoardTab || ""} onValueChange={setActiveBoardTab}>
-                                    <TabsList className="bg-white/5 border border-white/10">
-                                        {context.boards.map((board) => (
-                                            <TabsTrigger key={board.id} value={board.id} className="text-white">
-                                                {activeBoardQuery.data?.name || board.label}
-                                            </TabsTrigger>
-                                        ))}
-                                    </TabsList>
-
-                                    {context.boards.map((board) => (
-                                        <TabsContent key={board.id} value={board.id} className="mt-4">
-                                            {activeBoardItemsQuery.isLoading ? (
-                                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                                    {[...Array(8)].map((_, i) => (
-                                                        <Skeleton key={i} className="aspect-[9/16] rounded-xl" />
-                                                    ))}
+                                <h3 className="text-lg font-medium text-white">Loading chat</h3>
+                                <p className="text-muted-foreground">
+                                    Fetching your conversation history and results.
+                                </p>
+                            </GlassCard>
+                        </div>
+                    ) : !hasContent ? (
+                        <div className="h-[60vh] flex items-center justify-center">
+                            <GlassCard className="p-12 text-center flex flex-col items-center gap-4 max-w-md">
+                                <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
+                                    <Search className="h-8 w-8 text-muted-foreground" />
+                                </div>
+                                <h3 className="text-xl font-medium text-white">Canvas</h3>
+                                <p className="text-muted-foreground">
+                                    Start a conversation to search for content. Results will appear here as you explore.
+                                </p>
+                            </GlassCard>
+                        </div>
+                    ) : (
+                        <>
+                            {/* Searches Section - Now "Chat Content" */}
+                            {hasSearches && (
+                                <section className="space-y-6">
+                                    {/* Header Row */}
+                                    <div className="flex flex-col gap-1">
+                                        <div className="flex items-center justify-between">
+                                            <div
+                                                className="flex items-center gap-3 group cursor-default"
+                                                onMouseEnter={() => searchIconRef.current?.startAnimation()}
+                                                onMouseLeave={() => searchIconRef.current?.stopAnimation()}
+                                            >
+                                                <SearchIcon
+                                                    ref={searchIconRef}
+                                                    className="text-muted-foreground group-hover:text-white transition-colors"
+                                                />
+                                                <h1 className="text-xl font-medium text-white">{activeChatTitle}</h1>
+                                            </div>
+                                            {activeSearchId && (
+                                                <div className="text-sm text-muted-foreground">
+                                                    Showing {filteredResults.length} results
                                                 </div>
-                                            ) : boardItems.length === 0 ? (
-                                                <GlassCard className="p-8 text-center">
-                                                    <p className="text-muted-foreground">No items in this board</p>
-                                                </GlassCard>
-                                            ) : (
-                                                <ClientFilteredResults
-                                                    results={boardItems}
-                                                    loading={false}
-                                                    resultsAreFlat
-                                                />
                                             )}
-                                        </TabsContent>
-                                    ))}
-                                </Tabs>
-                            </section>
-                        )}
-                        */}
+                                        </div>
+                                    </div>
 
-                        {/* Searches Section */}
-                        {hasSearches && (
-                            <section className="space-y-4">
-                                <div className="flex items-center gap-2">
-                                    <Search className="h-5 w-5 text-muted-foreground" />
-                                    <h2 className="text-lg font-semibold text-white">Searches</h2>
-                                    <Badge variant="secondary">{allSearchIds.length} sources</Badge>
-                                </div>
+                                    {/* Controls Bar: Tabs + Filters */}
+                                    <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
+                                        {/* Keyword Tabs (Scrollable) */}
+                                        <div className="flex-1 min-w-0 flex justify-start">
+                                            <div className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto no-scrollbar">
+                                                {displaySearches.map((search) => (
+                                                    <button
+                                                        key={search.id}
+                                                        onClick={() => setActiveSearchId(search.id)}
+                                                        className={cn(
+                                                            "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0",
+                                                            activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
+                                                        )}
+                                                    >
+                                                        {activeSearchId === search.id && (
+                                                            <motion.div
+                                                                layoutId="search-keyword-pill"
+                                                                className="absolute inset-0 rounded-lg glass-pill"
+                                                                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                                                            />
+                                                        )}
+                                                        <span className="relative z-10 mix-blend-normal flex items-center gap-2">
+                                                            {search.label}
+                                                            {streamingSearchIds[search.id] && (
+                                                                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                                            )}
+                                                        </span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
 
-                                {/* Keyword Filters - Single Select */}
-                                {/* Keyword Filters - Glass Box Tabs */}
-                                <div className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-9 items-center w-fit max-w-full overflow-x-auto no-scrollbar">
-                                    {displaySearches.map((search) => (
-                                        <button
-                                            key={search.id}
-                                            onClick={() => setActiveSearchId(search.id)}
-                                            className={cn(
-                                                "relative px-4 h-full flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0",
-                                                activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
-                                            )}
-                                        >
-                                            {activeSearchId === search.id && (
-                                                <motion.div
-                                                    layoutId="search-keyword-pill"
-                                                    className="absolute inset-0 rounded-lg glass-pill"
-                                                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                                                />
-                                            )}
-                                            <span className="relative z-10 mix-blend-normal flex items-center gap-2">
-                                                {search.label}
-                                                {streamingSearchIds[search.id] && (
-                                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                                                )}
-                                            </span>
-                                        </button>
-                                    ))}
-                                </div>
+                                        {/* Filters */}
+                                        <div className="shrink-0 flex justify-end">
+                                            <BoardFilterBar
+                                                sort={clientSort}
+                                                onSortChange={setClientSort}
+                                                dateFilter={clientDateFilter}
+                                                onDateFilterChange={setClientDateFilter}
+                                                platforms={platforms}
+                                                selectedPlatforms={selectedPlatforms}
+                                                onPlatformsChange={setSelectedPlatforms}
+                                            />
+                                        </div>
+                                    </div>
 
-                                {/* Results for Active Search */}
-                                {activeSearchId && (
-                                    <ClientFilteredResults
-                                        key={activeSearchId} // Force re-mount on change
-                                        results={resultsMap[activeSearchId] || []}
-                                        loading={(!!streamingSearchIds[activeSearchId] || !!loadingSearchIds[activeSearchId]) && (resultsMap[activeSearchId]?.length ?? 0) === 0}
-                                        resultsAreFlat
-                                        onAllResultsChange={setAllResults}
-                                    />
-                                )}
-                            </section>
-                        )}
-                    </>
-                )}
+                                    {/* Results for Active Search */}
+                                    {activeSearchId && (
+                                        <div className="mt-6">
+                                            <SelectableResultsGrid
+                                                key={`${activeSearchId}-${clientSort}-${clientDateFilter}-${selectedPlatforms.join(',')}`}
+                                                results={filteredResults}
+                                                loading={(!!streamingSearchIds[activeSearchId] || !!loadingSearchIds[activeSearchId]) && (filteredResults.length === 0)}
+                                                analysisDisabled={false}
+                                            />
+                                        </div>
+                                    )}
+                                </section>
+                            )}
+                        </>
+                    )}
+                </div>
             </div>
-
-            {/* Chat Sidebar (right) - uses existing ChatSidebar that's rendered in layout */}
-            {/* The ChatSidebar component is already rendered in the app layout */}
 
             {/* Selection Bar */}
             <SelectionBar itemsById={itemsById} />

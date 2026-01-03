@@ -112,6 +112,44 @@ export function useDeleteChat() {
     });
 }
 
+// Rename a chat
+export function useRenameChat() {
+    const queryClient = useQueryClient();
+    const { updateChatTitle } = useChatStore();
+
+    return useMutation({
+        mutationFn: async (input: { chatId: string; title: string }) => {
+            return fetchWithAuth<Chat>(`${BACKEND_URL}/v1/chats/${input.chatId}/title`, {
+                method: 'PATCH',
+                body: JSON.stringify({ title: input.title }),
+            });
+        },
+        onMutate: async ({ chatId, title }) => {
+            await queryClient.cancelQueries({ queryKey: ['chats'] });
+            const previous = queryClient.getQueriesData({ queryKey: ['chats'] });
+            updateChatTitle(chatId, title);
+            queryClient.setQueriesData({ queryKey: ['chats'] }, (oldData: any) => {
+                if (!Array.isArray(oldData)) return oldData;
+                return oldData.map((c: Chat) => (c.id === chatId ? { ...c, title } : c));
+            });
+            return { previous };
+        },
+        onError: (_err, _input, context) => {
+            if (!context?.previous) return;
+            context.previous.forEach(([queryKey, data]) => {
+                queryClient.setQueryData(queryKey, data);
+            });
+        },
+        onSuccess: (chat) => {
+            updateChatTitle(chat.id, chat.title || '');
+            queryClient.setQueriesData({ queryKey: ['chats'] }, (oldData: any) => {
+                if (!Array.isArray(oldData)) return oldData;
+                return oldData.map((c: Chat) => (c.id === chat.id ? { ...c, title: chat.title } : c));
+            });
+        },
+    });
+}
+
 // Fetch messages for a chat
 export function useChatMessages(chatId: string | null) {
     const setMessages = useChatStore((s) => s.setMessages);

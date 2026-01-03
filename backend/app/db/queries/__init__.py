@@ -95,6 +95,7 @@ from app.db.queries.chats import (
     get_chat_thread_id,
     check_chat_exists,
     delete_chat,
+    update_chat_title,
 )
 
 __all__ = [
@@ -155,4 +156,5 @@ __all__ = [
     "get_chat_thread_id",
     "check_chat_exists",
     "delete_chat",
+    "update_chat_title",
 ]

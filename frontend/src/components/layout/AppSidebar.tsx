@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
     LayoutGrid,
@@ -12,12 +12,13 @@ import {
     MessageSquare,
     ChevronRight,
     ChevronLeft,
-    LayoutPanelTop
+    LayoutPanelTop,
+    Pencil
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSearch } from "@/hooks/useSearch";
 import { useBoards } from "@/hooks/useBoards";
-import { useChatList } from "@/hooks/useChat";
+import { useChatList, useRenameChat } from "@/hooks/useChat";
 import { useChatStore } from "@/lib/chatStore";
 import { StaggerContainer, StaggerItem, AnimatePresence } from "@/components/ui/animations";
 import { useUser } from "@/hooks/useUser";
@@ -71,17 +72,28 @@ export function AppSidebar({
     const [activeTab, setActiveTab] = useState<'boards' | 'chats' | 'searches'>('chats');
     const [isRecentsModalOpen, setIsRecentsModalOpen] = useState(false);
     const [recentsModalTab, setRecentsModalTab] = useState<'chats' | 'searches'>('chats');
+    const [editingChatId, setEditingChatId] = useState<string | null>(null);
+    const [editingTitle, setEditingTitle] = useState('');
+    const editInputRef = useRef<HTMLInputElement | null>(null);
 
     const { openSidebar, setActiveChatId } = useChatStore();
     const { history, isLoadingHistory } = useSearch();
     const { boards, isLoadingBoards } = useBoards();
     const { data: allChats = [], isLoading: isLoadingChats } = useChatList(undefined, { setStore: false });
+    const renameChat = useRenameChat();
     const { user, profile } = useUser();
 
     // Reset mobile state on path change
     useEffect(() => {
         setIsMobileOpen(false);
     }, [pathname]);
+
+    useEffect(() => {
+        if (editingChatId) {
+            editInputRef.current?.focus();
+            editInputRef.current?.select();
+        }
+    }, [editingChatId]);
 
     // Helper to group chats by date
     const groupChatsByDate = (chats: any[]) => {
@@ -139,6 +151,7 @@ export function AppSidebar({
             : history.length;
 
     const handleOpenChat = (chatId: string) => {
+        if (editingChatId) return;
         const targetPath = `/app/chats/${chatId}`;
         setActiveChatId(chatId);
         openSidebar();
@@ -162,6 +175,29 @@ export function AppSidebar({
         setIsRecentsModalOpen(true);
     };
 
+    const startChatEdit = (chatId: string, title?: string) => {
+        setEditingChatId(chatId);
+        setEditingTitle(title || '');
+    };
+
+    const cancelChatEdit = () => {
+        setEditingChatId(null);
+        setEditingTitle('');
+    };
+
+    const commitChatEdit = async () => {
+        if (!editingChatId) return;
+        const nextTitle = editingTitle.trim();
+        const targetChatId = editingChatId;
+        cancelChatEdit();
+        if (!nextTitle) return;
+        try {
+            await renameChat.mutateAsync({ chatId: targetChatId, title: nextTitle });
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
     const handleNavClick = (label: string, path: string) => {
         if (label === 'Chats') {
             openRecentsModal('chats');
@@ -172,6 +208,101 @@ export function AppSidebar({
             return;
         }
         router.push(path);
+    };
+
+    const renderChatItem = (chat: any, options?: { showIcon?: boolean; onSelect?: () => void }) => {
+        const isEditing = editingChatId === chat.id;
+        const isActiveChat = isRecentActive('chats', chat.id);
+
+        return (
+            <div
+                key={chat.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                    if (isEditing) return;
+                    handleOpenChat(chat.id);
+                    options?.onSelect?.();
+                }}
+                onKeyDown={(event) => {
+                    if (isEditing) return;
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        handleOpenChat(chat.id);
+                        options?.onSelect?.();
+                    }
+                }}
+                className={cn(
+                    "w-full flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all text-left group relative overflow-hidden",
+                    isEditing
+                        ? "cursor-text border border-white/15 bg-transparent"
+                        : "cursor-pointer"
+                )}
+            >
+                <div className="relative z-10 flex items-center gap-2 min-w-0 flex-1">
+                    {options?.showIcon && (
+                        <MessageSquare
+                            size={16}
+                            className={cn(
+                                "shrink-0 transition-colors opacity-70",
+                                isActiveChat ? "text-white opacity-100" : "group-hover:text-gray-200 group-hover:opacity-100"
+                            )}
+                        />
+                    )}
+                    {isEditing ? (
+                        <input
+                            ref={editInputRef}
+                            value={editingTitle}
+                            onChange={(event) => setEditingTitle(event.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                    event.preventDefault();
+                                    commitChatEdit();
+                                }
+                                if (event.key === 'Escape') {
+                                    event.preventDefault();
+                                    cancelChatEdit();
+                                }
+                            }}
+                            onBlur={cancelChatEdit}
+                            className="w-full bg-transparent text-sm font-medium text-white placeholder:text-gray-500 outline-none"
+                        />
+                    ) : (
+                        <span
+                            className={cn(
+                                "text-sm truncate font-medium transition-colors",
+                                isActiveChat ? "text-white" : "text-gray-400 group-hover:text-gray-200"
+                            )}
+                        >
+                            {chat.title || "New Chat"}
+                        </span>
+                    )}
+                </div>
+                {!isEditing && (
+                    <button
+                        type="button"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            startChatEdit(chat.id, chat.title);
+                        }}
+                        className="relative z-10 ml-2 text-gray-400 hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                        aria-label="Rename chat"
+                    >
+                        <Pencil size={14} />
+                    </button>
+                )}
+                {isActiveChat && !isEditing && (
+                    <motion.div
+                        layoutId="recent-item-pill"
+                        className="absolute inset-0 rounded-lg bg-white/5 border border-white/5 shadow-sm"
+                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    />
+                )}
+                {!isActiveChat && !isEditing && (
+                    <div className="absolute inset-0 rounded-lg bg-white/5 border border-white/5 shadow-sm opacity-0 transition-opacity group-hover:opacity-100" />
+                )}
+            </div>
+        );
     };
 
     // Mobile View
@@ -260,18 +391,10 @@ export function AppSidebar({
                                                 isLoadingChats ? (
                                                     <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-gray-600" /></div>
                                                 ) : sortedChats.length > 0 ? (
-                                                    sortedChats.map((chat: any) => (
-                                                        <RecentsItem
-                                                            key={chat.id}
-                                                            label={chat.title || "New Chat"}
-                                                            icon={MessageSquare}
-                                                            active={isRecentActive('chats', chat.id)}
-                                                            onClick={() => {
-                                                                handleOpenChat(chat.id);
-                                                                setIsMobileOpen(false);
-                                                            }}
-                                                        />
-                                                    ))
+                                                    sortedChats.map((chat: any) => renderChatItem(chat, {
+                                                        showIcon: true,
+                                                        onSelect: () => setIsMobileOpen(false),
+                                                    }))
                                                 ) : (
                                                     <div className="px-3 py-8 text-[10px] text-gray-500 text-center border border-dashed border-white/5 rounded-xl">No active chats</div>
                                                 )
@@ -428,12 +551,7 @@ export function AppSidebar({
                                                         <div className="space-y-0.5">
                                                             {chats.map((chat: any) => (
                                                                 <StaggerItem key={chat.id}>
-                                                                    <RecentsItem
-                                                                        label={chat.title || "New Chat"}
-                                                                        // No icon for sidebar as requested
-                                                                        active={isRecentActive('chats', chat.id)}
-                                                                        onClick={() => handleOpenChat(chat.id)}
-                                                                    />
+                                                                    {renderChatItem(chat)}
                                                                 </StaggerItem>
                                                             ))}
                                                         </div>

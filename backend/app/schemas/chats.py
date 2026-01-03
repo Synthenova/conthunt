@@ -40,6 +40,9 @@ class SendMessageRequest(BaseModel):
     message: str
     client_id: Optional[str] = None
 
+class RenameChatRequest(BaseModel):
+    title: str
+
 class Message(BaseModel):
     id: Optional[str] = None
     type: str

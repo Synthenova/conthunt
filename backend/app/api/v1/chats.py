@@ -27,7 +27,8 @@ from app.schemas.chats import (
     CreateChatRequest, 
     SendMessageRequest, 
     Message, 
-    ChatHistory
+    ChatHistory,
+    RenameChatRequest,
 )
 
 router = APIRouter()
@@ -367,6 +368,29 @@ async def delete_chat(
         await conn.commit()
         
     return {"ok": True}
+
+
+@router.patch("/{chat_id}/title", response_model=Chat)
+async def rename_chat(
+    chat_id: uuid.UUID,
+    request: RenameChatRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Rename a chat session."""
+    user_id = user.get("uid")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, user_id)
+        await set_rls_user(conn, user_uuid)
+
+        chat = await queries.update_chat_title(conn, chat_id, request.title)
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        await conn.commit()
+
+    return chat
 
 
 @router.get("/{chat_id}/stream")
