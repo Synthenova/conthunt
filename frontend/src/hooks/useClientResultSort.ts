@@ -41,16 +41,30 @@ export function useClientResultSort(rawResults: any[], options: UseClientResultS
         if (clientDateFilter !== "all") {
             const now = new Date();
             const oneDay = 24 * 60 * 60 * 1000;
+            const sevenDays = 7 * oneDay;
+            const thirtyDays = 30 * oneDay;
+            const sixMonths = 6 * thirtyDays;
+            const oneYear = 365 * oneDay;
 
             results = results.filter(item => {
                 if (!item.published_at) return false;
                 const date = new Date(item.published_at);
                 const diffTime = Math.abs(now.getTime() - date.getTime());
 
-                if (clientDateFilter === "today") return diffTime < oneDay;
-                if (clientDateFilter === "week") return diffTime < (7 * oneDay);
-                if (clientDateFilter === "month") return diffTime < (30 * oneDay);
-                return true;
+                switch (clientDateFilter) {
+                    case "today":
+                        return diffTime < oneDay;
+                    case "week":
+                        return diffTime < sevenDays;
+                    case "month":
+                        return diffTime < thirtyDays;
+                    case "six_months":
+                        return diffTime < sixMonths;
+                    case "year":
+                        return diffTime < oneYear;
+                    default:
+                        return true;
+                }
             });
         }
 

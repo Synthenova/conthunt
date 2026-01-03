@@ -491,7 +491,7 @@ export default function ChatPage() {
                                             {/* Keyword Tabs (Scrollable) */}
                                             <div className="flex-1 min-w-0 flex justify-start">
                                                 <div className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto">
-                                                    {displaySearches.map((search) => (
+                                                    {[...displaySearches].reverse().map((search) => (
                                                         <button
                                                             key={search.id}
                                                             onClick={() => setActiveSearchId(search.id)}

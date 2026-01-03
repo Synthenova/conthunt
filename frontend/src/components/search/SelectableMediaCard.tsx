@@ -85,7 +85,7 @@ export function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: 
                     className={cn(
                         "h-6 w-6 rounded-md border-2 flex items-center justify-center overflow-hidden transition-opacity duration-200",
                         isSelected
-                            ? "bg-primary border-primary text-white opacity-100"
+                            ? "bg-primary border-primary text-primary-foreground opacity-100"
                             : selectionMode
                                 ? "bg-black/40 border-white/50 text-transparent hover:border-white hover:bg-black/60 opacity-100"
                                 : "bg-black/40 border-white/50 text-transparent hover:border-white hover:bg-black/60 opacity-0 group-hover/select:opacity-100"

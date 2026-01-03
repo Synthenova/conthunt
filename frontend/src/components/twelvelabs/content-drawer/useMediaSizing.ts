@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const MEDIA_BASE_VH = 0.6;
 const MEDIA_MIN_HEIGHT_PX = 320;
 const MEDIA_MAX_HEIGHT_PX = 560;
-const MEDIA_COLLAPSE_THRESHOLD = 1;
 const MEDIA_COLLAPSE_RATIO = 0.5;
 
 interface UseMediaSizingOptions {
@@ -16,7 +15,6 @@ export function useMediaSizing({ isOpen, item }: UseMediaSizingOptions) {
     const [mediaHeight, setMediaHeight] = useState<number | null>(null);
     const [isMediaCollapsed, setIsMediaCollapsed] = useState(false);
     const baseMediaHeightRef = useRef(0);
-    const scrollRafRef = useRef<number | null>(null);
 
     const setHeightFromBase = useCallback((collapsed: boolean) => {
         const baseHeight = baseMediaHeightRef.current;
@@ -25,6 +23,7 @@ export function useMediaSizing({ isOpen, item }: UseMediaSizingOptions) {
         setMediaHeight(Math.round(baseHeight * ratio));
     }, []);
 
+    // Calculate base height on open and resize
     useEffect(() => {
         if (!isOpen) return;
 
@@ -45,35 +44,48 @@ export function useMediaSizing({ isOpen, item }: UseMediaSizingOptions) {
         };
     }, [isOpen, isMediaCollapsed, setHeightFromBase]);
 
+    // Sync height when collapse state changes
     useEffect(() => {
         if (!isOpen) return;
         setHeightFromBase(isMediaCollapsed);
     }, [isOpen, isMediaCollapsed, setHeightFromBase]);
 
+    // Reset collapse state when drawer opens or item changes
     useEffect(() => {
         if (!isOpen || !item) return;
         setIsMediaCollapsed(false);
     }, [isOpen, item]);
 
-    const handleViewportScroll = useCallback(() => {
-        if (scrollRafRef.current !== null) return;
-        scrollRafRef.current = requestAnimationFrame(() => {
-            scrollRafRef.current = null;
-            const viewport = viewportRef.current;
-            if (!viewport) return;
-            const shouldCollapse = viewport.scrollTop > MEDIA_COLLAPSE_THRESHOLD;
-            setIsMediaCollapsed((prev) => (prev === shouldCollapse ? prev : shouldCollapse));
-        });
+    // Wheel handler - called directly from ScrollArea onWheel
+    const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+        const scrollTop = viewportRef.current?.scrollTop ?? 0;
+
+        if (e.deltaY > 0) {
+            // Scrolling DOWN - collapse
+            setIsMediaCollapsed(true);
+        } else if (e.deltaY < 0 && scrollTop <= 5) {
+            // Scrolling UP and at top - expand
+            setIsMediaCollapsed(false);
+        }
     }, []);
 
-    const handleViewportScrollEvent = useCallback(() => {
-        handleViewportScroll();
-    }, [handleViewportScroll]);
+    // Touch scroll handler
+    const handleScroll = useCallback(() => {
+        const viewport = viewportRef.current;
+        if (!viewport) return;
+
+        if (viewport.scrollTop <= 5) {
+            setIsMediaCollapsed(false);
+        } else if (viewport.scrollTop > 20) {
+            setIsMediaCollapsed(true);
+        }
+    }, []);
 
     return {
         viewportRef,
         mediaHeight,
         isMediaCollapsed,
-        handleViewportScrollEvent,
+        handleWheel,
+        handleScroll,
     };
 }

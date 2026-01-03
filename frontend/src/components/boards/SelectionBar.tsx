@@ -281,12 +281,12 @@ export function SelectionBar({
                                                     <div className={`
                                                     h-5 w-5 rounded border-2 flex items-center justify-center
                                                     ${isDisabledBoard || selectedBoards.includes(board.id)
-                                                            ? 'bg-primary border-primary'
+                                                            ? 'bg-primary border-primary text-primary-foreground'
                                                             : 'border-white/30'
                                                         }
                                                 `}>
                                                         {(isDisabledBoard || selectedBoards.includes(board.id)) && (
-                                                            <Check className="h-3 w-3 text-white" />
+                                                            <Check className="h-3 w-3 text-primary-foreground" />
                                                         )}
                                                     </div>
                                                     <div className="flex-1 min-w-0">

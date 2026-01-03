@@ -7,7 +7,6 @@ import { useBoards } from "@/hooks/useBoards";
 import { MediaSpotlight } from "./content-drawer/MediaSpotlight";
 import { ContentMetadata } from "./content-drawer/ContentMetadata";
 import { MetricsPanel } from "./content-drawer/MetricsPanel";
-import { BoardActions } from "./content-drawer/BoardActions";
 import { AnalysisPanel } from "./content-drawer/AnalysisPanel";
 import { useMediaSizing } from "./content-drawer/useMediaSizing";
 import { useContentAnalysis } from "./content-drawer/useContentAnalysis";
@@ -27,7 +26,7 @@ export function ContentDrawer({
     analysisDisabled = false,
     resumeTime = 0,
 }: ContentDrawerProps) {
-    const { viewportRef, mediaHeight, isMediaCollapsed, handleViewportScrollEvent } = useMediaSizing({ isOpen, item });
+    const { viewportRef, mediaHeight, isMediaCollapsed, handleWheel, handleScroll } = useMediaSizing({ isOpen, item });
     const { analysisResult, analyzing, polling, error, loadingMessage, handleAnalyze } = useContentAnalysis({
         item,
         isOpen,
@@ -53,16 +52,20 @@ export function ContentDrawer({
         [addToBoard, createBoard, item?.id, refetchBoards]
     );
 
-    const handleToggleBoard = useCallback(
-        async (board: any) => {
-            if (!item?.id) return;
-            if (board.has_item) return;
+    const handleAddToBoards = useCallback(
+        async (boardIds: string[]) => {
+            if (!item?.id || boardIds.length === 0) return;
 
             try {
-                await addToBoard({ boardId: board.id, contentItemIds: [item.id] });
+                // Add to each selected board
+                await Promise.all(
+                    boardIds.map((boardId) =>
+                        addToBoard({ boardId, contentItemIds: [item.id] })
+                    )
+                );
                 refetchBoards();
             } catch (error) {
-                console.error("Failed to add to board:", error);
+                console.error("Failed to add to boards:", error);
             }
         },
         [addToBoard, item?.id, refetchBoards]
@@ -85,23 +88,21 @@ export function ContentDrawer({
                 <ScrollArea
                     className="flex-1 min-h-0 bg-[#0E0E0E]"
                     viewportRef={viewportRef}
-                    onViewportScroll={handleViewportScrollEvent}
+                    onWheel={handleWheel}
+                    onViewportScroll={handleScroll}
                 >
                     <div className="px-5 pt-6 pb-8 space-y-6 border-t border-white/5 bg-gradient-to-b from-white/[0.03] to-transparent rounded-t-3xl">
-                        <ContentMetadata item={item} />
+                        <ContentMetadata
+                            item={item}
+                            boards={boards}
+                            isLoadingBoards={isLoadingBoards}
+                            isAddingToBoard={isAddingToBoard}
+                            isCreatingBoard={isCreatingBoard}
+                            onCreateBoard={handleCreateBoard}
+                            onAddToBoards={handleAddToBoards}
+                        />
 
                         <MetricsPanel item={item} />
-
-                        <div className="space-y-3">
-                            <BoardActions
-                                boards={boards}
-                                isLoadingBoards={isLoadingBoards}
-                                isAddingToBoard={isAddingToBoard}
-                                isCreatingBoard={isCreatingBoard}
-                                onCreateBoard={handleCreateBoard}
-                                onToggleBoard={handleToggleBoard}
-                            />
-                        </div>
 
                         <AnalysisPanel
                             analysisResult={analysisResult}

@@ -10,10 +10,12 @@ function ScrollArea({
   children,
   viewportRef,
   onViewportScroll,
+  onWheel,
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
   viewportRef?: React.RefObject<HTMLDivElement | null>
   onViewportScroll?: React.UIEventHandler<HTMLDivElement>
+  onWheel?: React.WheelEventHandler<HTMLDivElement>
 }) {
   return (
     <ScrollAreaPrimitive.Root
@@ -26,6 +28,7 @@ function ScrollArea({
         className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
         ref={viewportRef}
         onScroll={onViewportScroll}
+        onWheel={onWheel}
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

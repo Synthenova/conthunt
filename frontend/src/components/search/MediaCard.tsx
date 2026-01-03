@@ -1,3 +1,5 @@
+ "use client";
+
 import { AsyncImage } from "@/components/ui/async-image";
 import { GlassCard } from "@/components/ui/glass-card";
 import { AspectRatio } from "@/components/ui/aspect-ratio";

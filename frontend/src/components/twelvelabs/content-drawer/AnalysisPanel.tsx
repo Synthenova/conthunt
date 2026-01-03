@@ -25,16 +25,15 @@ export function AnalysisPanel({
     return (
         <div className="space-y-4">
             {!analysisResult && !analyzing && !polling ? (
-                <Button
+                <button
                     onClick={onAnalyze}
-                    variant="outline"
-                    className="w-full h-12 border-dashed border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900/30 text-zinc-400 hover:text-zinc-200 transition-all group"
+                    className="w-full glass-button-yellow h-12 text-base"
                     disabled={analysisDisabled}
                 >
-                    <Sparkles className="mr-2 h-4 w-4 text-yellow-500 group-hover:scale-110 transition-transform" />
+                    <Sparkles className="mr-2 h-4 w-4" />
                     {analysisDisabled ? "Analyze after search completes" : "Analyze with AI"}
-                    {!analysisDisabled && <span className="ml-2 text-xs text-zinc-600">(1 credit)</span>}
-                </Button>
+                    {!analysisDisabled && <span className="ml-2 text-xs opacity-60">(1 credit)</span>}
+                </button>
             ) : null}
 
             {(analyzing || polling) && (

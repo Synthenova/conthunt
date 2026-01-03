@@ -15,9 +15,22 @@
     --color-ring: hsl(var(--ring));
 
     --color-muted: hsl(var(--muted));
+    --color-muted-foreground: hsl(var(--muted-foreground));
 
     --color-surface: hsl(var(--surface));
     --color-surface-hover: hsl(var(--surface-hover));
+
+    --color-primary-foreground: hsl(var(--primary-foreground));
+    --color-secondary: hsl(var(--secondary));
+    --color-secondary-foreground: hsl(var(--secondary-foreground));
+    --color-accent-foreground: hsl(var(--accent-foreground));
+    --color-destructive: hsl(var(--destructive));
+    --color-destructive-foreground: hsl(var(--destructive-foreground));
+    --color-card: hsl(var(--card));
+    --color-card-foreground: hsl(var(--card-foreground));
+    --color-popover: hsl(var(--popover));
+    --color-popover-foreground: hsl(var(--popover-foreground));
+    --color-input: hsl(var(--input));
 
     --animate-shimmer: shimmer 8s infinite linear;
 
@@ -68,13 +81,25 @@
     /* Text Colors */
     --foreground: 0 0% 100%;
     --muted: 0 0% 60%;
+    --muted-foreground: 0 0% 70%;
 
     /* Border Colors */
     --border: 0 0% 20%;
     --ring: 0 0% 80.8%;
     /* Match accent */
 
-    --muted-foreground: 0 0% 60%;
+    --secondary: 0 0% 11%;
+    --secondary-foreground: 0 0% 100%;
+    --accent-foreground: 0 0% 0%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --input: 0 0% 13%;
+    --card: var(--surface);
+    --card-foreground: var(--foreground);
+    --popover: var(--surface);
+    --popover-foreground: var(--foreground);
 }
 
 @layer base {
@@ -130,7 +155,7 @@
 /* Glass Utilities (Basic generic fallback) */
 /* Selection Bar Frost (scoped) */
 .selection-bar-frost {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.11);
     backdrop-filter: blur(32px) saturate(160%) brightness(110%);
     -webkit-backdrop-filter: blur(36px) saturate(160%) brightness(100%);
 }
@@ -307,6 +332,49 @@
     background: linear-gradient(136.19deg, rgba(255, 255, 255, 1) 47.93%, rgba(240, 240, 240, 0.9) 100%);
     box-shadow: 0 0 40px rgba(255, 255, 255, 0.3);
     color: black;
+}
+
+/* Glass Button - Yellow Variant (AI Analyze) */
+.glass-button-yellow {
+    background: linear-gradient(136.19deg, rgba(234, 179, 8, 0.25) 47.93%, rgba(250, 204, 21, 0.15) 100%);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 69px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fde047;
+    border: 1px solid rgba(250, 204, 21, 0.2);
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.glass-button-yellow::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 69px;
+    padding: 1.5px;
+    background: linear-gradient(170deg, rgba(250, 204, 21, 0.5) 0%, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0) 60%, rgba(250, 204, 21, 0.5) 100%);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+}
+
+.glass-button-yellow:hover {
+    background: linear-gradient(136.19deg, rgba(234, 179, 8, 0.4) 47.93%, rgba(250, 204, 21, 0.3) 100%);
+    box-shadow: 0 0 40px rgba(234, 179, 8, 0.2);
+    color: #fef08a;
+}
+
+.glass-button-yellow:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 /* Dark Zone - Central column that blocks grid torch under content */

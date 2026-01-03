@@ -12,7 +12,7 @@ import {
 import { ArrowUpDown, Calendar, Filter } from "lucide-react";
 
 export type ClientSortOption = "default" | "views" | "likes" | "shares" | "comments" | "newest";
-export type ClientDateFilter = "all" | "today" | "week" | "month";
+export type ClientDateFilter = "all" | "today" | "week" | "month" | "six_months" | "year";
 
 interface ClientResultControlsProps {
     sort: ClientSortOption;
@@ -49,7 +49,9 @@ export function ClientResultControls({
         all: "Any Date",
         today: "Today",
         week: "This Week",
-        month: "This Month"
+        month: "This Month",
+        six_months: "Past 6 Months",
+        year: "Past Year"
     };
 
     return (
