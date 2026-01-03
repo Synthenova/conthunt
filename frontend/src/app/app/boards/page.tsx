@@ -100,7 +100,7 @@ export default function BoardsPage() {
 
                     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                         <DialogTrigger asChild>
-                            <Button className="flex items-center space-x-2">
+                            <Button className="flex items-center space-x-2 glass-button-white hover:text-black">
                                 <Plus size={18} />
                                 <span>New Board</span>
                             </Button>
