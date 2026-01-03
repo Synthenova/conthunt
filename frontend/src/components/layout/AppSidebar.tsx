@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
     LayoutGrid,
-    Home,
     Search,
     LogOut,
     ChevronRight,
@@ -23,21 +22,36 @@ import { StaggerContainer, StaggerItem, AnimatePresence } from "@/components/ui/
 import { useUser } from "@/hooks/useUser";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { motion } from "framer-motion";
+import { SearchIcon } from "@/components/ui/search";
+import { HistoryIcon } from "@/components/ui/history";
+import { LayoutPanelTopIcon } from "@/components/ui/layout-panel-top";
 
 const navItems = [
-    { title: "Home", path: "/app", icon: Home },
-    { title: "Boards", path: "/app/boards", icon: LayoutGrid },
-    { title: "Chats", path: "/app/chats", icon: MessageSquare },
-    // { title: "Searches", path: "/app/searches", icon: Search },
+    { title: "Search", path: "/app", icon: SearchIcon },
+    { title: "Chats", path: "/app/chats", icon: HistoryIcon },
+    { title: "Boards", path: "/app/boards", icon: LayoutPanelTopIcon },
 ];
 
 const NavItem = ({ icon: Icon, label, path, active, isCollapsed, onModalClick }: any) => {
     const isModalNav = label === 'Chats' || label === 'Searches';
+    const iconRef = React.useRef<any>(null);
+
+    const handleMouseEnter = () => {
+        iconRef.current?.startAnimation?.();
+    };
+
+    const handleMouseLeave = () => {
+        iconRef.current?.stopAnimation?.();
+    };
 
     const content = (
         <>
             <div className="relative z-10 flex items-center gap-3">
-                <Icon size={20} className={cn("transition-colors shrink-0", active ? "text-white" : "group-hover:text-gray-200")} />
+                <Icon
+                    ref={iconRef}
+                    size={20}
+                    className={cn("transition-colors shrink-0", active ? "text-white" : "group-hover:text-gray-200")}
+                />
                 {!isCollapsed && (
                     <span className="font-medium text-sm whitespace-nowrap overflow-hidden transition-all duration-300 origin-left">
                         {label}
@@ -66,14 +80,25 @@ const NavItem = ({ icon: Icon, label, path, active, isCollapsed, onModalClick }:
 
     if (isModalNav) {
         return (
-            <button type="button" onClick={onModalClick} className={classes}>
+            <button
+                type="button"
+                onClick={onModalClick}
+                className={classes}
+                onMouseEnter={handleMouseEnter}
+                onMouseLeave={handleMouseLeave}
+            >
                 {content}
             </button>
         );
     }
 
     return (
-        <Link href={path} className={classes}>
+        <Link
+            href={path}
+            className={classes}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+        >
             {content}
         </Link>
     );
