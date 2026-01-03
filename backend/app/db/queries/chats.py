@@ -1,5 +1,6 @@
+import json
 from typing import Optional, List, Tuple
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime
 
 from sqlalchemy import text
@@ -141,3 +142,72 @@ async def update_chat_title(
         created_at=res[7],
         updated_at=res[8],
     )
+
+
+@log_query_timing
+async def upsert_chat_tags(
+    conn: AsyncConnection,
+    chat_id: UUID,
+    tags: List[dict],
+) -> None:
+    """Upsert tags for a chat. Deduplicates on (chat_id, tag_type, tag_id)."""
+    if not tags:
+        return
+
+    prepared = []
+    for tag in tags:
+        prepared.append({
+            "id": str(tag.get("id") or uuid4()),
+            "chat_id": str(chat_id),
+            "tag_type": tag["type"],
+            "tag_id": str(tag["tag_id"]),
+            "tag_label": tag.get("label"),
+            "source": tag.get("source", "user"),
+        })
+
+    await conn.execute(
+        text("""
+            INSERT INTO conthunt.chat_tags (id, chat_id, tag_type, tag_id, tag_label, source)
+            SELECT id, chat_id, tag_type, tag_id, tag_label, source
+            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                id uuid,
+                chat_id uuid,
+                tag_type text,
+                tag_id uuid,
+                tag_label text,
+                source text
+            )
+            ON CONFLICT (chat_id, tag_type, tag_id) DO UPDATE
+            SET tag_label = COALESCE(EXCLUDED.tag_label, conthunt.chat_tags.tag_label),
+                source = EXCLUDED.source
+        """),
+        {"data": json.dumps(prepared)}
+    )
+
+
+@log_query_timing
+async def get_chat_tags(
+    conn: AsyncConnection,
+    chat_id: UUID,
+) -> List[dict]:
+    """Fetch tags for a chat."""
+    rows = await conn.execute(
+        text("""
+            SELECT id, tag_type, tag_id, tag_label, source, created_at
+            FROM conthunt.chat_tags
+            WHERE chat_id = :chat_id
+            ORDER BY created_at ASC
+        """),
+        {"chat_id": chat_id}
+    )
+    return [
+        {
+            "id": r[0],
+            "type": r[1],
+            "tag_id": r[2],
+            "label": r[3],
+            "source": r[4],
+            "created_at": r[5],
+        }
+        for r in rows
+    ]

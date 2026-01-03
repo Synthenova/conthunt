@@ -339,6 +339,11 @@ export function ChatInput({ context }: ChatInputProps) {
             : '';
 
         const fullMessage = [chipFence, messageText].filter(Boolean).join('\n\n');
+        const tagPayload = chips.map((chip) => ({
+            type: chip.type,
+            id: chip.id,
+            label: chip.type === 'media' ? (chip as MediaChip).title || chip.label : chip.label,
+        }));
 
         abortControllerRef.current = new AbortController();
 
@@ -352,15 +357,15 @@ export function ChatInput({ context }: ChatInputProps) {
                 if (isChatRoute) {
                     router.push(`/app/chats/${chat.id}`);
                 }
-                await sendMessage(fullMessage, abortControllerRef.current, chat.id);
+                await sendMessage(fullMessage, abortControllerRef.current, chat.id, { tags: tagPayload });
             } catch (err) {
                 console.error('Failed to create chat:', err);
                 resetStreaming();
             }
         } else {
-            await sendMessage(fullMessage, abortControllerRef.current);
+            await sendMessage(fullMessage, abortControllerRef.current, undefined, { tags: tagPayload });
         }
-    }, [message, isStreaming, chips, activeChatId, createChat, context, sendMessage, resetStreaming]);
+    }, [message, isStreaming, chips, activeChatId, createChat, context, sendMessage, resetStreaming, isChatRoute, router]);
 
     const handleStop = () => {
         if (abortControllerRef.current) {

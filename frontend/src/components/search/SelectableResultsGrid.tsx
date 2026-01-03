@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
-import { SelectableMediaCard } from "./SelectableMediaCard";
+"use client";
+
+import { useMemo } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
+import { VirtualizedResultsGrid } from "./VirtualizedResultsGrid";
 
 interface SelectableResultsGridProps {
     results: any[];
@@ -10,8 +11,6 @@ interface SelectableResultsGridProps {
 }
 
 export function SelectableResultsGrid({ results, loading, analysisDisabled = false }: SelectableResultsGridProps) {
-    const [selectedItem, setSelectedItem] = useState<any | null>(null);
-    const [selectedResumeTime, setSelectedResumeTime] = useState(0);
     const itemsById = useMemo(() => {
         const map: Record<string, any> = {};
         results.forEach((item) => {
@@ -49,37 +48,10 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
     }
 
     return (
-        <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">
-                {results.map((item, i) => (
-                    <div
-                        key={item.id || i}
-                        className="animate-in fade-in zoom-in duration-500 cursor-pointer"
-                        style={{ animationDelay: `${i * 50}ms` }}
-                    >
-                        <SelectableMediaCard
-                            item={item}
-                            platform={item.platform || 'unknown'}
-                            itemsById={itemsById}
-                            onOpen={(nextItem, resumeTime) => {
-                                setSelectedItem(nextItem);
-                                setSelectedResumeTime(resumeTime);
-                            }}
-                        />
-                    </div>
-                ))}
-            </div>
-
-            <ContentDrawer
-                isOpen={!!selectedItem}
-                onClose={() => {
-                    setSelectedItem(null);
-                    setSelectedResumeTime(0);
-                }}
-                item={selectedItem}
-                analysisDisabled={analysisDisabled}
-                resumeTime={selectedResumeTime}
-            />
-        </>
+        <VirtualizedResultsGrid
+            results={results}
+            analysisDisabled={analysisDisabled}
+            itemsById={itemsById}
+        />
     );
 }

@@ -12,6 +12,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, BackgroundTasks
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as redis
+from pydantic import BaseModel
 try:
     from psycopg.errors import OperationalError
 except Exception:  # pragma: no cover - fallback if psycopg isn't available
@@ -29,10 +30,14 @@ from app.schemas.chats import (
     Message, 
     ChatHistory,
     RenameChatRequest,
+    ChatTag,
 )
 
 router = APIRouter()
 settings = get_settings()
+
+class UpsertChatTagsRequest(BaseModel):
+    tags: List[ChatTag]
 
 # --- Dependencies ---
 
@@ -72,6 +77,7 @@ async def stream_generator_to_redis(
             "configurable": {
                 "thread_id": thread_id,
                 "x-auth-token": (context or {}).get("x-auth-token"),
+                "chat_id": chat_id,
             }
         }
         tool_run_ids = set()
@@ -282,6 +288,40 @@ async def list_chats(
         )
 
 
+@router.post("/{chat_id}/tags")
+async def upsert_tags(
+    chat_id: uuid.UUID,
+    request: UpsertChatTagsRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Attach tags to a chat (boards/searches/media)."""
+    user_id = user.get("uid")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, user_id)
+        await set_rls_user(conn, user_uuid)
+
+        exists = await queries.check_chat_exists(conn, chat_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
+        tags = [
+            {
+                "type": tag.type,
+                "tag_id": tag.id,
+                "label": tag.label,
+                "source": tag.source or "user",
+            }
+            for tag in (request.tags or [])
+        ]
+        await queries.upsert_chat_tags(conn, chat_id, tags)
+        await conn.commit()
+
+    return {"ok": True, "count": len(request.tags or [])}
+
+
 @router.post("/{chat_id}/send")
 async def send_message(
     chat_id: uuid.UUID,
@@ -312,6 +352,19 @@ async def send_message(
         thread_id = await queries.get_chat_thread_id(conn, chat_id)
         if not thread_id:
             raise HTTPException(status_code=404, detail="Chat not found")
+
+        if request.tags:
+            tags = [
+                {
+                    "type": tag.type,
+                    "tag_id": tag.id,
+                    "label": tag.label,
+                    "source": tag.source or "user",
+                }
+                for tag in request.tags
+            ]
+            await queries.upsert_chat_tags(conn, chat_id, tags)
+            await conn.commit()
         
     # Trigger Background Task
     user_message: dict = {"role": "user", "content": request.message}

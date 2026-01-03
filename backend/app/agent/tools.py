@@ -193,6 +193,9 @@ async def search(
         if not headers.get("Authorization"):
             return {"error": "Authentication required. Please provide x-auth-token."}
 
+        configurable = config.get("configurable", {}) if config else {}
+        chat_id = configurable.get("chat_id")
+
         search_ids = []
         errors = []
         
@@ -233,6 +236,20 @@ async def search(
                             "keyword": keyword,
                             "platforms": list(inputs.keys())
                         })
+                        if chat_id:
+                            try:
+                                tag_url = f"{_get_api_base_url()}/chats/{chat_id}/tags"
+                                tag_payload = {
+                                    "tags": [{
+                                        "type": "search",
+                                        "id": search_id,
+                                        "label": keyword,
+                                        "source": "agent",
+                                    }]
+                                }
+                                await client.post(tag_url, headers=headers, json=tag_payload)
+                            except Exception as tag_err:
+                                errors.append(f"Tagged search but failed to save to chat: {tag_err}")
             except Exception as e:
                 errors.append(f"Failed to start search for '{keyword}': {str(e)}")
         

@@ -36,9 +36,16 @@ class CreateChatRequest(BaseModel):
     context_type: Optional[Literal["board", "search"]] = None
     context_id: Optional[UUID] = None
 
+class ChatTag(BaseModel):
+    type: Literal["board", "search", "media"]
+    id: UUID
+    label: Optional[str] = None
+    source: Optional[Literal["user", "agent"]] = "user"
+
 class SendMessageRequest(BaseModel):
     message: str
     client_id: Optional[str] = None
+    tags: Optional[List[ChatTag]] = None
 
 class RenameChatRequest(BaseModel):
     title: str

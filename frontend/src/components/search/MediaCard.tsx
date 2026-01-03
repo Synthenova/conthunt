@@ -1,4 +1,4 @@
- "use client";
+"use client";
 
 import { AsyncImage } from "@/components/ui/async-image";
 import { GlassCard } from "@/components/ui/glass-card";
@@ -60,12 +60,12 @@ export function MediaCard({
         return link.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?/]+)/)?.[1] || item.id || null;
     }, [isYouTube, link, item.id]);
 
-    // Use YouTube Player hook - preload creates player on mount
+    // Use YouTube Player hook - lazy load (no preload) for performance
     const shouldMuteYoutube = mediaMuted || !isPlaying;
 
     const youtube = useYouTubePlayer({
         videoId: youtubeId,
-        preload: true,
+        preload: false,
         muted: shouldMuteYoutube,
         onReady: () => {
             // Get duration from player
@@ -121,9 +121,6 @@ export function MediaCard({
     }, [stopYouTubeTimeTracking]);
 
     const handleHover = useCallback((isHovering: boolean) => {
-        console.log('[MediaCard] handleHover called:', isHovering, 'videoId:', youtubeId?.slice(0, 6));
-        console.trace('[MediaCard] handleHover stack trace');
-
         setIsPlaying(isHovering);
         onHoverStateChange?.(isHovering);
 
@@ -142,11 +139,9 @@ export function MediaCard({
         // Handle YouTube videos
         if (isYouTube && youtubeId) {
             if (isHovering) {
-                console.log('[MediaCard] Calling youtube.play()');
                 youtube.play();
                 startYouTubeTimeTracking();
             } else {
-                console.log('[MediaCard] Calling youtube.pause()');
                 stopYouTubeTimeTracking();
                 youtube.pause();
                 youtube.seekTo(0);
@@ -220,14 +215,7 @@ export function MediaCard({
         // Check if we're actually leaving the card vs entering a child element
         // relatedTarget is the element we're entering - if it's inside the card, ignore
         const relatedTarget = e.relatedTarget as Node | null;
-        console.log('[MediaCard] handleMouseLeave debug:', {
-            relatedTarget,
-            relatedTargetTagName: (relatedTarget as HTMLElement)?.tagName,
-            cardRefExists: !!cardRef.current,
-            containsRelated: cardRef.current?.contains(relatedTarget as Node),
-        });
         if (relatedTarget && cardRef.current?.contains(relatedTarget)) {
-            console.log('[MediaCard] Ignoring mouseLeave - entering child element');
             return;
         }
         handleHover(false);
@@ -240,7 +228,7 @@ export function MediaCard({
             onMouseLeave={handleMouseLeave}
         >
             <GlassCard
-                className="group relative overflow-hidden h-full flex flex-col border-0 bg-surface/40 backdrop-blur-md shadow-2xl shadow-black/20"
+                className="group relative overflow-hidden h-full flex flex-col border-0 bg-surface/80 shadow-xl shadow-black/20"
                 hoverEffect={false}
             >
                 <div className="relative w-full h-full">

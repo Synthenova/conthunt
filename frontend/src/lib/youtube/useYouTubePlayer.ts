@@ -43,12 +43,6 @@ interface UseYouTubePlayerReturn {
     isMuted: () => boolean;
 }
 
-// Debug helper
-const DEBUG_YT = true;
-const logYT = (videoId: string | null, ...args: any[]) => {
-    if (DEBUG_YT) console.log(`[YT:${videoId?.slice(0, 6) || 'null'}]`, ...args);
-};
-
 export function useYouTubePlayer({
     videoId,
     preload = true,
@@ -92,26 +86,16 @@ export function useYouTubePlayer({
     }, [preload]);
 
     const createPlayer = useCallback(async () => {
-        logYT(videoIdRef.current, 'createPlayer called', {
-            hasContainer: !!containerElRef.current,
-            hasVideoId: !!videoIdRef.current,
-            hasPlayer: !!playerRef.current,
-            isInitializing: initializingRef.current,
-        });
-
         if (!containerElRef.current || !videoIdRef.current) return;
         if (playerRef.current) return;
         if (initializingRef.current) return;
 
         initializingRef.current = true;
-        logYT(videoIdRef.current, 'createPlayer starting initialization');
 
         try {
             await loadYouTubeAPI();
-            logYT(videoIdRef.current, 'YouTube API loaded');
 
             if (!containerElRef.current || !window.YT?.Player) {
-                logYT(videoIdRef.current, 'createPlayer aborted - container or API missing after load');
                 initializingRef.current = false;
                 return;
             }
@@ -123,7 +107,6 @@ export function useYouTubePlayer({
                 playerDivRef.current = div;
             }
 
-            logYT(videoIdRef.current, 'Creating YT.Player instance');
             const player = new window.YT.Player(playerDivRef.current, {
                 width: "100%",
                 height: "100%",
@@ -131,17 +114,12 @@ export function useYouTubePlayer({
                 playerVars: PLAYER_VARS,
                 events: {
                     onReady: () => {
-                        logYT(videoIdRef.current, 'onReady fired', {
-                            pendingPlay: pendingPlayRef.current,
-                            hasPrimed: hasPrimedRef.current,
-                        });
                         isReadyRef.current = true;
                         setIsReady(true);
                         onReadyRef.current?.();
 
                         // If play was requested before ready, play now
                         if (pendingPlayRef.current && hasPrimedRef.current) {
-                            logYT(videoIdRef.current, 'onReady: playing due to pendingPlay + primed');
                             pendingPlayRef.current = false;
                             try {
                                 playerRef.current?.playVideo();
@@ -152,16 +130,9 @@ export function useYouTubePlayer({
                     },
                     onStateChange: (event) => {
                         const state = event.data as PlayerState;
-                        logYT(videoIdRef.current, 'onStateChange', {
-                            state,
-                            stateName: ['unstarted', 'ended', 'playing', 'paused', 'buffering', 'cued'][state + 1] || state,
-                            hasPrimed: hasPrimedRef.current,
-                            pendingPlay: pendingPlayRef.current,
-                        });
 
                         // When video starts playing for the first time, pause it immediately
                         if (state === 1 && !hasPrimedRef.current) {
-                            logYT(videoIdRef.current, 'Priming: pausing and seeking to 0');
                             hasPrimedRef.current = true;
                             event.target.pauseVideo();
                             event.target.seekTo(0, true);
@@ -170,7 +141,6 @@ export function useYouTubePlayer({
 
                             // If play was requested, play now that we're primed
                             if (pendingPlayRef.current) {
-                                logYT(videoIdRef.current, 'Priming complete: playing due to pendingPlay');
                                 pendingPlayRef.current = false;
                                 setTimeout(() => {
                                     try {
@@ -190,7 +160,6 @@ export function useYouTubePlayer({
             });
 
             playerRef.current = player;
-            logYT(videoIdRef.current, 'Player instance created and assigned');
         } catch (error) {
             console.error("Failed to create YouTube player:", error);
         } finally {
@@ -199,16 +168,8 @@ export function useYouTubePlayer({
     }, []);
 
     const play = useCallback(() => {
-        logYT(videoIdRef.current, 'play() called', {
-            hasPlayer: !!playerRef.current,
-            isReady: isReadyRef.current,
-            hasPrimed: hasPrimedRef.current,
-            pendingPlay: pendingPlayRef.current,
-        });
-
         // If player doesn't exist, create it and mark pending play
         if (!playerRef.current) {
-            logYT(videoIdRef.current, 'play(): No player, setting pendingPlay and creating');
             pendingPlayRef.current = true;
             createPlayer();
             return;
@@ -216,7 +177,6 @@ export function useYouTubePlayer({
 
         // If player exists but not ready, wait for ready
         if (!isReadyRef.current) {
-            logYT(videoIdRef.current, 'play(): Player exists but not ready, setting pendingPlay');
             pendingPlayRef.current = true;
             return;
         }
@@ -224,13 +184,11 @@ export function useYouTubePlayer({
         // If ready but not primed yet, wait for priming to complete
         // The onStateChange handler will start playback when priming finishes
         if (!hasPrimedRef.current) {
-            logYT(videoIdRef.current, 'play(): Ready but not primed, setting pendingPlay');
             pendingPlayRef.current = true;
             return;
         }
 
         // If primed and ready, play immediately
-        logYT(videoIdRef.current, 'play(): Playing immediately (ready + primed)');
         try {
             playerRef.current.playVideo();
         } catch (e) {
@@ -392,11 +350,6 @@ export function useYouTubePlayer({
     }, [videoId, isReady]);
 
     const containerRef = useCallback((el: HTMLDivElement | null) => {
-        logYT(videoIdRef.current, 'containerRef callback', {
-            hasElement: !!el,
-            hasObserver: !!observerRef.current,
-        });
-
         // Clean up old observation
         if (containerElRef.current && observerRef.current) {
             observerRef.current.unobserve(containerElRef.current);
@@ -416,12 +369,6 @@ export function useYouTubePlayer({
             // Check if element is in viewport (simple check)
             const rect = el.getBoundingClientRect();
             const isInViewport = rect.top < window.innerHeight + 200 && rect.bottom > -200;
-            logYT(videoIdRef.current, 'containerRef visibility check', {
-                isInViewport,
-                rectTop: rect.top,
-                rectBottom: rect.bottom,
-                windowHeight: window.innerHeight,
-            });
             if (isInViewport) {
                 hasBeenVisibleRef.current = true;
                 setIsVisible(true);

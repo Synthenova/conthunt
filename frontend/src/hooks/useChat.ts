@@ -237,6 +237,7 @@ export function useSendMessage() {
         options?: {
             detach?: boolean;
             onSendOk?: () => void;
+            tags?: Array<{ type: 'board' | 'search' | 'media'; id: string; label?: string }>;
         }
     ) => {
         // Use passed chatId or fall back to activeChatId from store
@@ -264,6 +265,15 @@ export function useSendMessage() {
         startStreaming();
 
         try {
+            const payload: any = { message, client_id: clientId };
+            if (options?.tags?.length) {
+                payload.tags = options.tags.map((t) => ({
+                    type: t.type,
+                    id: t.id,
+                    label: t.label,
+                }));
+            }
+
             // 1. Send message to start background streaming
             const sendRes = await fetch(`${BACKEND_URL}/v1/chats/${targetChatId}/send`, {
                 method: 'POST',
@@ -271,7 +281,7 @@ export function useSendMessage() {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ message, client_id: clientId }),
+                body: JSON.stringify(payload),
                 signal: controller.signal,
             });
 
