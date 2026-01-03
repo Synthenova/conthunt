@@ -1,5 +1,8 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
 @plugin "tailwindcss-animate";
+@plugin "@tailwindcss/typography";
 
 @theme {
     --color-background: hsl(var(--background));
@@ -104,14 +107,16 @@
     }
 }
 
-
 /* =========================================
    USER RESTORED STYLES (Glass & Effects)
    ========================================= */
 
 /* Glass Utilities (Basic generic fallback) */
-.glass {
-    @apply bg-white/5 backdrop-blur-md border border-white/10;
+/* Selection Bar Frost (scoped) */
+.selection-bar-frost {
+    background-color: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(32px) saturate(160%) brightness(110%);
+    -webkit-backdrop-filter: blur(36px) saturate(160%) brightness(100%);
 }
 
 /* Glass Pill - Premium Active Indicator */
@@ -379,4 +384,14 @@ header {
     -webkit-mask-image: radial-gradient(1456px 1040px at var(--mouse-x, 50%) var(--mouse-y, 50%),
             black 0%,
             transparent 40%);
+}
+
+@layer base {
+    * {
+        @apply border-border outline-ring/50;
+    }
+
+    body {
+        @apply bg-background text-foreground;
+    }
 }

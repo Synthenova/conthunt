@@ -11,7 +11,7 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
-import { Check, ChevronDown, Plus, X, Loader2, FolderPlus, Download, Trash2, Sparkles, MessageSquarePlus } from "lucide-react";
+import { Check, ChevronDown, Plus, X, Loader2, FolderPlus, Download, Trash2, MessageSquarePlus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { auth } from "@/lib/firebaseClient";
 import { toast } from "sonner";
@@ -44,7 +44,6 @@ export function SelectionBar({
     const [newBoardName, setNewBoardName] = useState("");
     const [showNewBoardInput, setShowNewBoardInput] = useState(false);
     const [isDownloading, setIsDownloading] = useState(false);
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
 
     const count = selectedItems.length;
     const downloadableItems = useMemo(() => {
@@ -58,7 +57,7 @@ export function SelectionBar({
         });
     }, [itemsById, selectedItems]);
 
-    const analyzableItems = useMemo(() => {
+    const chatAddableItems = useMemo(() => {
         const items = selectedItems
             .map((id) => itemsById[id])
             .filter(Boolean);
@@ -111,71 +110,6 @@ export function SelectionBar({
         }
     };
 
-
-    const handleAnalyzeSelected = async () => {
-        if (isAnalyzing || analyzableItems.length === 0) return;
-
-        setIsAnalyzing(true);
-
-        try {
-            const user = auth.currentUser;
-            if (!user) {
-                throw new Error("User not authenticated");
-            }
-            const token = await user.getIdToken();
-            const { BACKEND_URL } = await import('@/lib/api');
-            const backendUrl = BACKEND_URL;
-
-            const requests = analyzableItems
-                .map((item: any) => {
-                    const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
-                    const mediaAssetId = videoAsset?.id;
-                    if (!mediaAssetId) return null;
-                    return fetch(`${backendUrl}/v1/video-analysis/${mediaAssetId}`, {
-                        method: "POST",
-                        headers: {
-                            Authorization: `Bearer ${token}`,
-                            "Content-Type": "application/json",
-                        },
-                    });
-                })
-                .filter(Boolean) as Promise<Response>[];
-
-            if (requests.length === 0) {
-                toast.error("No videos available for analysis.");
-                return;
-            }
-
-            const results = await Promise.allSettled(requests);
-
-            let startedCount = 0;
-            let failedCount = 0;
-
-            results.forEach((result) => {
-                if (result.status === "fulfilled") {
-                    if (result.value.ok) {
-                        startedCount += 1;
-                    } else {
-                        failedCount += 1;
-                    }
-                } else {
-                    failedCount += 1;
-                }
-            });
-
-            if (startedCount > 0) {
-                toast.info("Analysis started. They'll be ready in a minute.");
-            }
-            if (failedCount > 0) {
-                toast.error(`Failed to start ${failedCount} analysis${failedCount === 1 ? "" : "es"}.`);
-            }
-        } catch (error) {
-            console.error("Failed to start analysis:", error);
-            toast.error("Failed to start analysis.");
-        } finally {
-            setIsAnalyzing(false);
-        }
-    };
 
     const handleAddToChat = () => {
         if (selectedItems.length === 0) return;
@@ -267,7 +201,11 @@ export function SelectionBar({
 
     return (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4 duration-300">
-            <GlassCard className="px-4 py-3 flex items-center gap-4 shadow-2xl border border-white/10">
+            <GlassCard
+                blur="3xl"
+                intensity="high"
+                className="px-4 py-3 flex items-center gap-4 shadow-2xl border border-white/20 rounded-full selection-bar-frost"
+            >
                 {/* Selection Count */}
                 <div className="flex items-center gap-2">
                     <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center">
@@ -286,7 +224,7 @@ export function SelectionBar({
                         <PopoverTrigger asChild>
                             <Button
                                 variant="default"
-                                className="gap-2"
+                                className="gap-2 glass-button-white hover:text-black"
                                 disabled={isAddingToBoard}
                             >
                                 {isAddingToBoard ? (
@@ -420,27 +358,12 @@ export function SelectionBar({
                 )}
 
 
-                {/* Analyze Selected */}
-                <Button
-                    variant="secondary"
-                    className="gap-2"
-                    onClick={handleAnalyzeSelected}
-                    disabled={isAnalyzing || analyzableItems.length === 0}
-                >
-                    {isAnalyzing ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                        <Sparkles className="h-4 w-4" />
-                    )}
-                    Analyze
-                </Button>
-
                 {/* Add to Chat */}
                 <Button
                     variant="secondary"
-                    className="gap-2"
+                    className="gap-2 rounded-full text-white cursor-pointer"
                     onClick={handleAddToChat}
-                    disabled={analyzableItems.length === 0}
+                    disabled={count === 0}
                 >
                     <MessageSquarePlus className="h-4 w-4" />
                     Add to chat
@@ -449,9 +372,9 @@ export function SelectionBar({
                 {/* Download Selected */}
                 <Button
                     variant="secondary"
-                    className="gap-2"
+                    className="gap-2 rounded-full text-white cursor-pointer"
                     onClick={handleDownloadZip}
-                    disabled={downloadDisabled || isDownloading || downloadableItems.length === 0}
+                    disabled={downloadDisabled || isDownloading || count === 0}
                 >
                     {isDownloading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -464,8 +387,8 @@ export function SelectionBar({
                 {/* Remove from Board */}
                 {showRemoveFromBoard && onRemoveSelected && (
                     <Button
-                        variant="destructive"
-                        className="gap-2"
+                        variant="ghost"
+                        className="gap-2 glass-button-red h-9 px-4"
                         onClick={onRemoveSelected}
                         disabled={removeDisabled}
                     >

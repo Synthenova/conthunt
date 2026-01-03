@@ -167,32 +167,66 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                 }
                             >
                                 {msg.type === 'human' ? (
-                                    parseMessageSegments(msg.content).map((segment, index) => (
-                                        segment.type === 'chip' ? (() => {
-                                            const chipMeta = parseChipLabel(segment.value);
-                                            return (
-                                                <span
-                                                    key={`${msg.id}-chip-${index}`}
-                                                    className="inline-flex items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10"
-                                                >
-                                                    {chipMeta.icon === "board" && (
-                                                        <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
-                                                    )}
-                                                    {chipMeta.icon === "search" && (
-                                                        <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                                                    )}
-                                                    {chipMeta.Icon && (
-                                                        <chipMeta.Icon className="text-[12px]" />
-                                                    )}
-                                                    <span className="truncate" title={chipMeta.text}>
-                                                        {truncateLabel(chipMeta.text)}
-                                                    </span>
-                                                </span>
-                                            );
-                                        })() : (
-                                            <span key={`${msg.id}-text-${index}`}>{segment.value}</span>
-                                        )
-                                    ))
+                                    (() => {
+                                        const segments = parseMessageSegments(msg.content);
+                                        const groups: { type: 'text' | 'chip-group'; value?: string; items?: string[] }[] = [];
+
+                                        let currentGroup: string[] = [];
+
+                                        segments.forEach((seg) => {
+                                            if (seg.type === 'chip') {
+                                                currentGroup.push(seg.value);
+                                            } else {
+                                                if (currentGroup.length > 0) {
+                                                    groups.push({ type: 'chip-group', items: [...currentGroup] });
+                                                    currentGroup = [];
+                                                }
+                                                groups.push({ type: 'text', value: seg.value });
+                                            }
+                                        });
+
+                                        if (currentGroup.length > 0) {
+                                            groups.push({ type: 'chip-group', items: [...currentGroup] });
+                                        }
+
+                                        return groups.map((group, groupIndex) => {
+                                            if (group.type === 'chip-group' && group.items) {
+                                                return (
+                                                    <div
+                                                        key={`${msg.id}-group-${groupIndex}`}
+                                                        className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 mb-2 max-w-full"
+                                                    >
+                                                        {group.items.map((chipValue, chipIndex) => {
+                                                            const chipMeta = parseChipLabel(chipValue);
+                                                            return (
+                                                                <span
+                                                                    key={`${msg.id}-chip-${groupIndex}-${chipIndex}`}
+                                                                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10"
+                                                                >
+                                                                    {chipMeta.icon === "board" && (
+                                                                        <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                    )}
+                                                                    {chipMeta.icon === "search" && (
+                                                                        <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                    )}
+                                                                    {chipMeta.Icon && (
+                                                                        <chipMeta.Icon className="text-[12px]" />
+                                                                    )}
+                                                                    <span className="truncate" title={chipMeta.text}>
+                                                                        {truncateLabel(chipMeta.text)}
+                                                                    </span>
+                                                                </span>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                );
+                                            } else {
+                                                return (
+                                                    <span key={`${msg.id}-text-${groupIndex}`}>{group.value}</span>
+                                                );
+                                            }
+                                        });
+                                    })()
                                 ) : (
                                     msg.content
                                 )}

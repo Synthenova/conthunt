@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 
 interface GlassPanelProps extends React.HTMLAttributes<HTMLDivElement> {
     hoverEffect?: boolean;
-    blur?: "sm" | "md" | "lg" | "xl";
+    blur?: "sm" | "md" | "lg" | "xl" | "2xl" | "3xl";
     intensity?: "low" | "medium" | "high";
 }
 
@@ -35,6 +35,9 @@ export function GlassPanel({
                 blur === "md" && "backdrop-blur-md",
                 blur === "lg" && "backdrop-blur-lg",
                 blur === "xl" && "backdrop-blur-xl",
+                blur === "2xl" && "backdrop-blur-2xl",
+                blur === "3xl" && "backdrop-blur-3xl",
+                (blur === "2xl" || blur === "3xl") && "backdrop-saturate-150 backdrop-brightness-110",
 
                 // Background intensity
                 intensity === "low" && "bg-white/3",

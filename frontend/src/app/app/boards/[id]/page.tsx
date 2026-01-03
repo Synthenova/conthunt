@@ -309,25 +309,27 @@ export default function BoardDetailPage() {
                                             : "Run insights to summarize patterns across this board."}
                                     </p>
                                 </div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                    {isProcessingInsights ? (
-                                        <Badge variant="outline" className="border-white/10 text-muted-foreground">
-                                            Updating...
-                                        </Badge>
-                                    ) : null}
-                                    <Button
-                                        onClick={handleRefreshInsights}
-                                        disabled={isRefreshingInsights || isProcessingInsights}
-                                        className="gap-2 glass-button-white hover:text-black"
-                                    >
-                                        {isRefreshingInsights || isProcessingInsights ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                            <RefreshCw className="h-4 w-4" />
-                                        )}
-                                        Update insights
-                                    </Button>
-                                </div>
+                                {hasInsights ? (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        {isProcessingInsights ? (
+                                            <Badge variant="outline" className="border-white/10 text-muted-foreground">
+                                                Updating...
+                                            </Badge>
+                                        ) : null}
+                                        <Button
+                                            onClick={handleRefreshInsights}
+                                            disabled={isRefreshingInsights || isProcessingInsights}
+                                            className="gap-2 glass-button-white hover:text-black"
+                                        >
+                                            {isRefreshingInsights || isProcessingInsights ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <RefreshCw className="h-4 w-4" />
+                                            )}
+                                            Update insights
+                                        </Button>
+                                    </div>
+                                ) : null}
                             </div>
 
                             {transformedItems.length === 0 ? (
@@ -364,17 +366,18 @@ export default function BoardDetailPage() {
                                     ))}
                                 </div>
                             ) : !hasInsights ? (
-                                <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4">
-                                    <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
-                                        <Sparkles className="h-8 w-8 text-muted-foreground" />
+                                <div className="min-h-[55vh] flex flex-col items-center justify-center text-center gap-4 py-16">
+                                    <div className="h-14 w-14 rounded-full bg-white/5 flex items-center justify-center">
+                                        <Sparkles className="h-7 w-7 text-white/80" />
                                     </div>
-                                    <h3 className="text-xl font-medium">
-                                        {isProcessingInsights ? "Generating insights..." : "Your insights are ready when you are"}
-                                    </h3>
-                                    <p className="text-muted-foreground max-w-xl">
-                                        We will run analysis on all the videos in this board and return a strategy-ready
-                                        snapshot. Once started, please check back in about 2-3 minutes.
-                                    </p>
+                                    <div className="space-y-2 max-w-xl">
+                                        <h3 className="text-2xl font-semibold text-white">
+                                            {isProcessingInsights ? "Generating insights..." : "Get insights when you are ready"}
+                                        </h3>
+                                        <p className="text-sm text-muted-foreground">
+                                            Run insights to surface hooks, angles, and patterns across this board. Results land in 2–3 minutes.
+                                        </p>
+                                    </div>
                                     <Button
                                         onClick={handleRefreshInsights}
                                         disabled={isRefreshingInsights || isProcessingInsights}
@@ -385,9 +388,9 @@ export default function BoardDetailPage() {
                                         ) : (
                                             <Sparkles className="h-4 w-4" />
                                         )}
-                                        {isProcessingInsights ? "Working..." : "Update insights"}
+                                        {isProcessingInsights ? "Working..." : "Get insights"}
                                     </Button>
-                                </BoardGlassCard>
+                                </div>
                             ) : (
                                 <div className="grid gap-4 lg:grid-cols-2">
                                     <Card className="glass border-white/10 overflow-hidden gap-0 py-0">

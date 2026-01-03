@@ -310,7 +310,9 @@ export default function ChatPage() {
         // Remove duplicates by ID
         const unique = new Map();
         aggregated.forEach(item => unique.set(item.id, item));
-        setRawSearchResults(Array.from(unique.values()));
+        const merged = Array.from(unique.values());
+        setRawSearchResults(merged);
+        setAllResults(merged);
     }, [resultsMap]);
 
 

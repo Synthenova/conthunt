@@ -411,13 +411,13 @@ export function ChatInput({ context }: ChatInputProps) {
                 )}
             >
                 {chips.length > 0 && (
-                    <div className="flex flex-wrap gap-2 px-2 pt-2">
+                    <div className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 px-2 pt-2">
                         {chips.map((chip) => {
                             const PlatformIcon = chip.type === 'media' ? getPlatformIcon(chip.platform) : null;
                             return (
                                 <span
                                     key={`${chip.type}-${chip.id}`}
-                                    className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
+                                    className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
                                 >
                                     {chip.type === 'board' && (
                                         <>
