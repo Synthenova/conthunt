@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { auth } from "@/lib/firebaseClient";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Check, Loader2, Sparkles, Play, Link as LinkIcon, Save, StickyNote, Plu
 import { Input } from "@/components/ui/input";
 import { useBoards } from "@/hooks/useBoards";
 import { cn } from "@/lib/utils";
+import { useYouTubePlayer } from "@/lib/youtube";
 
 // Fun loading messages for AI analysis
 const LOADING_MESSAGES = [
@@ -62,26 +63,26 @@ export function ContentDrawer({
     const [isMediaCollapsed, setIsMediaCollapsed] = useState(false);
     const analysisNotReadyRetries = useRef(0);
     const videoRef = useRef<HTMLVideoElement>(null);
-    const youtubeRef = useRef<HTMLIFrameElement>(null);
-    const lastSeekTimeRef = useRef<number | null>(null);
     const baseMediaHeightRef = useRef(0);
     const scrollRafRef = useRef<number | null>(null);
     const isYouTube = item?.platform === 'youtube' || item?.platform === 'youtube_search';
     const link = item?.url || item?.canonical_url;
-    const youtubeId = isYouTube && link
-        ? (link.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?/]+)/)?.[1] || item?.external_id || item?.id)
-        : null;
+    const youtubeId = useMemo(() => {
+        if (!isYouTube || !link) return null;
+        return link.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?/]+)/)?.[1] || item?.external_id || item?.id || null;
+    }, [isYouTube, link, item?.external_id, item?.id]);
 
-    const handleYouTubeSeek = (seekTime: number) => {
-        if (!youtubeRef.current) return;
-        if (seekTime <= 0) return;
-        if (lastSeekTimeRef.current === seekTime) return;
-        youtubeRef.current.contentWindow?.postMessage(
-            JSON.stringify({ event: "command", func: "seekTo", args: [seekTime, true] }),
-            "*"
-        );
-        lastSeekTimeRef.current = seekTime;
-    };
+    // YouTube Player hook
+    const youtube = useYouTubePlayer({
+        videoId: youtubeId,
+        preload: true,
+        muted: false,
+        onReady: () => {
+            if (resumeTime > 0) {
+                youtube.seekTo(resumeTime);
+            }
+        },
+    });
 
     // Board Management
     const [isBoardPopoverOpen, setIsBoardPopoverOpen] = useState(false);
@@ -228,7 +229,6 @@ export function ContentDrawer({
             setIsPlaying(true);
             setIsMediaCollapsed(false);
             analysisNotReadyRetries.current = 0;
-            lastSeekTimeRef.current = null;
         }
     }, [isOpen, item]);
 
@@ -316,8 +316,10 @@ export function ContentDrawer({
         if (!isPlaying) return;
         if (!isYouTube) return;
         if (resumeTime <= 0) return;
-        handleYouTubeSeek(resumeTime);
-    }, [isPlaying, isYouTube, resumeTime]);
+        if (youtube.isReady) {
+            youtube.seekTo(resumeTime);
+        }
+    }, [isPlaying, isYouTube, resumeTime, youtube]);
 
     const handleAnalyze = async () => {
         if (!item || analyzing || polling || analysisDisabled) return;  // Guard against duplicate calls
@@ -392,14 +394,21 @@ export function ContentDrawer({
                         ) : (
                             (() => {
                                 if (isYouTube && youtubeId) {
+                                    // Start playback when player renders
+                                    if (youtube.isReady) {
+                                        youtube.play();
+                                        youtube.unmute();
+                                        if (resumeTime > 0) {
+                                            youtube.seekTo(resumeTime);
+                                        }
+                                    } else {
+                                        // Will auto-play when ready via onReady callback
+                                        youtube.play();
+                                    }
                                     return (
-                                        <iframe
-                                            ref={youtubeRef}
-                                            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&modestbranding=1&playsinline=1&enablejsapi=1`}
+                                        <div
+                                            ref={youtube.containerRef}
                                             className="w-full h-full"
-                                            allow="autoplay; encrypted-media; fullscreen"
-                                            allowFullScreen
-                                            onLoad={() => handleYouTubeSeek(resumeTime)}
                                         />
                                     );
                                 }

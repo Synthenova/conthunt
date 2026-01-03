@@ -139,6 +139,7 @@ async def stream_generator_to_redis(
                 payload = {
                     "type": "tool_start",
                     "tool": ev.get("name"),
+                    "run_id": run_id,
                     "input": data.get("input")
                 }
                 
@@ -155,6 +156,7 @@ async def stream_generator_to_redis(
                 payload = {
                     "type": "tool_end",
                     "tool": ev.get("name"),
+                    "run_id": run_id,
                     "output": final_output
                 }
 
@@ -492,11 +494,13 @@ async def get_chat_messages(
                 m_type = msg.type
                 content = getattr(msg, "content", "")
                 msg_id = getattr(msg, "id", None)
+                tool_calls = getattr(msg, "tool_calls", [])
                 additional_kwargs = getattr(msg, "additional_kwargs", {})
             else:
                 m_type = msg.get("type")
                 content = msg.get("content", "")
                 msg_id = msg.get("id")
+                tool_calls = msg.get("tool_calls", [])
                 additional_kwargs = msg.get("additional_kwargs", {})
             
             if m_type in ["human", "ai", "tool"]:
@@ -504,6 +508,7 @@ async def get_chat_messages(
                    id=msg_id,
                    type=m_type,
                    content=content,
+                   tool_calls=tool_calls,
                    additional_kwargs=additional_kwargs
                ))
 

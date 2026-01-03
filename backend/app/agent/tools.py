@@ -33,6 +33,18 @@ async def _get_headers(config: RunnableConfig) -> Dict[str, str]:
 
 
 @tool
+async def report_step(step: str, config: RunnableConfig) -> str:
+    """
+    Report a thinking step to the user.
+    Call this before each major action to explain what you're about to do.
+    
+    Args:
+        step: Brief description of current step (e.g., "Analyzing your request", "Searching for content")
+    """
+    return "ok"
+
+
+@tool
 async def get_user_boards(config: RunnableConfig) -> List[Dict[str, Any]]:
     """
     Fetch a list of all boards created by the user. 

@@ -30,6 +30,22 @@
             background-position: 200% 50%;
         }
     }
+
+    --animate-typing: typing 1s infinite;
+
+    @keyframes typing {
+
+        0%,
+        100% {
+            transform: translateY(0);
+            opacity: 0.5;
+        }
+
+        50% {
+            transform: translateY(-25%);
+            opacity: 1;
+        }
+    }
 }
 
 :root {

@@ -14,25 +14,31 @@ from app.agent.tools import (
     get_board_items,
     get_search_items,
     search,
+    report_step,
 )
 from app.core import get_settings
 
 settings = get_settings()
 
 # Define tools available to the agent
-tools = [get_video_analysis, get_board_items, get_search_items, search]
+tools = [report_step, get_video_analysis, get_board_items, get_search_items, search]
 
 # Base system prompt
 BASE_SYSTEM_PROMPT = """You are a helpful content assistant for the ContHunt platform.
 You help users find, analyze, and manage video content across multiple platforms.
 
 Tools available:
+- `report_step(step)`: Report what you're doing to the user. Call before major actions.
 - `search(queries)`: Trigger searches for content. Takes list of {{keyword, platforms}}. Returns search IDs.
 - `get_search_items(search_id)`: Get video results from a completed search.
 - `get_board_items(board_id)`: Get videos from a user's board.
 - `get_video_analysis(media_asset_id)`: Get AI analysis (summary, topics, hashtags) for a video.
 
 Guidelines:
+
+**Progress Reporting:**
+- Always call report_step() before calling search, get_search_items, get_board_items, or get_video_analysis.
+- Example: report_step("Searching for ski content and others..") then search(...)
 
 **Searching for Content:**
 - When user asks to search/find content, generate relevant keywords and call `search()`.

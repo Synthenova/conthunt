@@ -47,6 +47,7 @@ class Message(BaseModel):
     id: Optional[str] = None
     type: str
     content: ContentType
+    tool_calls: List[Dict[str, Any]] = []
     additional_kwargs: Dict[str, Any] = {}
 
 class ChatHistory(BaseModel):

@@ -169,6 +169,7 @@ export function useChatMessages(chatId: string | null) {
                     ? m.content.map((c: any) => c.text || '').join('')
                     : m.content,
                 additional_kwargs: m.additional_kwargs,
+                tool_calls: m.tool_calls,
             }));
 
             // Preserve optimistic messages that haven't been saved yet
@@ -311,9 +312,38 @@ export function useSendMessage() {
                                 }
                                 break;
                             case 'tool_start':
-                                // Could show tool indicator
+                                // Add to streaming tools
+                                useChatStore.setState(state => ({
+                                    streamingTools: [...state.streamingTools, {
+                                        name: data.tool,
+                                        input: data.input,
+                                        hasResult: false,
+                                        isStreaming: true
+                                    }]
+                                }));
                                 break;
                             case 'tool_end':
+                                // Update matching tool in streaming tools with result
+                                useChatStore.setState(state => {
+                                    const tools = [...state.streamingTools];
+                                    // Find last tool with matching name that doesn't have result
+                                    // We create a reversed COPY to find index, so we don't mutate 'tools'
+                                    const reversedTools = [...tools].reverse();
+                                    const index = reversedTools.findIndex(t => t.name === data.tool && !t.hasResult);
+
+                                    if (index !== -1) {
+                                        // Calculate index in original array
+                                        const realIndex = tools.length - 1 - index;
+                                        tools[realIndex] = {
+                                            ...tools[realIndex],
+                                            hasResult: true,
+                                            result: typeof data.output === 'string' ? data.output : JSON.stringify(data.output),
+                                            isStreaming: false
+                                        };
+                                    }
+                                    return { streamingTools: tools };
+                                });
+
                                 // Extract search IDs from search tool output
                                 if (data.tool === 'search') {
                                     let output = data.output;
@@ -336,10 +366,12 @@ export function useSendMessage() {
                                 break;
                             case 'done':
                                 finalizeMessage();
+                                useChatStore.setState({ streamingTools: [] }); // Clear tools on done
                                 break;
                             case 'error':
                                 console.error('Stream error:', data.error);
                                 resetStreaming();
+                                useChatStore.setState({ streamingTools: [] });
                                 break;
                         }
                     } catch (e) {

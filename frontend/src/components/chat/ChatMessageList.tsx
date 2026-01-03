@@ -1,6 +1,7 @@
 "use client";
 
-import { useChatStore } from '@/lib/chatStore';
+import React, { useMemo } from 'react';
+import { useChatStore, type ToolCallInfo, type ChatMessage } from '@/lib/chatStore';
 import { useChatMessages } from '@/hooks/useChat';
 import {
     ChatContainerRoot,
@@ -9,7 +10,14 @@ import {
 } from '@/components/ui/chat-container';
 import { Message, MessageContent } from '@/components/ui/message';
 import { TextShimmer } from '@/components/ui/text-shimmer';
-import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search } from 'lucide-react';
+import { Tool, ToolPart } from '@/components/ui/tool';
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { Loader } from '@/components/ui/loader';
+import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Brain, Globe, Circle, ListTodo, Check } from 'lucide-react';
 
 type MessageSegment = { type: 'text' | 'chip'; value: string };
 
@@ -93,15 +101,168 @@ function parseMessageSegments(content: string): MessageSegment[] {
     return segments;
 }
 
+// Helper to extract tool info from messages
+// Helper to extract tool info from messages
+// ToolCallInfo is imported from chatStore
+
+
+
+
+function getToolDisplayName(name: string): string {
+    switch (name) {
+        case 'search': return 'Searching';
+        case 'get_search_items': return 'Loading results';
+        case 'get_board_items': return 'Loading board';
+        case 'get_video_analysis': return 'Analyzing video';
+        case 'report_step': return 'Thinking';
+        default: return name;
+    }
+}
+
+function ToolList({ tools }: { tools: ToolCallInfo[] }) {
+    // Group consecutive tools
+    const groups: { tool: ToolCallInfo; count: number; allDone: boolean }[] = [];
+    if (tools.length > 0) {
+        let current = {
+            tool: tools[0],
+            count: 1,
+            allDone: tools[0].hasResult
+        };
+
+        for (let i = 1; i < tools.length; i++) {
+            const t = tools[i];
+            if (t.name === current.tool.name) {
+                current.count++;
+                current.allDone = current.allDone && t.hasResult;
+            } else {
+                groups.push(current);
+                current = { tool: t, count: 1, allDone: t.hasResult };
+            }
+        }
+        groups.push(current);
+    }
+
+    return (
+        <div className="space-y-2 pl-6">
+            {groups.map((group, idx) => {
+                const { tool, count, allDone } = group;
+                const isReportStep = tool.name === 'report_step';
+
+                if (isReportStep) {
+                    const stepText = (tool.input?.step as string) || 'Processing...';
+                    return (
+                        <div key={idx} className="text-sm text-muted-foreground flex items-center gap-2">
+                            <ListTodo className="h-4 w-4 shrink-0" />
+                            <span>{stepText}</span>
+                        </div>
+                    );
+                }
+
+                const displayName = getToolDisplayName(tool.name);
+                const label = count > 1 ? `${displayName} (${count})` : displayName;
+
+                let ToolIcon = Circle;
+                if (tool.name.includes('search') || tool.name.includes('get_search_items')) ToolIcon = Search;
+                else if (tool.name.includes('video_analysis')) ToolIcon = Globe;
+                else if (tool.name.includes('board_items')) ToolIcon = LayoutDashboard;
+
+                return (
+                    <div key={idx} className="text-sm text-muted-foreground flex items-center justify-between group">
+                        <div className="flex items-center gap-2">
+                            <ToolIcon className="h-4 w-4 shrink-0" />
+                            <span>{label}</span>
+                        </div>
+                        <div className="ml-2">
+                            {allDone ? (
+                                <Check className="h-4 w-4 text-green-500 shrink-0" />
+                            ) : (
+                                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+                            )}
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+// ... 
+
+// In ChatMessageList render loop (History & Streaming):
+
+<CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
+    <span>Thinking</span>
+    <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
+</CollapsibleTrigger>
+
+
 export function ChatMessageList({ isContextLoading = false }: { isContextLoading?: boolean }) {
     const {
         messages,
         activeChatId,
         isStreaming,
         streamingContent,
+        streamingTools,
     } = useChatStore();
 
     const { isLoading, isFetching } = useChatMessages(activeChatId);
+
+    // Linear grouping of messages
+    const renderedItems = useMemo(() => {
+        const items: Array<{ type: 'message' | 'thinking'; msg?: ChatMessage; tools?: ToolCallInfo[]; id: string }> = [];
+        let i = 0;
+
+        while (i < messages.length) {
+            const msg = messages[i];
+
+            if (msg.type === 'ai' && msg.tool_calls && msg.tool_calls.length > 0) {
+                // Found AI Start of Tool Sequence
+                const tools: ToolCallInfo[] = msg.tool_calls.map(tc => ({
+                    name: tc.name,
+                    input: tc.args,
+                    hasResult: false
+                }));
+
+                let j = i + 1;
+                let toolIdx = 0;
+
+                // Consume consecutive tool messages
+                while (j < messages.length && messages[j].type === 'tool') {
+                    if (toolIdx < tools.length) {
+                        tools[toolIdx].hasResult = true;
+                        tools[toolIdx].result = String(messages[j].content);
+                    }
+                    toolIdx++;
+                    j++;
+                }
+
+                // Check if previous item was a thinking block to merge
+                const lastItem = items[items.length - 1];
+                if (lastItem && lastItem.type === 'thinking' && lastItem.tools) {
+                    lastItem.tools.push(...tools);
+                } else {
+                    // Add New Thinking Block
+                    items.push({ type: 'thinking', tools, id: `thinking-${msg.id}` });
+                }
+
+                // If the message also has content, show it (mixed content)
+                if (msg.content && typeof msg.content === 'string' && msg.content.trim()) {
+                    items.push({ type: 'message', msg, id: msg.id });
+                }
+
+                i = j; // Advance past consumed tools
+            } else if (msg.type === 'tool') {
+                // Orphan tool message - skip
+                i++;
+            } else {
+                // Normal message
+                items.push({ type: 'message', msg, id: msg.id });
+                i++;
+            }
+        }
+
+        return items;
+    }, [messages]);
 
     if (isContextLoading) {
         return (
@@ -151,89 +312,135 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
         );
     }
 
+
+
     return (
         <ChatContainerRoot className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-4 py-4">
             <ChatContainerContent className="gap-4">
-                {messages.map((msg) => {
-                    if (msg.type === 'tool') return null;
-                    return (
-                        <Message key={msg.id} className={msg.type === 'human' ? 'justify-end' : 'justify-start'}>
-                            <MessageContent
-                                markdown={msg.type === 'ai'}
-                                className={
-                                    msg.type === 'human'
-                                        ? 'glass max-w-[85%] text-foreground whitespace-pre-wrap shadow-lg border-primary/20 bg-primary/10'
-                                        : 'bg-transparent max-w-[95%] text-foreground p-0'
-                                }
-                            >
-                                {msg.type === 'human' ? (
-                                    (() => {
-                                        const segments = parseMessageSegments(msg.content);
-                                        const groups: { type: 'text' | 'chip-group'; value?: string; items?: string[] }[] = [];
+                {renderedItems.map((item) => {
+                    if (item.type === 'thinking' && item.tools) {
+                        const tools = item.tools;
+                        const hasActiveTools = tools.some(t => !t.hasResult);
 
-                                        let currentGroup: string[] = [];
+                        return (
+                            <Message key={item.id} className="justify-start">
+                                <div className="w-full max-w-[95%] mb-2">
+                                    <Collapsible defaultOpen={hasActiveTools}>
+                                        <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
+                                            <span>Thinking</span>
+                                            <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
+                                        </CollapsibleTrigger>
+                                        <CollapsibleContent className="mt-2">
+                                            <ToolList tools={tools} />
+                                        </CollapsibleContent>
+                                    </Collapsible>
+                                </div>
+                            </Message>
+                        );
+                    }
 
-                                        segments.forEach((seg) => {
-                                            if (seg.type === 'chip') {
-                                                currentGroup.push(seg.value);
-                                            } else {
-                                                if (currentGroup.length > 0) {
-                                                    groups.push({ type: 'chip-group', items: [...currentGroup] });
-                                                    currentGroup = [];
+                    if (item.type === 'message' && item.msg) {
+                        const msg = item.msg;
+                        // Empty AI message skip
+                        if (msg.type === 'ai' && typeof msg.content === 'string' && !msg.content.trim()) return null;
+
+                        return (
+                            <Message key={item.id} className={msg.type === 'human' ? 'justify-end' : 'justify-start'}>
+                                <MessageContent
+                                    markdown={msg.type === 'ai'}
+                                    className={
+                                        msg.type === 'human'
+                                            ? 'glass max-w-[85%] text-foreground whitespace-pre-wrap shadow-lg border-primary/20 bg-primary/10'
+                                            : 'bg-transparent max-w-[95%] text-foreground p-0'
+                                    }
+                                >
+                                    {msg.type === 'human' ? (
+                                        (() => {
+                                            const segments = parseMessageSegments(msg.content);
+                                            const groups: { type: 'text' | 'chip-group'; value?: string; items?: string[] }[] = [];
+
+                                            let currentGroup: string[] = [];
+
+                                            segments.forEach((seg) => {
+                                                if (seg.type === 'chip') {
+                                                    currentGroup.push(seg.value);
+                                                } else {
+                                                    if (currentGroup.length > 0) {
+                                                        groups.push({ type: 'chip-group', items: [...currentGroup] });
+                                                        currentGroup = [];
+                                                    }
+                                                    groups.push({ type: 'text', value: seg.value });
                                                 }
-                                                groups.push({ type: 'text', value: seg.value });
+                                            });
+
+                                            if (currentGroup.length > 0) {
+                                                groups.push({ type: 'chip-group', items: [...currentGroup] });
                                             }
-                                        });
 
-                                        if (currentGroup.length > 0) {
-                                            groups.push({ type: 'chip-group', items: [...currentGroup] });
-                                        }
-
-                                        return groups.map((group, groupIndex) => {
-                                            if (group.type === 'chip-group' && group.items) {
-                                                return (
-                                                    <div
-                                                        key={`${msg.id}-group-${groupIndex}`}
-                                                        className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 mb-2 max-w-full"
-                                                    >
-                                                        {group.items.map((chipValue, chipIndex) => {
-                                                            const chipMeta = parseChipLabel(chipValue);
-                                                            return (
-                                                                <span
-                                                                    key={`${msg.id}-chip-${groupIndex}-${chipIndex}`}
-                                                                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10"
-                                                                >
-                                                                    {chipMeta.icon === "board" && (
-                                                                        <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                    )}
-                                                                    {chipMeta.icon === "search" && (
-                                                                        <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                    )}
-                                                                    {chipMeta.Icon && (
-                                                                        <chipMeta.Icon className="text-[12px]" />
-                                                                    )}
-                                                                    <span className="truncate" title={chipMeta.text}>
-                                                                        {truncateLabel(chipMeta.text)}
+                                            return groups.map((group, groupIndex) => {
+                                                if (group.type === 'chip-group' && group.items) {
+                                                    return (
+                                                        <div
+                                                            key={`${msg.id}-group-${groupIndex}`}
+                                                            className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 mb-2 max-w-full"
+                                                        >
+                                                            {group.items.map((chipValue, chipIndex) => {
+                                                                const chipMeta = parseChipLabel(chipValue);
+                                                                return (
+                                                                    <span
+                                                                        key={`${msg.id}-chip-${groupIndex}-${chipIndex}`}
+                                                                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10"
+                                                                    >
+                                                                        {chipMeta.icon === "board" && (
+                                                                            <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                        )}
+                                                                        {chipMeta.icon === "search" && (
+                                                                            <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                        )}
+                                                                        {chipMeta.Icon && (
+                                                                            <chipMeta.Icon className="text-[12px]" />
+                                                                        )}
+                                                                        <span className="truncate" title={chipMeta.text}>
+                                                                            {truncateLabel(chipMeta.text)}
+                                                                        </span>
                                                                     </span>
-                                                                </span>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                );
-                                            } else {
-                                                return (
-                                                    <span key={`${msg.id}-text-${groupIndex}`}>{group.value}</span>
-                                                );
-                                            }
-                                        });
-                                    })()
-                                ) : (
-                                    msg.content
-                                )}
-                            </MessageContent>
-                        </Message>
-                    );
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    );
+                                                } else {
+                                                    return (
+                                                        <span key={`${msg.id}-text-${groupIndex}`}>{group.value}</span>
+                                                    );
+                                                }
+                                            });
+                                        })()
+                                    ) : (
+                                        msg.content
+                                    )}
+                                </MessageContent>
+                            </Message>
+                        );
+                    }
+                    return null;
                 })}
+
+                {/* Streaming Tools */}
+                {isStreaming && streamingTools && streamingTools.length > 0 && (
+                    <Message key="streaming-tools" className="justify-start">
+                        <div className="w-full max-w-[95%] mb-2">
+                            <Collapsible defaultOpen={true}>
+                                <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
+                                    <span>Thinking</span>
+                                    <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
+                                </CollapsibleTrigger>
+                                <CollapsibleContent className="mt-2">
+                                    <ToolList tools={streamingTools} />
+                                </CollapsibleContent>
+                            </Collapsible>
+                        </div>
+                    </Message>
+                )}
 
                 {/* Streaming AI message */}
                 {isStreaming && streamingContent && (
@@ -249,9 +456,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                 {isStreaming && !streamingContent && (
                     <Message className="justify-start">
                         <div className="text-foreground p-2">
-                            <TextShimmer duration={4} spread={15}>
-                                Generating response...
-                            </TextShimmer>
+                            <Loader variant="typing" size="sm" className="text-muted-foreground" />
                         </div>
                     </Message>
                 )}

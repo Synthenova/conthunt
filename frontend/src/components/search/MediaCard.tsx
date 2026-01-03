@@ -1,13 +1,13 @@
 import { AsyncImage } from "@/components/ui/async-image";
 import { GlassCard } from "@/components/ui/glass-card";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
-import { Play, Heart, MessageCircle, Share2, Volume2, VolumeX, ExternalLink } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { Play, Heart, MessageCircle, Share2, Volume2, VolumeX } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useSearchStore } from "@/lib/store";
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
+import { useYouTubePlayer } from "@/lib/youtube";
 
 interface MediaCardProps {
     item: any;
@@ -28,13 +28,15 @@ export function MediaCard({
     const [isCaptionExpanded, setIsCaptionExpanded] = useState(false);
     const { mediaMuted, setMediaMuted } = useSearchStore();
     const videoRef = useRef<HTMLVideoElement>(null);
-    const youtubeRef = useRef<HTMLIFrameElement>(null);
-    const youtubeHoverStartRef = useRef<number | null>(null);
+    const timelineRef = useRef<HTMLDivElement>(null);
+    const [isScrubbing, setIsScrubbing] = useState(false);
+    const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
+    const [currentTime, setCurrentTime] = useState(0);
+    const youtubeTimeIntervalRef = useRef<number | null>(null);
 
     // Platform-specific field mapping
     const title = item.title || item.caption || item.description || "No Title";
     const thumbnail = item.thumbnail_url || item.cover_url || item.image_url;
-    // Prefer direct media URL or fall back to platform link
     const videoUrl = item.video_url || item.media_url;
     const link = item.url || item.link || item.web_url;
     const platformLabel = formatPlatformLabel(platform);
@@ -51,77 +53,160 @@ export function MediaCard({
 
     // YouTube detection - extract video ID from URL
     const isYouTube = platform === 'youtube' || platform === 'youtube_search';
-    const youtubeId = isYouTube && link ?
-        (link.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?/]+)/)?.[1] || item.id) :
-        null;
+    const youtubeId = useMemo(() => {
+        if (!isYouTube || !link) return null;
+        return link.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?/]+)/)?.[1] || item.id || null;
+    }, [isYouTube, link, item.id]);
 
-    const handleHover = (isHovering: boolean) => {
+    // Use YouTube Player hook - preload creates player on mount
+    const youtube = useYouTubePlayer({
+        videoId: youtubeId,
+        preload: true,
+        muted: mediaMuted,
+        onReady: () => {
+            // Get duration from player
+            const dur = youtube.getDuration();
+            if (dur && dur > 0) {
+                setDurationSeconds(dur);
+            }
+        },
+    });
+
+    const resolvedDurationSeconds = useMemo(() => {
+        const raw = item?.duration || item?.duration_seconds || item?.duration_ms || item?.length_seconds || item?.length || item?.video_length;
+        if (typeof raw === "number") return raw > 1000 ? raw / 1000 : raw;
+        if (typeof raw === "string") {
+            const parsed = parseFloat(raw);
+            if (!Number.isNaN(parsed)) return parsed;
+        }
+        return null;
+    }, [item]);
+
+    useEffect(() => {
+        if (resolvedDurationSeconds) {
+            setDurationSeconds(resolvedDurationSeconds);
+        }
+    }, [resolvedDurationSeconds]);
+
+    // Start/stop YouTube time tracking
+    const startYouTubeTimeTracking = useCallback(() => {
+        if (youtubeTimeIntervalRef.current) return;
+        youtubeTimeIntervalRef.current = window.setInterval(() => {
+            if (!youtube.isReady) return;
+            const time = youtube.getCurrentTime();
+            const dur = youtube.getDuration();
+            if (dur && dur > 0 && !durationSeconds) {
+                setDurationSeconds(dur);
+            }
+            setCurrentTime(time);
+            onHoverTimeChange?.(time);
+        }, 100);
+    }, [youtube, durationSeconds, onHoverTimeChange]);
+
+    const stopYouTubeTimeTracking = useCallback(() => {
+        if (youtubeTimeIntervalRef.current) {
+            window.clearInterval(youtubeTimeIntervalRef.current);
+            youtubeTimeIntervalRef.current = null;
+        }
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            stopYouTubeTimeTracking();
+        };
+    }, [stopYouTubeTimeTracking]);
+
+    const handleHover = useCallback((isHovering: boolean) => {
         setIsPlaying(isHovering);
         onHoverStateChange?.(isHovering);
+
+        // Handle non-YouTube videos
         if (videoRef.current && !isYouTube) {
             if (isHovering) {
                 onHoverTimeChange?.(0);
-                videoRef.current.play().catch(() => { }); // Autoplay policies might block
+                videoRef.current.play().catch(() => { });
             } else {
                 videoRef.current.pause();
                 videoRef.current.currentTime = 0;
+                setCurrentTime(0);
             }
         }
-        if (isYouTube) {
-            if (isHovering) {
-                youtubeHoverStartRef.current = performance.now();
-                onHoverTimeChange?.(0);
-            } else {
-                youtubeHoverStartRef.current = null;
-            }
-        }
-    };
 
+        // Handle YouTube videos
+        if (isYouTube && youtubeId) {
+            if (isHovering) {
+                youtube.play();
+                startYouTubeTimeTracking();
+            } else {
+                stopYouTubeTimeTracking();
+                youtube.pause();
+                youtube.seekTo(0);
+                setCurrentTime(0);
+            }
+        }
+    }, [isYouTube, youtubeId, youtube, onHoverStateChange, onHoverTimeChange, startYouTubeTimeTracking, stopYouTubeTimeTracking]);
+
+    // Sync mute for native video
     useEffect(() => {
         if (videoRef.current) {
             videoRef.current.muted = mediaMuted;
         }
     }, [mediaMuted]);
 
-    const syncYouTubeMute = () => {
-        if (!isYouTube || !youtubeRef.current) return;
-        const command = mediaMuted ? "mute" : "unMute";
-        youtubeRef.current.contentWindow?.postMessage(
-            JSON.stringify({ event: "command", func: command, args: [] }),
-            "*"
-        );
-    };
+    // Sync mute for YouTube (handled by hook automatically via muted prop)
 
-    useEffect(() => {
-        if (isPlaying) {
-            syncYouTubeMute();
+    const handleScrub = useCallback((clientX: number) => {
+        if (!durationSeconds || !timelineRef.current) return;
+        const rect = timelineRef.current.getBoundingClientRect();
+        const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+        const newTime = ratio * durationSeconds;
+
+        setCurrentTime(newTime);
+        onHoverTimeChange?.(newTime);
+
+        if (videoRef.current && !isYouTube) {
+            videoRef.current.currentTime = newTime;
+            videoRef.current.play().catch(() => { });
+            return;
         }
-    }, [mediaMuted, isYouTube, isPlaying]);
+
+        if (isYouTube && youtube.isReady) {
+            youtube.seekTo(newTime);
+            youtube.play();
+        }
+    }, [durationSeconds, isYouTube, youtube, onHoverTimeChange]);
 
     useEffect(() => {
-        if (!isYouTube || !isPlaying) return;
+        if (!isScrubbing) return;
+        const handleMouseMove = (e: MouseEvent) => handleScrub(e.clientX);
+        const handleTouchMove = (e: TouchEvent) => {
+            const touch = e.touches[0];
+            if (!touch) return;
+            handleScrub(touch.clientX);
+        };
+        const stop = () => setIsScrubbing(false);
 
-        const start = youtubeHoverStartRef.current;
-        if (start === null) return;
-
-        const interval = window.setInterval(() => {
-            const elapsed = (performance.now() - start) / 1000;
-            onHoverTimeChange?.(Math.max(0, elapsed));
-        }, 100);
+        window.addEventListener("mousemove", handleMouseMove);
+        window.addEventListener("mouseup", stop);
+        window.addEventListener("touchmove", handleTouchMove);
+        window.addEventListener("touchend", stop);
+        window.addEventListener("touchcancel", stop);
 
         return () => {
-            window.clearInterval(interval);
+            window.removeEventListener("mousemove", handleMouseMove);
+            window.removeEventListener("mouseup", stop);
+            window.removeEventListener("touchmove", handleTouchMove);
+            window.removeEventListener("touchend", stop);
+            window.removeEventListener("touchcancel", stop);
         };
-    }, [isPlaying, isYouTube, onHoverTimeChange]);
-
-    const PlatformIcon = getPlatformIcon(platform);
+    }, [isScrubbing, handleScrub]);
 
     return (
         <GlassCard
             className="group relative overflow-hidden h-full flex flex-col border-0 bg-surface/40 backdrop-blur-md shadow-2xl shadow-black/20"
             onMouseEnter={() => handleHover(true)}
             onMouseLeave={() => handleHover(false)}
-            hoverEffect={false} // Disable default glass hover effect for custom handling
+            hoverEffect={false}
         >
             <div className="relative w-full h-full">
                 <AspectRatio ratio={9 / 16} className="h-full">
@@ -148,30 +233,36 @@ export function MediaCard({
                             muted={mediaMuted}
                             loop
                             playsInline
+                            onLoadedMetadata={() => {
+                                if (videoRef.current) {
+                                    const dur = videoRef.current.duration;
+                                    if (dur && !Number.isNaN(dur)) {
+                                        setDurationSeconds(dur);
+                                    }
+                                }
+                            }}
                             onTimeUpdate={() => {
                                 if (videoRef.current) {
+                                    setCurrentTime(videoRef.current.currentTime);
                                     onHoverTimeChange?.(videoRef.current.currentTime);
                                 }
                             }}
                         />
                     )}
 
-                    {/* YouTube Embedded Player */}
-                    {isYouTube && youtubeId && isPlaying && (
-                        <iframe
-                            ref={youtubeRef}
-                            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${mediaMuted ? 1 : 0}&controls=0&modestbranding=1&playsinline=1&disablekb=1&enablejsapi=1`}
-                            className="absolute inset-0 w-full h-full pointer-events-none"
-                            allow="autoplay; encrypted-media"
-                            allowFullScreen
-                            onLoad={syncYouTubeMute}
+                    {/* YouTube Player Container - Primes on mount */}
+                    {isYouTube && youtubeId && (
+                        <div
+                            ref={youtube.containerRef}
+                            className={cn(
+                                "absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-200",
+                                isPlaying && youtube.isPrimed ? "opacity-100" : "opacity-0"
+                            )}
                         />
                     )}
 
                     {/* Gradient Overlay (Bottom) */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
-
-
 
                     {/* Mute Toggle */}
                     <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
@@ -212,7 +303,6 @@ export function MediaCard({
                             </div>
                         )}
                     </div>
-
 
                     {/* Bottom Info Section (Creator + Caption) */}
                     <div className="absolute bottom-0 left-0 right-12 p-3 flex flex-col gap-2 z-10">
@@ -275,6 +365,48 @@ export function MediaCard({
                             <Play className="h-3 w-3 fill-white/70" /> {formatNumber(views)} views
                         </div>
                     </div>
+
+                    {/* Timeline (hover play only) */}
+                    {isPlaying && durationSeconds && (
+                        <div
+                            ref={timelineRef}
+                            className="absolute bottom-0 left-0 right-0 h-1.5 bg-white/25 overflow-hidden z-20 cursor-pointer"
+                            onMouseDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setIsScrubbing(true);
+                                handleScrub(e.clientX);
+                            }}
+                            onMouseUp={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setIsScrubbing(false);
+                            }}
+                            onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                            }}
+                            onTouchStart={(e) => {
+                                e.stopPropagation();
+                                setIsScrubbing(true);
+                                const clientX = e.touches[0]?.clientX;
+                                if (clientX !== undefined) handleScrub(clientX);
+                            }}
+                            onTouchEnd={(e) => {
+                                e.stopPropagation();
+                                setIsScrubbing(false);
+                            }}
+                            onTouchCancel={(e) => {
+                                e.stopPropagation();
+                                setIsScrubbing(false);
+                            }}
+                        >
+                            <div
+                                className="h-full bg-white"
+                                style={{ width: `${Math.min(100, Math.max(0, (currentTime / durationSeconds) * 100))}%` }}
+                            />
+                        </div>
+                    )}
 
                 </AspectRatio>
             </div>

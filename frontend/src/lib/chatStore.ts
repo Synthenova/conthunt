@@ -1,9 +1,18 @@
 import { create } from 'zustand';
 
+export interface ToolCallInfo {
+    name: string;
+    input?: Record<string, unknown>;
+    hasResult: boolean;
+    result?: string;
+    isStreaming?: boolean;
+}
+
 export interface ChatMessage {
     id: string;
     type: 'human' | 'ai' | 'tool';
     content: string;
+    tool_calls?: Array<{ name: string; args: Record<string, any>; id?: string }>;
     additional_kwargs?: Record<string, any>;
 }
 
@@ -56,10 +65,12 @@ interface ChatState {
     streamingContent: string;
     streamingMessageId: string | null;
     userMessageId: string | null;
+    streamingTools: ToolCallInfo[];
 
     // Streaming actions
     startStreaming: () => void;
     appendDelta: (content: string, messageId?: string) => void;
+    setStreamingTools: (tools: ToolCallInfo[]) => void;
     setUserMessageId: (id: string) => void;
     finalizeMessage: () => void;
     resetStreaming: () => void;
@@ -132,6 +143,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     streamingContent: '',
     streamingMessageId: null,
     userMessageId: null,
+    streamingTools: [],
 
     // Streaming actions
     startStreaming: () => set({
@@ -139,30 +151,72 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingContent: '',
         streamingMessageId: null,
         userMessageId: null,
+        streamingTools: [],
     }),
     appendDelta: (content, messageId) => set((state) => ({
         streamingContent: state.streamingContent + content,
         streamingMessageId: messageId || state.streamingMessageId,
     })),
+    setStreamingTools: (tools) => set({ streamingTools: tools }),
     setUserMessageId: (id) => set({ userMessageId: id }),
     finalizeMessage: () => {
         const state = get();
-        if (state.streamingContent && state.streamingMessageId) {
-            // Check if message already exists to avoid duplicates
-            const exists = state.messages.some(m => m.id === state.streamingMessageId);
+        if (state.streamingContent || (state.streamingTools && state.streamingTools.length > 0)) {
+            // Even if no content (just tools), we might need to finalize.
+            // Usually AI has content OR tools.
+
+            const messageId = state.streamingMessageId || `msg-${Date.now()}`;
+
+            // Check if message already exists
+            const exists = state.messages.some(m => m.id === messageId);
+
+            if (exists) {
+                set({
+                    isStreaming: false,
+                    streamingContent: '',
+                    streamingMessageId: null,
+                    streamingTools: []
+                });
+                return;
+            }
+
+            const newMessages: ChatMessage[] = [];
+
+            // 1. AI Message
+            const toolCalls = state.streamingTools.map((t, i) => ({
+                name: t.name,
+                args: t.input || {},
+                id: `call_${Date.now()}_${i}`
+            }));
+
+            newMessages.push({
+                id: messageId,
+                type: 'ai',
+                content: state.streamingContent,
+                tool_calls: toolCalls.length > 0 ? toolCalls : undefined
+            });
+
+            // 2. Tool Messages
+            state.streamingTools.forEach((t, i) => {
+                if (t.hasResult) {
+                    newMessages.push({
+                        id: `tool-${messageId}-${i}`,
+                        type: 'tool',
+                        content: t.result || '',
+                        additional_kwargs: { name: t.name }
+                    });
+                }
+            });
 
             set((s) => ({
-                messages: exists ? s.messages : [...s.messages, {
-                    id: s.streamingMessageId!,
-                    type: 'ai' as const,
-                    content: s.streamingContent,
-                }],
+                messages: [...s.messages, ...newMessages],
                 isStreaming: false,
                 streamingContent: '',
                 streamingMessageId: null,
+                streamingTools: []
             }));
         } else {
-            set({ isStreaming: false, streamingContent: '', streamingMessageId: null });
+            set({ isStreaming: false, streamingContent: '', streamingMessageId: null, streamingTools: [] });
         }
     },
     resetStreaming: () => set({
