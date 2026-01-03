@@ -171,29 +171,7 @@ export function MediaCard({
                     {/* Gradient Overlay (Bottom) */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
 
-                    {/* Platform Badge */}
-                    {showBadge && (
-                        <div className="absolute top-2 left-2 z-20">
-                            {link ? (
-                                <a
-                                    href={link}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    aria-label={`${platformLabel} link`}
-                                    title={platformLabel}
-                                >
-                                    <Badge className="bg-black/90 backdrop-blur-md border border-white/20 hover:bg-black text-white uppercase text-[10px] flex items-center gap-1.5 px-2 py-1 transition-all duration-300 group-hover/badge:pr-2 shadow-lg">
-                                        <PlatformIcon className="text-[14px]" />
-                                        <ExternalLink className="w-3 h-3 opacity-0 w-0 group-hover:opacity-100 group-hover:w-3 transition-all duration-300" />
-                                    </Badge>
-                                </a>
-                            ) : (
-                                <Badge className="bg-black/90 backdrop-blur-md border border-white/20 text-white uppercase text-[10px] flex items-center gap-1.5 px-2 py-1 shadow-lg">
-                                    <PlatformIcon className="text-[14px]" />
-                                </Badge>
-                            )}
-                        </div>
-                    )}
+
 
                     {/* Mute Toggle */}
                     <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
@@ -253,9 +231,24 @@ export function MediaCard({
                                     </div>
                                 )}
                             </div>
-                            <span className="text-sm font-semibold text-white drop-shadow-md truncate">
+                            <span className="text-sm font-semibold text-white drop-shadow-md truncate max-w-[120px]">
                                 {creatorName}
                             </span>
+                            {/* Platform Name Link */}
+                            {link && (
+                                <>
+                                    <span className="text-white/50 text-[10px]">•</span>
+                                    <a
+                                        href={link}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs text-white/90 hover:text-white underline drop-shadow-md truncate max-w-[100px] uppercase font-medium"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        {platformLabel}
+                                    </a>
+                                </>
+                            )}
                         </div>
 
                         {/* Caption */}
