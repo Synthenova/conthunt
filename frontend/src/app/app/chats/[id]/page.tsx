@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useChatStore, ChatMessage } from "@/lib/chatStore";
-import { useChatMessages, useSendMessage } from "@/hooks/useChat";
+import { useChatMessages, useSendMessage, useRenameChat } from "@/hooks/useChat";
 import { useBoards } from "@/hooks/useBoards";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { SelectionBar } from "@/components/boards/SelectionBar";
@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { FolderOpen, Search, Loader2 } from "lucide-react";
+import { FolderOpen, Search, Loader2, Pencil } from "lucide-react";
 import { FlatMediaItem, transformToMediaItem } from "@/lib/transformers";
 import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { BoardFilterBar } from "@/components/boards/BoardFilterBar";
@@ -149,6 +149,11 @@ export default function ChatPage() {
     const { getBoard, getBoardItems } = useBoards();
     const abortControllerRef = useRef<AbortController | null>(null);
     const searchIconRef = useRef<SearchIconHandle>(null);
+    const editTitleRef = useRef<HTMLInputElement | null>(null);
+    const renameChat = useRenameChat();
+
+    const [isEditingTitle, setIsEditingTitle] = useState(false);
+    const [editingTitle, setEditingTitle] = useState('');
 
     const [activeBoardTab, setActiveBoardTab] = useState<string | null>(null);
     const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
@@ -174,6 +179,34 @@ export default function ChatPage() {
         setActiveChatId(chatId);
         openSidebar();
     }, [chatId, setActiveChatId, openSidebar]);
+
+    useEffect(() => {
+        if (isEditingTitle) {
+            editTitleRef.current?.focus();
+            editTitleRef.current?.select();
+        }
+    }, [isEditingTitle]);
+
+    const startTitleEdit = () => {
+        setIsEditingTitle(true);
+        setEditingTitle(activeChatTitle);
+    };
+
+    const cancelTitleEdit = () => {
+        setIsEditingTitle(false);
+        setEditingTitle('');
+    };
+
+    const commitTitleEdit = async () => {
+        const nextTitle = editingTitle.trim();
+        cancelTitleEdit();
+        if (!nextTitle) return;
+        try {
+            await renameChat.mutateAsync({ chatId, title: nextTitle });
+        } catch (err) {
+            console.error(err);
+        }
+    };
 
     // Extract context from messages
     const context = useMemo(() => {
@@ -314,6 +347,36 @@ export default function ChatPage() {
         setSelectedPlatforms,
     } = useClientResultSort(activeResults, { resultsAreFlat: true });
 
+    // Scroll detection for sticky header
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const [showHeader, setShowHeader] = useState(true);
+    const lastScrollY = useRef(0);
+
+    useEffect(() => {
+        const el = scrollContainerRef.current;
+        if (!el) return;
+
+        const handleScroll = () => {
+            const currentY = el.scrollTop;
+
+            // Show header if:
+            // 1. Scrolling UP (current < last)
+            // 2. Or near top (current < 100)
+            if (currentY < lastScrollY.current || currentY < 50) {
+                setShowHeader(true);
+            }
+            // Hide if scrolling DOWN and not near top
+            else if (currentY > lastScrollY.current && currentY > 50) {
+                setShowHeader(false);
+            }
+
+            lastScrollY.current = currentY;
+        };
+
+        el.addEventListener("scroll", handleScroll, { passive: true });
+        return () => el.removeEventListener("scroll", handleScroll);
+    }, []);
+
     return (
         <div className="flex h-full">
             {/* Render SearchStreamers (Hidden) */}
@@ -328,7 +391,7 @@ export default function ChatPage() {
             ))}
 
             {/* Canvas (left/center) */}
-            <div className="flex-1 overflow-y-auto min-h-0">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 no-scrollbar">
                 <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8">
                     {isInitialLoading ? (
                         <div className="h-[60vh] flex items-center justify-center">
@@ -358,78 +421,119 @@ export default function ChatPage() {
                         <>
                             {/* Searches Section - Now "Chat Content" */}
                             {hasSearches && (
-                                <section className="space-y-6">
-                                    {/* Header Row */}
-                                    <div className="flex flex-col gap-1">
-                                        <div className="flex items-center justify-between">
-                                            <div
-                                                className="flex items-center gap-3 group cursor-default"
-                                                onMouseEnter={() => searchIconRef.current?.startAnimation()}
-                                                onMouseLeave={() => searchIconRef.current?.stopAnimation()}
-                                            >
-                                                <SearchIcon
-                                                    ref={searchIconRef}
-                                                    className="text-muted-foreground group-hover:text-white transition-colors"
-                                                />
-                                                <h1 className="text-xl font-medium text-white">{activeChatTitle}</h1>
-                                            </div>
-                                            {activeSearchId && (
-                                                <div className="text-sm text-muted-foreground">
-                                                    Showing {filteredResults.length} results
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* Controls Bar: Tabs + Filters */}
-                                    <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
-                                        {/* Keyword Tabs (Scrollable) */}
-                                        <div className="flex-1 min-w-0 flex justify-start">
-                                            <div className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto no-scrollbar">
-                                                {displaySearches.map((search) => (
-                                                    <button
-                                                        key={search.id}
-                                                        onClick={() => setActiveSearchId(search.id)}
-                                                        className={cn(
-                                                            "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0",
-                                                            activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
-                                                        )}
-                                                    >
-                                                        {activeSearchId === search.id && (
-                                                            <motion.div
-                                                                layoutId="search-keyword-pill"
-                                                                className="absolute inset-0 rounded-lg glass-pill"
-                                                                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                                <section>
+                                    {/* Sticky Header Wrapper */}
+                                    <motion.div
+                                        initial={{ y: 0 }}
+                                        animate={{ y: showHeader ? 0 : "-120%" }}
+                                        transition={{ duration: 0.3, ease: "easeInOut" }}
+                                        className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md -mx-4 px-4 py-4 mb-6 space-y-6 border-b border-white/5"
+                                    >
+                                        {/* Header Row */}
+                                        <div className="flex flex-col gap-1">
+                                            <div className="flex items-center justify-between">
+                                                <div
+                                                    className="flex items-center gap-3 group cursor-default"
+                                                    onMouseEnter={() => searchIconRef.current?.startAnimation()}
+                                                    onMouseLeave={() => searchIconRef.current?.stopAnimation()}
+                                                >
+                                                    <SearchIcon
+                                                        ref={searchIconRef}
+                                                        size={20}
+                                                        className="text-muted-foreground group-hover:text-white transition-colors"
+                                                    />
+                                                    <div className="flex items-center gap-2">
+                                                        {isEditingTitle ? (
+                                                            <input
+                                                                ref={editTitleRef}
+                                                                value={editingTitle}
+                                                                onChange={(event) => setEditingTitle(event.target.value)}
+                                                                onKeyDown={(event) => {
+                                                                    if (event.key === 'Enter') {
+                                                                        event.preventDefault();
+                                                                        commitTitleEdit();
+                                                                    }
+                                                                    if (event.key === 'Escape') {
+                                                                        event.preventDefault();
+                                                                        cancelTitleEdit();
+                                                                    }
+                                                                }}
+                                                                onBlur={cancelTitleEdit}
+                                                                className="bg-transparent text-xl font-medium text-white outline-none border border-white/15 rounded-md px-2 py-1"
                                                             />
+                                                        ) : (
+                                                            <>
+                                                                <h1 className="text-xl font-medium text-white">{activeChatTitle}</h1>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={startTitleEdit}
+                                                                    className="text-gray-400 hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                    aria-label="Rename chat"
+                                                                >
+                                                                    <Pencil size={14} />
+                                                                </button>
+                                                            </>
                                                         )}
-                                                        <span className="relative z-10 mix-blend-normal flex items-center gap-2">
-                                                            {search.label}
-                                                            {streamingSearchIds[search.id] && (
-                                                                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                                                            )}
-                                                        </span>
-                                                    </button>
-                                                ))}
+                                                    </div>
+                                                </div>
+                                                {activeSearchId && (
+                                                    <div className="text-sm text-muted-foreground">
+                                                        Showing {filteredResults.length} results
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
 
-                                        {/* Filters */}
-                                        <div className="shrink-0 flex justify-end">
-                                            <BoardFilterBar
-                                                sort={clientSort}
-                                                onSortChange={setClientSort}
-                                                dateFilter={clientDateFilter}
-                                                onDateFilterChange={setClientDateFilter}
-                                                platforms={platforms}
-                                                selectedPlatforms={selectedPlatforms}
-                                                onPlatformsChange={setSelectedPlatforms}
-                                            />
+                                        {/* Controls Bar: Tabs + Filters */}
+                                        <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
+                                            {/* Keyword Tabs (Scrollable) */}
+                                            <div className="flex-1 min-w-0 flex justify-start">
+                                                <div className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto no-scrollbar">
+                                                    {displaySearches.map((search) => (
+                                                        <button
+                                                            key={search.id}
+                                                            onClick={() => setActiveSearchId(search.id)}
+                                                            className={cn(
+                                                                "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0",
+                                                                activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
+                                                            )}
+                                                        >
+                                                            {activeSearchId === search.id && (
+                                                                <motion.div
+                                                                    layoutId="search-keyword-pill"
+                                                                    className="absolute inset-0 rounded-lg glass-pill"
+                                                                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                                                                />
+                                                            )}
+                                                            <span className="relative z-10 mix-blend-normal flex items-center gap-2">
+                                                                {search.label}
+                                                                {streamingSearchIds[search.id] && (
+                                                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                                                )}
+                                                            </span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Filters */}
+                                            <div className="shrink-0 flex justify-end">
+                                                <BoardFilterBar
+                                                    sort={clientSort}
+                                                    onSortChange={setClientSort}
+                                                    dateFilter={clientDateFilter}
+                                                    onDateFilterChange={setClientDateFilter}
+                                                    platforms={platforms}
+                                                    selectedPlatforms={selectedPlatforms}
+                                                    onPlatformsChange={setSelectedPlatforms}
+                                                />
+                                            </div>
                                         </div>
-                                    </div>
+                                    </motion.div>
 
                                     {/* Results for Active Search */}
                                     {activeSearchId && (
-                                        <div className="mt-6">
+                                        <div className="mt-0">
                                             <SelectableResultsGrid
                                                 key={`${activeSearchId}-${clientSort}-${clientDateFilter}-${selectedPlatforms.join(',')}`}
                                                 results={filteredResults}
