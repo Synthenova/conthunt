@@ -133,7 +133,7 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                 style={{ ['--sidebar-width' as any]: `${Math.max(0, Math.min(sidebarWidth, maxWidth ?? sidebarWidth))}px` }}
             >
                 <div
-                    className="absolute left-0 top-0 hidden h-full w-3 cursor-col-resize lg:block z-10 bg-white/5 hover:bg-white/10 transition-colors"
+                    className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-50 hidden lg:flex h-12 w-4 items-center justify-center cursor-col-resize"
                     onMouseDown={(event) => {
                         isResizing.current = true;
                         resizeStartX.current = event.clientX;
@@ -141,7 +141,9 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                         document.body.style.cursor = 'col-resize';
                         document.body.style.userSelect = 'none';
                     }}
-                />
+                >
+                    <div className="h-8 w-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors shadow-sm" />
+                </div>
                 <div className="absolute left-0 top-0 hidden h-full w-3 lg:block pointer-events-none">
                     <div className="h-full w-px bg-white/20" />
                 </div>
@@ -149,8 +151,8 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                     "flex flex-col h-full w-full max-w-full",
                     !isOpen && "lg:invisible"
                 )}>
-                        <ChatHeader />
-                        <div className="relative flex-1 min-h-0 flex flex-col">
+                    <ChatHeader />
+                    <div className="relative flex-1 min-h-0 flex flex-col">
                         <ChatHistoryPanel context={context} />
                         <ChatMessageList isContextLoading={!!context && isLoading} />
                     </div>

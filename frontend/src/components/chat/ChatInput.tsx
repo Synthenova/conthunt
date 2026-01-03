@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowUp, Square, X, LayoutDashboard, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
+import { MentionDropdown } from './MentionDropdown';
 
 type ChatContext = { type: 'board' | 'search'; id: string };
 
@@ -380,73 +381,20 @@ export function ChatInput({ context }: ChatInputProps) {
     return (
         <div className="relative px-4 pb-4 pt-2">
             {mentionQuery !== null && (
-                <div className="absolute bottom-full left-4 right-4 mb-2 rounded-xl border border-white/10 bg-background/95 backdrop-blur-xl shadow-lg z-20">
-                    <div className="p-3 space-y-3">
-                        <div>
-                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">
-                                Boards
-                            </div>
-                            <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
-                                {isLoadingBoards ? (
-                                    <div className="text-xs text-muted-foreground px-2 py-1">
-                                        Loading boards...
-                                    </div>
-                                ) : boardOptions.length === 0 ? (
-                                    <div className="text-xs text-muted-foreground px-2 py-1">
-                                        No boards found
-                                    </div>
-                                ) : (
-                                    boardResults.map((board) => (
-                                        <button
-                                            key={board.id}
-                                            type="button"
-                                            onClick={() => handleAddContextChip({ type: 'board', id: board.id, label: board.name })}
-                                            className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-secondary/60 text-sm text-foreground"
-                                        >
-                                            {board.name}
-                                        </button>
-                                    ))
-                                )}
-                            </div>
-                        </div>
-                        <div>
-                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">
-                                Searches
-                            </div>
-                            <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
-                                {isLoadingHistory ? (
-                                    <div className="text-xs text-muted-foreground px-2 py-1">
-                                        Loading searches...
-                                    </div>
-                                ) : searchOptions.length === 0 ? (
-                                    <div className="text-xs text-muted-foreground px-2 py-1">
-                                        No searches found
-                                    </div>
-                                ) : (
-                                    searchResults.map((search) => {
-                                        const platforms = Object.keys(search.inputs || {}).map((key) => getPlatformIcon(key));
-                                        const uniquePlatforms = Array.from(new Set(platforms));
-                                        return (
-                                            <button
-                                                key={search.id}
-                                                type="button"
-                                                onClick={() => handleAddContextChip({ type: 'search', id: search.id, label: search.query })}
-                                                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-secondary/60 text-sm text-foreground flex items-center justify-between gap-2"
-                                            >
-                                                <span className="truncate">{search.query}</span>
-                                                <span className="flex items-center gap-1 text-muted-foreground">
-                                                    {uniquePlatforms.map((Icon, idx) => (
-                                                        <Icon key={`${search.id}-icon-${idx}`} className="text-xs" />
-                                                    ))}
-                                                </span>
-                                            </button>
-                                        );
-                                    })
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <MentionDropdown
+                    boards={boardOptions}
+                    searches={searchOptions}
+                    isLoadingBoards={isLoadingBoards}
+                    isLoadingSearches={isLoadingHistory}
+                    query={mentionQuery}
+                    onSelect={(type, item) => {
+                        if (type === 'board') {
+                            handleAddContextChip({ type: 'board', id: item.id, label: item.name });
+                        } else {
+                            handleAddContextChip({ type: 'search', id: item.id, label: item.query });
+                        }
+                    }}
+                />
             )}
             <PromptInput
                 value={message}

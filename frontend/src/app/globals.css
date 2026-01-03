@@ -68,24 +68,6 @@
     }
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-    @apply bg-white/10 rounded-full transition-colors;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    @apply bg-white/20;
-}
-
 /* Typography Utilities */
 .text-balance {
     text-wrap: balance;
@@ -108,17 +90,20 @@
     }
 }
 
-/* No Scrollbar Utility */
-.no-scrollbar::-webkit-scrollbar {
-    display: none;
+/* Global Scrollbar Hiding */
+@layer base {
+    * {
+        -ms-overflow-style: none;
+        /* IE and Edge */
+        scrollbar-width: none;
+        /* Firefox */
+    }
+
+    *::-webkit-scrollbar {
+        display: none;
+    }
 }
 
-.no-scrollbar {
-    -ms-overflow-style: none;
-    /* IE and Edge */
-    scrollbar-width: none;
-    /* Firefox */
-}
 
 /* =========================================
    USER RESTORED STYLES (Glass & Effects)
@@ -137,6 +122,36 @@
     border-radius: 9999px;
     /* Default fully rounded */
     box-shadow: 0 0 20px rgba(255, 255, 255, 0.02);
+}
+
+/* Board card container sizing (responsive to container width) */
+.board-card {
+    container: board-card / inline-size;
+}
+
+@container board-card (max-width: 260px) {
+    .board-card__info {
+        padding: 0.75rem;
+    }
+
+    .board-card__title {
+        font-size: 0.95rem;
+    }
+
+    .board-card__meta {
+        font-size: 0.7rem;
+        line-height: 1.2;
+    }
+}
+
+@container board-card (max-width: 220px) {
+    .board-card__title {
+        font-size: 0.9rem;
+    }
+
+    .board-card__meta {
+        font-size: 0.65rem;
+    }
 }
 
 .glass-pill::before {

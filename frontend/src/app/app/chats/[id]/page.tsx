@@ -391,7 +391,7 @@ export default function ChatPage() {
             ))}
 
             {/* Canvas (left/center) */}
-            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 no-scrollbar">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0">
                 <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8">
                     {isInitialLoading ? (
                         <div className="h-[60vh] flex items-center justify-center">
@@ -488,7 +488,7 @@ export default function ChatPage() {
                                         <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
                                             {/* Keyword Tabs (Scrollable) */}
                                             <div className="flex-1 min-w-0 flex justify-start">
-                                                <div className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto no-scrollbar">
+                                                <div className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto">
                                                     {displaySearches.map((search) => (
                                                         <button
                                                             key={search.id}
