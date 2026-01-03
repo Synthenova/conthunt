@@ -45,6 +45,17 @@ export function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: 
 
         const payloadItems = items.map((payloadItem: any) => {
             const videoAsset = payloadItem.assets?.find((a: any) => a.asset_type === "video");
+            const thumb =
+                payloadItem.thumbnail ||
+                payloadItem.thumbnail_url ||
+                payloadItem.cover_url ||
+                payloadItem.image_url ||
+                payloadItem.cover ||
+                payloadItem.image ||
+                payloadItem.poster ||
+                payloadItem.preview_image ||
+                payloadItem.cover_image ||
+                null;
             return {
                 id: payloadItem.id,
                 title: payloadItem.title || payloadItem.caption || payloadItem.description || "Untitled video",
@@ -53,11 +64,69 @@ export function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: 
                 content_type: payloadItem.content_type,
                 primary_text: payloadItem.primary_text || payloadItem.caption || payloadItem.description,
                 media_asset_id: videoAsset?.id || payloadItem.media_asset_id || null,
+                thumbnail: thumb,
             };
         });
 
         e.dataTransfer.setData(MEDIA_DRAG_TYPE, JSON.stringify({ items: payloadItems, source: "grid" }));
         e.dataTransfer.effectAllowed = "copy";
+
+        // Build custom drag preview: stacked full-size thumbs (up to 5)
+        const preview = document.createElement("div");
+        preview.style.position = "absolute";
+        preview.style.top = "-9999px";
+        preview.style.left = "-9999px";
+        const layerWidth = 320;
+        const layerHeight = 200;
+        const offset = 12;
+        const maxThumbs = Math.min(payloadItems.length, 5);
+        const stackWidth = layerWidth + offset * (maxThumbs - 1);
+        const stackHeight = layerHeight + offset * (maxThumbs - 1);
+        preview.style.width = `${stackWidth}px`;
+        preview.style.height = `${stackHeight}px`;
+        preview.style.pointerEvents = "none";
+        preview.style.zIndex = "9999";
+
+        for (let i = 0; i < maxThumbs; i++) {
+            const thumb = payloadItems[i]?.thumbnail;
+            const layer = document.createElement("div");
+            layer.style.position = "absolute";
+            layer.style.top = `${i * offset}px`;
+            layer.style.left = `${i * offset}px`;
+            layer.style.width = `${layerWidth}px`;
+            layer.style.height = `${layerHeight}px`;
+            layer.style.borderRadius = "16px";
+            layer.style.boxShadow = "0 12px 32px rgba(0,0,0,0.35)";
+            layer.style.background = thumb
+                ? `center / cover no-repeat url("${thumb}")`
+                : "linear-gradient(135deg, #1f1f1f, #2a2a2a)";
+            layer.style.border = "1px solid rgba(255,255,255,0.15)";
+            preview.appendChild(layer);
+        }
+
+        if (payloadItems.length > 5) {
+            const badge = document.createElement("div");
+            badge.textContent = `+${payloadItems.length - 5}`;
+            badge.style.position = "absolute";
+            badge.style.bottom = "12px";
+            badge.style.right = "18px";
+            badge.style.padding = "6px 14px";
+            badge.style.borderRadius = "999px";
+            badge.style.background = "rgba(0,0,0,0.8)";
+            badge.style.color = "white";
+            badge.style.fontSize = "13px";
+            badge.style.fontWeight = "700";
+            badge.style.border = "1px solid rgba(255,255,255,0.2)";
+            preview.appendChild(badge);
+        }
+
+        document.body.appendChild(preview);
+        e.dataTransfer.setDragImage(preview, 36, 36);
+        setTimeout(() => {
+            if (preview.parentNode) {
+                preview.parentNode.removeChild(preview);
+            }
+        }, 0);
     };
 
     return (

@@ -13,12 +13,22 @@ import { useChatList } from '@/hooks/useChat';
 import { GripVertical } from 'lucide-react';
 
 export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
-    const { isOpen, activeChatId, setActiveChatId, isNewChatPending } = useChatStore();
+    const {
+        isOpen,
+        activeChatId,
+        setActiveChatId,
+        isNewChatPending,
+        queueMediaChips,
+        openSidebar,
+    } = useChatStore();
     const pathname = usePathname();
     const [sidebarWidth, setSidebarWidth] = useState(420);
     const isResizing = useRef(false);
     const resizeStartX = useRef(0);
     const resizeStartWidth = useRef(420);
+    const [isDragOver, setIsDragOver] = useState(false);
+
+    const MEDIA_DRAG_TYPE = 'application/x-conthunt-media';
 
     const chatIdFromPath = useMemo(() => {
         if (!pathname) return null;
@@ -117,6 +127,31 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
         }
     }, [maxWidth, sidebarWidth]);
 
+    const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+        setIsDragOver(false);
+        const payload = event.dataTransfer.getData(MEDIA_DRAG_TYPE);
+        if (!payload) return;
+        event.preventDefault();
+        try {
+            const parsed = JSON.parse(payload) as { items?: any[] };
+            if (!parsed.items?.length) return;
+            queueMediaChips(parsed.items);
+            openSidebar();
+        } catch (err) {
+            console.error('Failed to parse dragged media payload', err);
+        }
+    };
+
+    const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+        if (event.dataTransfer.types.includes(MEDIA_DRAG_TYPE)) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+            setIsDragOver(true);
+        }
+    };
+
+    const handleDragLeave = () => setIsDragOver(false);
+
     return (
         <>
             {/* Mobile overlay backdrop */}
@@ -141,6 +176,9 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                         : "translate-x-full lg:w-0 lg:min-w-0 lg:overflow-hidden"
                 )}
                 style={{ ['--sidebar-width' as any]: `${Math.max(0, Math.min(sidebarWidth, maxWidth ?? sidebarWidth))}px` }}
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
             >
                 <div
                     className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-50 hidden lg:flex h-12 w-6 items-center justify-center cursor-col-resize group"
@@ -168,7 +206,7 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                         <ChatHistoryPanel context={context} />
                         <ChatMessageList isContextLoading={!!context && isLoading} />
                     </div>
-                    <ChatInput context={context} />
+                    <ChatInput context={context} isDragActive={isDragOver} />
                 </div>
             </aside>
         </>

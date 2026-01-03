@@ -96,6 +96,7 @@ type MediaDragPayload = {
 
 interface ChatInputProps {
     context?: ChatContext | null;
+    isDragActive?: boolean;
 }
 
 const MENTION_RE = /(?:^|\s)@([^\s@]*)$/;
@@ -169,7 +170,7 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
     return res.json();
 }
 
-export function ChatInput({ context }: ChatInputProps) {
+export function ChatInput({ context, isDragActive }: ChatInputProps) {
     const [message, setMessage] = useState('');
     const [chips, setChips] = useState<ContextChip[]>([]);
     const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -400,7 +401,7 @@ export function ChatInput({ context }: ChatInputProps) {
     const searchResults = searchOptions.slice(0, 5);
 
     return (
-        <div className="relative px-4 pb-4 pt-2">
+        <div className="relative px-4 pb-4 pt-2 transition-colors" data-drag-active={isDragActive ? 'true' : 'false'}>
             {mentionQuery !== null && (
                 <MentionDropdown
                     boards={boardOptions}
@@ -432,7 +433,7 @@ export function ChatInput({ context }: ChatInputProps) {
                 onDrop={handleDrop}
                 className={cn(
                     "bg-secondary/50 border-white/10",
-                    isDragOver && "ring-1 ring-primary/60 border-primary/60"
+                    (isDragOver || isDragActive) && "ring-1 ring-primary/60 border-primary/60"
                 )}
             >
                 {chips.length > 0 && (
