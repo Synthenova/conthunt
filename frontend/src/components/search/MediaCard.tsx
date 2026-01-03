@@ -59,10 +59,12 @@ export function MediaCard({
     }, [isYouTube, link, item.id]);
 
     // Use YouTube Player hook - preload creates player on mount
+    const shouldMuteYoutube = mediaMuted || !isPlaying;
+
     const youtube = useYouTubePlayer({
         videoId: youtubeId,
         preload: true,
-        muted: mediaMuted,
+        muted: shouldMuteYoutube,
         onReady: () => {
             // Get duration from player
             const dur = youtube.getDuration();
@@ -117,6 +119,9 @@ export function MediaCard({
     }, [stopYouTubeTimeTracking]);
 
     const handleHover = useCallback((isHovering: boolean) => {
+        console.log('[MediaCard] handleHover called:', isHovering, 'videoId:', youtubeId?.slice(0, 6));
+        console.trace('[MediaCard] handleHover stack trace');
+
         setIsPlaying(isHovering);
         onHoverStateChange?.(isHovering);
 
@@ -135,9 +140,11 @@ export function MediaCard({
         // Handle YouTube videos
         if (isYouTube && youtubeId) {
             if (isHovering) {
+                console.log('[MediaCard] Calling youtube.play()');
                 youtube.play();
                 startYouTubeTimeTracking();
             } else {
+                console.log('[MediaCard] Calling youtube.pause()');
                 stopYouTubeTimeTracking();
                 youtube.pause();
                 youtube.seekTo(0);
@@ -201,216 +208,252 @@ export function MediaCard({
         };
     }, [isScrubbing, handleScrub]);
 
-    return (
-        <GlassCard
-            className="group relative overflow-hidden h-full flex flex-col border-0 bg-surface/40 backdrop-blur-md shadow-2xl shadow-black/20"
-            onMouseEnter={() => handleHover(true)}
-            onMouseLeave={() => handleHover(false)}
-            hoverEffect={false}
-        >
-            <div className="relative w-full h-full">
-                <AspectRatio ratio={9 / 16} className="h-full">
-                    {/* Thumbnail */}
-                    <AsyncImage
-                        src={thumbnail}
-                        alt={title}
-                        className={cn(
-                            "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
-                            isPlaying && (videoUrl || youtubeId) ? 'opacity-0' : 'opacity-100'
-                        )}
-                        referrerPolicy="no-referrer"
-                    />
+    const cardRef = useRef<HTMLDivElement>(null);
 
-                    {/* Video Player - Regular video for TikTok/Instagram */}
-                    {videoUrl && !isYouTube && (
-                        <video
-                            ref={videoRef}
-                            src={videoUrl}
+    const handleMouseEnter = useCallback(() => {
+        handleHover(true);
+    }, [handleHover]);
+
+    const handleMouseLeave = useCallback((e: React.MouseEvent) => {
+        // Check if we're actually leaving the card vs entering a child element
+        // relatedTarget is the element we're entering - if it's inside the card, ignore
+        const relatedTarget = e.relatedTarget as Node | null;
+        console.log('[MediaCard] handleMouseLeave debug:', {
+            relatedTarget,
+            relatedTargetTagName: (relatedTarget as HTMLElement)?.tagName,
+            cardRefExists: !!cardRef.current,
+            containsRelated: cardRef.current?.contains(relatedTarget as Node),
+        });
+        if (relatedTarget && cardRef.current?.contains(relatedTarget)) {
+            console.log('[MediaCard] Ignoring mouseLeave - entering child element');
+            return;
+        }
+        handleHover(false);
+    }, [handleHover]);
+
+    return (
+        <div
+            ref={cardRef}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+        >
+            <GlassCard
+                className="group relative overflow-hidden h-full flex flex-col border-0 bg-surface/40 backdrop-blur-md shadow-2xl shadow-black/20"
+                hoverEffect={false}
+            >
+                <div className="relative w-full h-full">
+                    <AspectRatio ratio={9 / 16} className="h-full">
+                        {/* Thumbnail */}
+                        <AsyncImage
+                            src={thumbnail}
+                            alt={title}
                             className={cn(
                                 "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
-                                isPlaying ? 'opacity-100' : 'opacity-0'
+                                // For YouTube: only hide thumbnail when player is primed (ready to show)
+                                // For other videos: hide when playing
+                                isPlaying && (youtubeId ? youtube.isPrimed : videoUrl) ? 'opacity-0' : 'opacity-100'
                             )}
-                            muted={mediaMuted}
-                            loop
-                            playsInline
-                            onLoadedMetadata={() => {
-                                if (videoRef.current) {
-                                    const dur = videoRef.current.duration;
-                                    if (dur && !Number.isNaN(dur)) {
-                                        setDurationSeconds(dur);
+                            referrerPolicy="no-referrer"
+                        />
+
+                        {/* Video Player - Regular video for TikTok/Instagram */}
+                        {videoUrl && !isYouTube && (
+                            <video
+                                ref={videoRef}
+                                src={videoUrl}
+                                className={cn(
+                                    "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
+                                    isPlaying ? 'opacity-100' : 'opacity-0'
+                                )}
+                                muted={mediaMuted}
+                                loop
+                                playsInline
+                                onLoadedMetadata={() => {
+                                    if (videoRef.current) {
+                                        const dur = videoRef.current.duration;
+                                        if (dur && !Number.isNaN(dur)) {
+                                            setDurationSeconds(dur);
+                                        }
                                     }
-                                }
-                            }}
-                            onTimeUpdate={() => {
-                                if (videoRef.current) {
-                                    setCurrentTime(videoRef.current.currentTime);
-                                    onHoverTimeChange?.(videoRef.current.currentTime);
-                                }
-                            }}
-                        />
-                    )}
+                                }}
+                                onTimeUpdate={() => {
+                                    if (videoRef.current) {
+                                        setCurrentTime(videoRef.current.currentTime);
+                                        onHoverTimeChange?.(videoRef.current.currentTime);
+                                    }
+                                }}
+                            />
+                        )}
 
-                    {/* YouTube Player Container - Primes on mount */}
-                    {isYouTube && youtubeId && (
-                        <div
-                            ref={youtube.containerRef}
-                            className={cn(
-                                "absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-200",
-                                isPlaying && youtube.isPrimed ? "opacity-100" : "opacity-0"
+                        {/* YouTube Player Container - Primes on mount */}
+                        {isYouTube && youtubeId && (
+                            <div
+                                ref={youtube.containerRef}
+                                className={cn(
+                                    "absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-200",
+                                    isPlaying && youtube.isPrimed ? "opacity-100" : "opacity-0"
+                                )}
+                            />
+                        )}
+
+                        {/* YouTube Loading Spinner - Shows while priming */}
+                        {isYouTube && youtubeId && isPlaying && !youtube.isPrimed && (
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                                <div className="h-10 w-10 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                            </div>
+                        )}
+
+                        {/* Gradient Overlay (Bottom) */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
+
+                        {/* Mute Toggle */}
+                        <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 rounded-full bg-black/40 hover:bg-black/60 text-white"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setMediaMuted(!mediaMuted);
+                                }}
+                            >
+                                {mediaMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                            </Button>
+                        </div>
+
+                        {/* Right Side Stats Bar */}
+                        <div className="absolute bottom-4 right-2 flex flex-col gap-4 items-center z-10">
+                            {likes > 0 && (
+                                <div className="flex flex-col items-center gap-1">
+                                    <Heart className="h-6 w-6 text-white drop-shadow-md" />
+                                    <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(likes)}</span>
+                                </div>
                             )}
-                        />
-                    )}
 
-                    {/* Gradient Overlay (Bottom) */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
+                            {comments > 0 && (
+                                <div className="flex flex-col items-center gap-1">
+                                    <MessageCircle className="h-6 w-6 text-white drop-shadow-md" />
+                                    <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(comments)}</span>
+                                </div>
+                            )}
 
-                    {/* Mute Toggle */}
-                    <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 rounded-full bg-black/40 hover:bg-black/60 text-white"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                setMediaMuted(!mediaMuted);
-                            }}
-                        >
-                            {mediaMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                        </Button>
-                    </div>
+                            {shares > 0 && (
+                                <div className="flex flex-col items-center gap-1">
+                                    <Share2 className="h-6 w-6 text-white drop-shadow-md" />
+                                    <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(shares)}</span>
+                                </div>
+                            )}
+                        </div>
 
-                    {/* Right Side Stats Bar */}
-                    <div className="absolute bottom-4 right-2 flex flex-col gap-4 items-center z-10">
-                        {likes > 0 && (
-                            <div className="flex flex-col items-center gap-1">
-                                <Heart className="h-6 w-6 text-white drop-shadow-md" />
-                                <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(likes)}</span>
-                            </div>
-                        )}
-
-                        {comments > 0 && (
-                            <div className="flex flex-col items-center gap-1">
-                                <MessageCircle className="h-6 w-6 text-white drop-shadow-md" />
-                                <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(comments)}</span>
-                            </div>
-                        )}
-
-                        {shares > 0 && (
-                            <div className="flex flex-col items-center gap-1">
-                                <Share2 className="h-6 w-6 text-white drop-shadow-md" />
-                                <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(shares)}</span>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Bottom Info Section (Creator + Caption) */}
-                    <div className="absolute bottom-0 left-0 right-12 p-3 flex flex-col gap-2 z-10">
-                        {/* Creator Profile */}
-                        <div className="flex items-center gap-2">
-                            <div className="h-8 w-8 rounded-full bg-zinc-800 border-2 border-white/20 overflow-hidden flex-shrink-0">
-                                {creatorImage ? (
-                                    <AsyncImage
-                                        src={creatorImage}
-                                        alt={creatorName}
-                                        className="h-full w-full object-cover"
-                                    />
-                                ) : (
-                                    <div className="h-full w-full flex items-center justify-center text-white/50 font-bold text-xs bg-black">
-                                        {creatorName.substring(0, 1).toUpperCase()}
-                                    </div>
+                        {/* Bottom Info Section (Creator + Caption) */}
+                        <div className="absolute bottom-0 left-0 right-12 p-3 flex flex-col gap-2 z-10">
+                            {/* Creator Profile */}
+                            <div className="flex items-center gap-2">
+                                <div className="h-8 w-8 rounded-full bg-zinc-800 border-2 border-white/20 overflow-hidden flex-shrink-0">
+                                    {creatorImage ? (
+                                        <AsyncImage
+                                            src={creatorImage}
+                                            alt={creatorName}
+                                            className="h-full w-full object-cover"
+                                        />
+                                    ) : (
+                                        <div className="h-full w-full flex items-center justify-center text-white/50 font-bold text-xs bg-black">
+                                            {creatorName.substring(0, 1).toUpperCase()}
+                                        </div>
+                                    )}
+                                </div>
+                                <span className="text-sm font-semibold text-white drop-shadow-md truncate max-w-[120px]">
+                                    {creatorName}
+                                </span>
+                                {/* Platform Name Link */}
+                                {link && (
+                                    <>
+                                        <span className="text-white/50 text-[10px]">•</span>
+                                        <a
+                                            href={link}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-xs text-white/90 hover:text-white underline drop-shadow-md truncate max-w-[100px] uppercase font-medium"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            {platformLabel}
+                                        </a>
+                                    </>
                                 )}
                             </div>
-                            <span className="text-sm font-semibold text-white drop-shadow-md truncate max-w-[120px]">
-                                {creatorName}
-                            </span>
-                            {/* Platform Name Link */}
-                            {link && (
-                                <>
-                                    <span className="text-white/50 text-[10px]">•</span>
-                                    <a
-                                        href={link}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-xs text-white/90 hover:text-white underline drop-shadow-md truncate max-w-[100px] uppercase font-medium"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        {platformLabel}
-                                    </a>
-                                </>
-                            )}
-                        </div>
 
-                        {/* Caption */}
-                        <div
-                            className="text-xs text-white/90 drop-shadow-sm cursor-pointer"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                setIsCaptionExpanded(!isCaptionExpanded);
-                            }}
-                        >
-                            <p className={cn(
-                                "leading-relaxed transition-all duration-300",
-                                isCaptionExpanded ? "" : "line-clamp-1"
-                            )}>
-                                {title}
-                            </p>
-                            {!isCaptionExpanded && title && title.length > 50 && (
-                                <span className="text-[10px] text-white/70">more</span>
-                            )}
-                        </div>
-
-                        {/* Views display */}
-                        <div className="flex items-center gap-1 text-[10px] text-white/70">
-                            <Play className="h-3 w-3 fill-white/70" /> {formatNumber(views)} views
-                        </div>
-                    </div>
-
-                    {/* Timeline (hover play only) */}
-                    {isPlaying && durationSeconds && (
-                        <div
-                            ref={timelineRef}
-                            className="absolute bottom-0 left-0 right-0 h-1.5 bg-white/25 overflow-hidden z-20 cursor-pointer"
-                            onMouseDown={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setIsScrubbing(true);
-                                handleScrub(e.clientX);
-                            }}
-                            onMouseUp={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setIsScrubbing(false);
-                            }}
-                            onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                            }}
-                            onTouchStart={(e) => {
-                                e.stopPropagation();
-                                setIsScrubbing(true);
-                                const clientX = e.touches[0]?.clientX;
-                                if (clientX !== undefined) handleScrub(clientX);
-                            }}
-                            onTouchEnd={(e) => {
-                                e.stopPropagation();
-                                setIsScrubbing(false);
-                            }}
-                            onTouchCancel={(e) => {
-                                e.stopPropagation();
-                                setIsScrubbing(false);
-                            }}
-                        >
+                            {/* Caption */}
                             <div
-                                className="h-full bg-white"
-                                style={{ width: `${Math.min(100, Math.max(0, (currentTime / durationSeconds) * 100))}%` }}
-                            />
-                        </div>
-                    )}
+                                className="text-xs text-white/90 drop-shadow-sm cursor-pointer"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsCaptionExpanded(!isCaptionExpanded);
+                                }}
+                            >
+                                <p className={cn(
+                                    "leading-relaxed transition-all duration-300",
+                                    isCaptionExpanded ? "" : "line-clamp-1"
+                                )}>
+                                    {title}
+                                </p>
+                                {!isCaptionExpanded && title && title.length > 50 && (
+                                    <span className="text-[10px] text-white/70">more</span>
+                                )}
+                            </div>
 
-                </AspectRatio>
-            </div>
-        </GlassCard>
+                            {/* Views display */}
+                            <div className="flex items-center gap-1 text-[10px] text-white/70">
+                                <Play className="h-3 w-3 fill-white/70" /> {formatNumber(views)} views
+                            </div>
+                        </div>
+
+                        {/* Timeline (hover play only) */}
+                        {isPlaying && durationSeconds && (
+                            <div
+                                ref={timelineRef}
+                                className="absolute bottom-0 left-0 right-0 h-1.5 bg-white/25 overflow-hidden z-20 cursor-pointer"
+                                onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setIsScrubbing(true);
+                                    handleScrub(e.clientX);
+                                }}
+                                onMouseUp={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setIsScrubbing(false);
+                                }}
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                }}
+                                onTouchStart={(e) => {
+                                    e.stopPropagation();
+                                    setIsScrubbing(true);
+                                    const clientX = e.touches[0]?.clientX;
+                                    if (clientX !== undefined) handleScrub(clientX);
+                                }}
+                                onTouchEnd={(e) => {
+                                    e.stopPropagation();
+                                    setIsScrubbing(false);
+                                }}
+                                onTouchCancel={(e) => {
+                                    e.stopPropagation();
+                                    setIsScrubbing(false);
+                                }}
+                            >
+                                <div
+                                    className="h-full bg-white"
+                                    style={{ width: `${Math.min(100, Math.max(0, (currentTime / durationSeconds) * 100))}%` }}
+                                />
+                            </div>
+                        )}
+
+                    </AspectRatio>
+                </div>
+            </GlassCard>
+        </div>
     );
 }
 

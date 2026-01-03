@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { NavigationReset } from "@/components/layout/NavigationReset";
 import { useChatStore } from "@/lib/chatStore";
+import { preloadYouTubeAPI } from "@/lib/youtube";
 
 const LEFT_EXPANDED = 280;
 const LEFT_COLLAPSED = 80;
@@ -27,6 +28,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         updateViewport();
         window.addEventListener("resize", updateViewport);
         return () => window.removeEventListener("resize", updateViewport);
+    }, []);
+
+    // Preload YouTube API during idle time for faster video playback
+    useEffect(() => {
+        preloadYouTubeAPI();
     }, []);
 
     const availableIfExpanded = viewportWidth - LEFT_EXPANDED - (isChatOpen ? MIN_CHAT_WIDTH : 0);

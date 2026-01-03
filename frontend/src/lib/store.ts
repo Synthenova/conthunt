@@ -65,7 +65,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     selectAll: (ids) => set({ selectedItems: ids }),
     isItemSelected: (id) => get().selectedItems.includes(id),
 
-    mediaMuted: false,
+    mediaMuted: true,
     setMediaMuted: (muted) => set({ mediaMuted: muted }),
 
     setQuery: (query) => set({ query }),

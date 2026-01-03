@@ -77,3 +77,21 @@ export function loadYouTubeAPI(): Promise<void> {
 export function isYouTubeAPIReady(): boolean {
     return isLoaded && typeof window !== 'undefined' && !!window.YT?.Player;
 }
+
+/**
+ * Preload the YouTube API during idle time.
+ * Call this early (e.g., in a layout or page component) to avoid delay on first hover.
+ */
+export function preloadYouTubeAPI(): void {
+    if (typeof window === 'undefined') return;
+    if (isLoaded || loadPromise) return;
+
+    // Use requestIdleCallback if available, otherwise setTimeout
+    const scheduleLoad = window.requestIdleCallback || ((cb: () => void) => setTimeout(cb, 100));
+
+    scheduleLoad(() => {
+        loadYouTubeAPI().catch(() => {
+            // Ignore preload errors - will retry on actual use
+        });
+    });
+}
