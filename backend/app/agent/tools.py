@@ -165,6 +165,42 @@ AVAILABLE_PLATFORMS = ["tiktok_top", "tiktok_keyword", "instagram_reels", "youtu
 
 
 @tool
+async def get_chat_searches(
+    chat_id: str,
+    config: RunnableConfig,
+) -> Dict[str, Any]:
+    """
+    Get search tags linked to a chat.
+    
+    Args:
+        chat_id: Chat UUID.
+    
+    Returns:
+        Dict with searches (id, label, sort_order).
+    """
+    try:
+        headers = await _get_headers(config)
+        if not headers.get("Authorization"):
+            return {"error": "Authentication required. Please provide x-auth-token."}
+
+        url = f"{_get_api_base_url()}/chats/{chat_id}/tags"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            tags = resp.json()
+            searches = [
+                {"id": t.get("id"), "label": t.get("label"), "sort_order": t.get("sort_order")}
+                for t in tags
+                if t.get("type") == "search"
+            ]
+            return {"chat_id": chat_id, "searches": searches, "count": len(searches)}
+    except httpx.HTTPStatusError as e:
+        return {"error": f"Failed to fetch chat searches: {e.response.text}"}
+    except Exception as e:
+        return {"error": f"Error fetching chat searches: {str(e)}"}
+
+
+@tool
 async def search(
     queries: List[Dict[str, Any]],
     config: RunnableConfig,
@@ -195,6 +231,8 @@ async def search(
 
         configurable = config.get("configurable", {}) if config else {}
         chat_id = configurable.get("chat_id")
+        # Negative counter to ensure top ordering if needed
+        next_sort_order = -1
 
         search_ids = []
         errors = []
@@ -245,9 +283,11 @@ async def search(
                                         "id": search_id,
                                         "label": keyword,
                                         "source": "agent",
+                                        "sort_order": next_sort_order,
                                     }]
                                 }
                                 await client.post(tag_url, headers=headers, json=tag_payload)
+                                next_sort_order -= 1
                             except Exception as tag_err:
                                 errors.append(f"Tagged search but failed to save to chat: {tag_err}")
             except Exception as e:

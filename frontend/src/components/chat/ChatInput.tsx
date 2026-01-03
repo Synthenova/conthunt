@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useChatStore, MediaChipInput } from '@/lib/chatStore';
-import { useSendMessage, useCreateChat } from '@/hooks/useChat';
+import { useSendMessage, useCreateChat, useChatList } from '@/hooks/useChat';
 import { useBoards } from '@/hooks/useBoards';
 import { useSearch } from '@/hooks/useSearch';
 import { usePathname, useRouter } from 'next/navigation';
@@ -24,8 +24,8 @@ import { MentionDropdown } from './MentionDropdown';
 
 type ChatContext = { type: 'board' | 'search'; id: string };
 
-type BoardSearchChip = {
-    type: 'board' | 'search';
+type BoardSearchChatChip = {
+    type: 'board' | 'search' | 'chat';
     id: string;
     label: string;
     locked?: boolean;
@@ -44,7 +44,7 @@ type MediaChip = {
     locked?: boolean;
 };
 
-type ContextChip = BoardSearchChip | MediaChip;
+type ContextChip = BoardSearchChatChip | MediaChip;
 
 type SummaryItem = {
     title?: string;
@@ -181,6 +181,7 @@ export function ChatInput({ context }: ChatInputProps) {
     const pathname = usePathname();
     const { boards, isLoadingBoards, getBoard } = useBoards();
     const { history, isLoadingHistory, getSearch } = useSearch();
+    const chatListQuery = useChatList(undefined, { setStore: false });
 
     const {
         activeChatId,
@@ -226,7 +227,7 @@ export function ChatInput({ context }: ChatInputProps) {
         return prefix ? `${prefix} ` : '';
     }, []);
 
-    const handleAddContextChip = useCallback((chip: BoardSearchChip) => {
+    const handleAddContextChip = useCallback((chip: BoardSearchChatChip) => {
         setChips((prev) => {
             if (prev.some((c) => c.type === chip.type && c.id === chip.id)) return prev;
             return [...prev, chip];
@@ -339,11 +340,13 @@ export function ChatInput({ context }: ChatInputProps) {
             : '';
 
         const fullMessage = [chipFence, messageText].filter(Boolean).join('\n\n');
-        const tagPayload = chips.map((chip) => ({
-            type: chip.type,
-            id: chip.id,
-            label: chip.type === 'media' ? (chip as MediaChip).title || chip.label : chip.label,
-        }));
+        const tagPayload = chips
+            .filter((chip) => chip.type === 'board' || chip.type === 'search' || chip.type === 'media')
+            .map((chip) => ({
+                type: chip.type,
+                id: chip.id,
+                label: chip.type === 'media' ? (chip as MediaChip).title || chip.label : chip.label,
+            }));
 
         abortControllerRef.current = new AbortController();
 
@@ -390,6 +393,9 @@ export function ChatInput({ context }: ChatInputProps) {
     const searchOptions = (history as SearchHistoryItem[]).filter((search) =>
         search.query.toLowerCase().includes(mentionFilter)
     );
+    const chatOptions = (chatListQuery.data || []).filter((chat: any) =>
+        (chat.title || '').toLowerCase().includes(mentionFilter)
+    );
     const boardResults = boardOptions.slice(0, 5);
     const searchResults = searchOptions.slice(0, 5);
 
@@ -399,14 +405,18 @@ export function ChatInput({ context }: ChatInputProps) {
                 <MentionDropdown
                     boards={boardOptions}
                     searches={searchOptions}
+                    chats={chatOptions}
                     isLoadingBoards={isLoadingBoards}
                     isLoadingSearches={isLoadingHistory}
+                    isLoadingChats={chatListQuery.isLoading}
                     query={mentionQuery}
                     onSelect={(type, item) => {
                         if (type === 'board') {
                             handleAddContextChip({ type: 'board', id: item.id, label: item.name });
-                        } else {
+                        } else if (type === 'search') {
                             handleAddContextChip({ type: 'search', id: item.id, label: item.query });
+                        } else if (type === 'chat') {
+                            handleAddContextChip({ type: 'chat', id: item.id, label: item.title || 'Chat' });
                         }
                     }}
                 />
@@ -435,6 +445,12 @@ export function ChatInput({ context }: ChatInputProps) {
                                     className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
                                 >
                                     {chip.type === 'board' && (
+                                        <>
+                                            <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                            <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
+                                        </>
+                                    )}
+                                    {chip.type === 'chat' && (
                                         <>
                                             <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
                                             <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>

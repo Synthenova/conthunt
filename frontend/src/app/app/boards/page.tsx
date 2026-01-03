@@ -140,7 +140,7 @@ export default function BoardsPage() {
 
             {/* Grid */}
             {isLoadingBoards ? (
-                <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-6">
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-6">
                     <BoardCardSkeleton />
                     <BoardCardSkeleton />
                     <BoardCardSkeleton />
@@ -149,7 +149,7 @@ export default function BoardsPage() {
                     <BoardCardSkeleton />
                 </div>
             ) : (
-                <StaggerContainer className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-6 pb-12">
+                <StaggerContainer className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-6 pb-12">
                     <AnimatePresence mode="popLayout">
                         {filteredBoards.map((board) => {
                             const previewUrls = (board.preview_urls || []).filter(Boolean);
@@ -164,7 +164,7 @@ export default function BoardsPage() {
                             return (
                                 <StaggerItem key={board.id} layout initial="hidden" animate="show">
                                     <BoardGlassCard
-                                        className="relative h-60 flex flex-col cursor-pointer board-card"
+                                        className="relative h-80 flex flex-col cursor-pointer board-card"
                                         role="link"
                                         tabIndex={0}
                                         onClick={() => router.push(`/app/boards/${board.id}`)}
@@ -177,7 +177,7 @@ export default function BoardsPage() {
                                     >
 
                                         {/* Collage Preview */}
-                                        <div className="h-40 relative bg-[#0D1118]/80 overflow-hidden pointer-events-none">
+                                        <div className="h-52 relative bg-[#0D1118]/80 overflow-hidden pointer-events-none">
                                             {previewUrls.length > 0 ? (
                                                 <div className="grid grid-cols-2 gap-0.5 h-full">
                                                     {previewUrls.slice(0, 2).map((src, i) => (
@@ -255,7 +255,7 @@ export default function BoardsPage() {
                         <StaggerItem key="create-board-fixed" initial="hidden" animate="show">
                             <button
                                 onClick={() => setIsDialogOpen(true)}
-                                className="w-full h-60 border border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-gray-500 hover:text-white hover:border-white/20 hover:bg-white/5 transition-all group/create"
+                                className="w-full h-80 border border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-gray-500 hover:text-white hover:border-white/20 hover:bg-white/5 transition-all group/create"
                             >
                                 <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3 group-hover/create:scale-110 group-hover/create:bg-primary/10 group-hover/create:text-primary transition-all duration-300">
                                     <Plus size={24} />

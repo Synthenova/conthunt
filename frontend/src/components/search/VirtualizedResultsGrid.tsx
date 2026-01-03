@@ -1,166 +1,128 @@
 "use client";
 
-import { useRef, useMemo, useCallback, useState, useEffect } from "react";
+import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { SelectableMediaCard } from "./SelectableMediaCard";
 import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
 
-interface VirtualizedResultsGridProps {
-    results: any[];
-    analysisDisabled?: boolean;
-    itemsById: Record<string, any>;
-}
-
-// Fixed card dimensions for 9:16 aspect ratio
 const GAP = 16;
 const CARD_ASPECT = 9 / 16;
 
-function useResponsiveColumns() {
+function useResponsiveColumns(containerRef: React.RefObject<any>) {
     const [columns, setColumns] = useState(4);
 
     useEffect(() => {
-        const updateColumns = () => {
-            const width = window.innerWidth;
-            if (width >= 1280) setColumns(4);       // xl
-            else if (width >= 1024) setColumns(3);  // lg
-            else if (width >= 640) setColumns(2);   // sm
-            else setColumns(1);
-        };
+        const el = containerRef.current;
+        if (!el) return;
 
-        updateColumns();
-        window.addEventListener("resize", updateColumns);
-        return () => window.removeEventListener("resize", updateColumns);
-    }, []);
+        const observer = new ResizeObserver((entries) => {
+            const width = entries[0].contentRect.width;
+            // Breakpoints adjusted for container width
+            if (width >= 1100) setColumns(4);
+            else if (width >= 800) setColumns(3);
+            else if (width >= 500) setColumns(2);
+            else setColumns(1);
+        });
+
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [containerRef]);
 
     return columns;
 }
 
-export function VirtualizedResultsGrid({
-    results,
-    analysisDisabled = false,
-    itemsById,
-}: VirtualizedResultsGridProps) {
+export function VirtualizedResultsGrid({ results, analysisDisabled = false, itemsById }: any) {
+    // console.log("[VirtualGrid] Render results:", results.length);
+
+    // ✅ make our OWN scroll container
+    const scrollRef = useRef<HTMLDivElement>(null);
     const parentRef = useRef<HTMLDivElement>(null);
-    const columns = useResponsiveColumns();
     const [selectedItem, setSelectedItem] = useState<any | null>(null);
     const [selectedResumeTime, setSelectedResumeTime] = useState(0);
-    const [offsetTop, setOffsetTop] = useState(0);
-    const [scroller, setScroller] = useState<HTMLElement | null>(null);
 
-    // Group results into rows
+    // Use container width for columns
+    const columns = useResponsiveColumns(scrollRef);
+
     const rows = useMemo(() => {
         const rowArray: any[][] = [];
-        for (let i = 0; i < results.length; i += columns) {
-            rowArray.push(results.slice(i, i + columns));
-        }
+        for (let i = 0; i < results.length; i += columns) rowArray.push(results.slice(i, i + columns));
         return rowArray;
     }, [results, columns]);
 
-    // Find scroll container and measure offset
-    useEffect(() => {
-        if (!parentRef.current) return;
-
-        // Find the scrolling parent (should be the <main> tag in AppShell)
-        const scrollParent = parentRef.current.closest('main');
-        setScroller(scrollParent as HTMLElement);
-
-        const updateOffset = () => {
-            if (parentRef.current) {
-                setOffsetTop(parentRef.current.offsetTop);
-            }
-        };
-
-        // Initial measurement
-        updateOffset();
-
-        // Also measure after a short delay to account for layout shifts
-        const timeout = setTimeout(updateOffset, 100);
-
-        window.addEventListener("resize", updateOffset);
-        return () => {
-            window.removeEventListener("resize", updateOffset);
-            clearTimeout(timeout);
-        }
-    }, []);
-
-    // Calculate row height based on container width
     const getRowHeight = useCallback(() => {
-        if (!parentRef.current) return 400; // Fallback
-        const containerWidth = parentRef.current.offsetWidth;
+        const el = parentRef.current;
+        if (!el) return 400;
+        const containerWidth = el.offsetWidth;
         const cardWidth = (containerWidth - GAP * (columns - 1)) / columns;
         const cardHeight = cardWidth / CARD_ASPECT;
         return cardHeight + GAP;
     }, [columns]);
 
-    // Use Element Virtualizer (scrolling 'main' not 'window')
     const virtualizer = useVirtualizer({
         count: rows.length,
-        getScrollElement: () => scroller,
+        getScrollElement: () => scrollRef.current,
         estimateSize: getRowHeight,
-        overscan: 2,
-        scrollMargin: offsetTop,
+        overscan: 6,
+        enabled: true,
     });
+
+    useEffect(() => {
+        // console.log("[VirtualGrid] Measuring. Rows:", rows.length, "Columns:", columns);
+        virtualizer.measure();
+    }, [columns, rows.length]);
 
     const virtualRows = virtualizer.getVirtualItems();
 
     return (
         <>
-            {/* Debug Overlay */}
-            <div className="fixed bottom-4 left-4 z-50 bg-black/80 text-white p-2 rounded text-xs font-mono pointer-events-none">
-                <div>Scroller Found: {scroller ? 'YES (MAIN)' : 'NO'}</div>
-                <div>Offset via State: {offsetTop}px</div>
-                <div>ScrollTop: {scroller?.scrollTop.toFixed(0) || 0}px</div>
-                <div>Total Size: {virtualizer.getTotalSize()}px</div>
-                <div>Rows: {virtualRows.length} ({virtualRows[0]?.index} - {virtualRows[virtualRows.length - 1]?.index})</div>
-            </div>
-
-            <div
-                ref={parentRef}
-                className="w-full"
-                style={{
-                    height: `${virtualizer.getTotalSize()}px`,
-                    position: "relative",
-                    contain: "strict",
-                }}
-            >
-                {virtualRows.map((virtualRow) => {
-                    const rowItems = rows[virtualRow.index];
-                    return (
-                        <div
-                            key={virtualRow.key}
-                            style={{
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                width: "100%",
-                                height: `${virtualRow.size - GAP}px`,
-                                transform: `translateY(${virtualRow.start}px)`,
-                            }}
-                        >
+            <div ref={scrollRef} className="flex-1 min-h-0 w-full overflow-y-auto">
+                <div
+                    ref={parentRef}
+                    className="w-full"
+                    style={{
+                        height: `${virtualizer.getTotalSize()}px`,
+                        position: "relative",
+                    }}
+                >
+                    {virtualRows.map((virtualRow) => {
+                        const rowItems = rows[virtualRow.index];
+                        return (
                             <div
-                                className="grid gap-4"
+                                key={virtualRow.key}
                                 style={{
-                                    gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-                                    height: "100%",
+                                    position: "absolute",
+                                    top: 0,
+                                    left: 0,
+                                    width: "100%",
+                                    height: `${virtualRow.size - GAP}px`,
+                                    transform: `translateY(${virtualRow.start}px)`,
                                 }}
                             >
-                                {rowItems.map((item, colIndex) => (
-                                    <div key={item.id || `${virtualRow.index}-${colIndex}`}>
-                                        <SelectableMediaCard
-                                            item={item}
-                                            platform={item.platform || "unknown"}
-                                            itemsById={itemsById}
-                                            onOpen={(nextItem, resumeTime) => {
-                                                setSelectedItem(nextItem);
-                                                setSelectedResumeTime(resumeTime);
-                                            }}
-                                        />
-                                    </div>
-                                ))}
+                                <div
+                                    className="grid gap-4"
+                                    style={{
+                                        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                                        height: "100%",
+                                    }}
+                                >
+                                    {rowItems.map((item: any, colIndex: number) => (
+                                        <div key={item.id || `${virtualRow.index}-${colIndex}`}>
+                                            <SelectableMediaCard
+                                                item={item}
+                                                platform={item.platform || "unknown"}
+                                                itemsById={itemsById}
+                                                onOpen={(nextItem: any, resumeTime: number) => {
+                                                    setSelectedItem(nextItem);
+                                                    setSelectedResumeTime(resumeTime);
+                                                }}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                    );
-                })}
+                        );
+                    })}
+                </div>
             </div>
 
             <ContentDrawer

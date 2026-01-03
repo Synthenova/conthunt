@@ -339,11 +339,11 @@ export function MediaSpotlight({
                                 <Play className="h-8 w-8 fill-current" />
                             </Button>
                         </div>
-                        <div className="absolute top-4 left-4 pointer-events-none">
+                        {/* <div className="absolute top-4 left-4 pointer-events-none">
                             <Badge variant="secondary" className="bg-yellow-100 text-yellow-900 border-none">
                                 AI Overlay
                             </Badge>
-                        </div>
+                        </div> */}
                     </>
                 ) : (
                     (() => {

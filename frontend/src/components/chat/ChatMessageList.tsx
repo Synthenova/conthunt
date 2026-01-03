@@ -17,6 +17,7 @@ import {
     CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { Loader } from '@/components/ui/loader';
+import { ChatLoader } from './ChatLoader';
 import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Brain, Globe, Circle, ListTodo, Check } from 'lucide-react';
 
 type MessageSegment = { type: 'text' | 'chip'; value: string };
@@ -265,11 +266,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
     }, [messages]);
 
     if (isContextLoading) {
-        return (
-            <div className="flex-1 flex items-center justify-center">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-        );
+        return <ChatLoader />;
     }
 
     // Empty state - no active chat
@@ -291,11 +288,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
 
     // Loading messages
     if (isLoading || (isFetching && messages.length === 0)) {
-        return (
-            <div className="flex-1 flex items-center justify-center">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-        );
+        return <ChatLoader />;
     }
 
     // No messages yet
@@ -382,7 +375,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                                     return (
                                                         <div
                                                             key={`${msg.id}-group-${groupIndex}`}
-                                                            className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 mb-2 max-w-full"
+                                                            className="inline-flex flex-nowrap overflow-x-auto scrollbar-none gap-2 max-w-full align-bottom mr-1"
                                                         >
                                                             {group.items.map((chipValue, chipIndex) => {
                                                                 const chipMeta = parseChipLabel(chipValue);

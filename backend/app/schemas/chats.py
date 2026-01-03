@@ -41,6 +41,8 @@ class ChatTag(BaseModel):
     id: UUID
     label: Optional[str] = None
     source: Optional[Literal["user", "agent"]] = "user"
+    sort_order: Optional[int] = None
+    created_at: Optional[datetime] = None
 
 class SendMessageRequest(BaseModel):
     message: str

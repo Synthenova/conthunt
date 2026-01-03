@@ -39,6 +39,9 @@ settings = get_settings()
 class UpsertChatTagsRequest(BaseModel):
     tags: List[ChatTag]
 
+class UpdateTagOrdersRequest(BaseModel):
+    orders: List[dict]
+
 # --- Dependencies ---
 
 async def get_redis():
@@ -313,6 +316,7 @@ async def upsert_tags(
                 "tag_id": tag.id,
                 "label": tag.label,
                 "source": tag.source or "user",
+                "sort_order": tag.sort_order,
             }
             for tag in (request.tags or [])
         ]
@@ -320,6 +324,64 @@ async def upsert_tags(
         await conn.commit()
 
     return {"ok": True, "count": len(request.tags or [])}
+
+
+@router.get("/{chat_id}/tags", response_model=List[ChatTag])
+async def list_tags(
+    chat_id: uuid.UUID,
+    user: dict = Depends(get_current_user),
+):
+    """Fetch tags for a chat."""
+    user_id = user.get("uid")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, user_id)
+        await set_rls_user(conn, user_uuid)
+
+        exists = await queries.check_chat_exists(conn, chat_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
+        tags = await queries.get_chat_tags(conn, chat_id)
+
+    return [
+        ChatTag(
+            type=t["type"],
+            id=t["tag_id"],
+            label=t.get("label"),
+            source=t.get("source") or "user",
+            sort_order=t.get("sort_order"),
+            created_at=t.get("created_at"),
+        )
+        for t in tags
+    ]
+
+
+@router.patch("/{chat_id}/tags/order")
+async def update_tag_order(
+    chat_id: uuid.UUID,
+    request: UpdateTagOrdersRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Update sort_order for tags in a chat."""
+    user_id = user.get("uid")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, user_id)
+        await set_rls_user(conn, user_uuid)
+
+        exists = await queries.check_chat_exists(conn, chat_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
+        await queries.update_chat_tag_orders(conn, chat_id, request.orders or [])
+        await conn.commit()
+
+    return {"ok": True}
 
 
 @router.post("/{chat_id}/send")

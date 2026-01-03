@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { motion } from "framer-motion";
+import { motion, Reorder } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { FolderOpen, Search, Loader2, Pencil } from "lucide-react";
 import { FlatMediaItem, transformToMediaItem } from "@/lib/transformers";
@@ -20,124 +20,7 @@ import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { BoardFilterBar } from "@/components/boards/BoardFilterBar";
 import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
 import { SearchIcon, SearchIconHandle } from "@/components/ui/search";
-
-// Regex to extract chips from messages
-const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
-const BOARD_CHIP_RE = /^board::(.+)$/i;
-const SEARCH_CHIP_RE = /^search::(.+)$/i;
-
-interface ExtractedContext {
-    boards: Array<{ id: string; label: string }>;
-    searches: Array<{ id: string; label: string }>;
-}
-
-function extractContextFromMessages(messages: ChatMessage[]): ExtractedContext {
-    const boards: Array<{ id: string; label: string }> = [];
-    const searches: Array<{ id: string; label: string }> = [];
-    const seenBoardIds = new Set<string>();
-    const seenSearchIds = new Set<string>();
-
-    for (const msg of messages) {
-        // 1. Parse Chips (User or AI)
-        const content = typeof msg.content === 'string' ? msg.content : '';
-        let match;
-        CHIP_FENCE_RE.lastIndex = 0;
-
-        while ((match = CHIP_FENCE_RE.exec(content)) !== null) {
-            const chipContent = match[1]?.trim();
-            if (!chipContent) continue;
-
-            let parsedChip: { type?: string; id?: string; label?: string } | null = null;
-            if (chipContent.startsWith("{") && chipContent.endsWith("}")) {
-                try {
-                    parsedChip = JSON.parse(chipContent);
-                } catch (e) {
-                    parsedChip = null;
-                }
-            }
-
-            if (parsedChip?.type === "board" && parsedChip.id) {
-                if (!seenBoardIds.has(parsedChip.id)) {
-                    seenBoardIds.add(parsedChip.id);
-                    boards.push({ id: parsedChip.id, label: parsedChip.label || parsedChip.id });
-                }
-                continue;
-            }
-
-            if (parsedChip?.type === "search" && parsedChip.id) {
-                if (!seenSearchIds.has(parsedChip.id)) {
-                    seenSearchIds.add(parsedChip.id);
-                    searches.push({ id: parsedChip.id, label: parsedChip.label || parsedChip.id });
-                }
-                continue;
-            }
-
-            // Check for legacy board chip
-            const boardMatch = chipContent.match(BOARD_CHIP_RE);
-            if (boardMatch) {
-                const id = boardMatch[1];
-                if (!seenBoardIds.has(id)) {
-                    seenBoardIds.add(id);
-                    boards.push({ id, label: id });
-                }
-                continue;
-            }
-
-            // Check for legacy search chip
-            const searchMatch = chipContent.match(SEARCH_CHIP_RE);
-            if (searchMatch) {
-                const id = searchMatch[1];
-                if (!seenSearchIds.has(id)) {
-                    seenSearchIds.add(id);
-                    searches.push({ id, label: id });
-                }
-            }
-        }
-
-        // 2. Parse Tool Outputs (AI/Tool)
-        if (msg.type === 'tool') {
-            try {
-                const toolContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-                // Attempt to parse JSON output
-                // Expected format from search tool: { "search_ids": [{ "search_id": "...", "platform": "..." }] }
-                let parsedData = null;
-                try {
-                    parsedData = JSON.parse(toolContent);
-                } catch (e) {
-                    // Try parsing again if it's a double-encoded string (common with LangChain)
-                    if (typeof toolContent === 'string') {
-                        try {
-                            // If toolContent is "content='...'" string from python str() repr, we can't parse it easily.
-                            // But we handled the fix in backend to send clean JSON.
-                            // However, if it's just a JSON string, try parsing it.
-                            parsedData = JSON.parse(toolContent);
-                            if (typeof parsedData === 'string') {
-                                parsedData = JSON.parse(parsedData);
-                            }
-                        } catch (e2) { }
-                    }
-                }
-
-                const data = parsedData;
-
-                if (data && data.search_ids && Array.isArray(data.search_ids)) {
-                    for (const s of data.search_ids) {
-                        if (s.search_id && !seenSearchIds.has(s.search_id)) {
-                            seenSearchIds.add(s.search_id);
-                            // Use keyword as label, fallback to platform, then generic
-                            const label = s.keyword || (s.platform ? `${s.platform} search` : 'Search Result');
-                            searches.push({ id: s.search_id, label });
-                        }
-                    }
-                }
-            } catch (e) {
-                // Ignore parsing errors for non-JSON tool outputs
-            }
-        }
-    }
-
-    return { boards, searches };
-}
+import { useChatTags } from "@/hooks/useChatTags";
 
 export default function ChatPage() {
     const params = useParams();
@@ -157,6 +40,7 @@ export default function ChatPage() {
 
     const [activeBoardTab, setActiveBoardTab] = useState<string | null>(null);
     const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
+    const [searchTabs, setSearchTabs] = useState<Array<{ id: string; label: string; sort_order?: number | null }>>([]);
 
     // State to hold results from multiple search streams
     const [resultsMap, setResultsMap] = useState<Record<string, FlatMediaItem[]>>({});
@@ -208,28 +92,62 @@ export default function ChatPage() {
         }
     };
 
-    // Extract context from messages
-    const context = useMemo(() => {
-        return extractContextFromMessages(messages);
-    }, [messages]);
+    const { tagsQuery, reorder: reorderTags } = useChatTags(chatId);
+
+    // derive searches from chat tags (search only)
+    const searchTags = useMemo(() => {
+        const tags = tagsQuery.data || [];
+        return tags
+            .filter((t) => t.type === 'search')
+            .map((t) => ({
+                id: t.id,
+                label: t.label || t.id,
+                sort_order: t.sort_order ?? null,
+                created_at: t.created_at || null,
+            }));
+    }, [tagsQuery.data]);
+
+    // sync searchTabs state with fetched tags, keep new tags at top
+    useEffect(() => {
+        if (!searchTags.length) {
+            setSearchTabs([]);
+            return;
+        }
+        setSearchTabs((prev) => {
+            const seen = new Set<string>();
+            const mapped = prev.filter((p) => {
+                if (seen.has(p.id)) return false;
+                seen.add(p.id);
+                return searchTags.some((t) => t.id === p.id);
+            });
+
+            // Add new tags not in prev
+            searchTags.forEach((t) => {
+                if (!seen.has(t.id)) {
+                    mapped.unshift({ id: t.id, label: t.label, sort_order: t.sort_order });
+                    seen.add(t.id);
+                }
+            });
+
+            // Sort by sort_order ascending (smaller is newer), then created_at desc via searchTags list order
+            const tagMap = new Map(searchTags.map((t) => [t.id, t]));
+            mapped.sort((a, b) => {
+                const ta = tagMap.get(a.id);
+                const tb = tagMap.get(b.id);
+                const ao = ta?.sort_order ?? 0;
+                const bo = tb?.sort_order ?? 0;
+                if (ao !== bo) return ao - bo;
+                const ac = ta?.created_at ? new Date(ta.created_at).getTime() : 0;
+                const bc = tb?.created_at ? new Date(tb.created_at).getTime() : 0;
+                return bc - ac;
+            });
+
+            return mapped;
+        });
+    }, [searchTags]);
 
     // Unified list of searches with labels for display
-    const displaySearches = useMemo(() => {
-        const knownSearches = new Map(context.searches.map(s => [s.id, s]));
-        const combined = [...context.searches];
-
-        // Add any live searches that aren't in history yet
-        canvasSearchIds.forEach(id => {
-            if (!knownSearches.has(id)) {
-                // Try to get keyword from store
-                const keyword = useChatStore.getState().canvasSearchKeywords[id];
-                if (keyword) {
-                    combined.push({ id, label: keyword });
-                }
-            }
-        });
-        return combined;
-    }, [context.searches, canvasSearchIds, useChatStore.getState().canvasSearchKeywords]);
+    const displaySearches = useMemo(() => searchTabs, [searchTabs]);
 
     // Combine all search IDs (history + live canvas)
     const allSearchIds = useMemo(() => {
@@ -239,7 +157,7 @@ export default function ChatPage() {
     // Effect: Auto-select latest search
     useEffect(() => {
         if (allSearchIds.length > 0) {
-            const latestId = allSearchIds[allSearchIds.length - 1];
+            const latestId = allSearchIds[0];
             setActiveSearchId(prev => {
                 if (!prev || !allSearchIds.includes(prev)) return latestId;
                 return prev;
@@ -251,24 +169,30 @@ export default function ChatPage() {
     const prevSearchCountRef = useRef(0);
     useEffect(() => {
         if (allSearchIds.length > prevSearchCountRef.current) {
-            // New search added! Switch to it.
-            const latest = allSearchIds[allSearchIds.length - 1];
+            // New search added! Switch to it (top of list).
+            const latest = allSearchIds[0];
             setActiveSearchId(latest);
         } else if (allSearchIds.length > 0 && !activeSearchId) {
-            setActiveSearchId(allSearchIds[allSearchIds.length - 1]);
+            setActiveSearchId(allSearchIds[0]);
         }
         prevSearchCountRef.current = allSearchIds.length;
     }, [allSearchIds, activeSearchId]);
 
 
-    // Set initial active board tab
-    useEffect(() => {
-        if (context.boards.length > 0 && !activeBoardTab) {
-            setActiveBoardTab(context.boards[0].id);
-        }
-    }, [context.boards, activeBoardTab]);
+    // Boards still sourced from messages (legacy) for now
+    const contextBoards = useMemo(() => {
+        const tags = tagsQuery.data || [];
+        return tags
+            .filter((t) => t.type === 'board')
+            .map((t) => ({ id: t.id, label: t.label || t.id }));
+    }, [tagsQuery.data]);
 
-    // Get active board data
+    useEffect(() => {
+        if (contextBoards.length > 0 && !activeBoardTab) {
+            setActiveBoardTab(contextBoards[0].id);
+        }
+    }, [contextBoards, activeBoardTab]);
+
     const activeBoardQuery = getBoard(activeBoardTab || "");
     const activeBoardItemsQuery = getBoardItems(activeBoardTab || "");
 
@@ -327,7 +251,7 @@ export default function ChatPage() {
         return map;
     }, [allResults, boardItems]);
 
-    const hasBoards = context.boards.length > 0;
+    const hasBoards = contextBoards.length > 0;
     const hasSearches = allSearchIds.length > 0;
     const hasContent = hasBoards || hasSearches;
     const isInitialLoading = isLoadingMessages && messages.length === 0 && !hasContent;
@@ -396,28 +320,30 @@ export default function ChatPage() {
             <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0">
                 <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8">
                     {isInitialLoading ? (
-                        <div className="h-[60vh] flex items-center justify-center">
-                            <GlassCard className="p-12 text-center flex flex-col items-center gap-4 max-w-md">
-                                <div className="h-12 w-12 rounded-full bg-white/5 flex items-center justify-center">
-                                    <Loader2 className="h-6 w-6 text-muted-foreground animate-spin" />
+                        <div className="min-h-[70vh] flex items-center justify-center">
+                            <div className="flex flex-col items-center gap-3 text-center">
+                                <div className="h-12 w-12 rounded-full bg-white/5 flex items-center justify-center text-muted-foreground">
+                                    <Loader2 className="h-6 w-6 animate-spin" />
                                 </div>
-                                <h3 className="text-lg font-medium text-white">Loading chat</h3>
-                                <p className="text-muted-foreground">
-                                    Fetching your conversation history and results.
-                                </p>
-                            </GlassCard>
+                                <div className="space-y-1">
+                                    <h3 className="text-base font-semibold text-white">Loading chat</h3>
+                                    <p className="text-sm text-muted-foreground">Fetching your conversation history and results.</p>
+                                </div>
+                            </div>
                         </div>
                     ) : !hasContent ? (
-                        <div className="h-[60vh] flex items-center justify-center">
-                            <GlassCard className="p-12 text-center flex flex-col items-center gap-4 max-w-md">
-                                <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
-                                    <Search className="h-8 w-8 text-muted-foreground" />
+                        <div className="min-h-[70vh] flex items-center justify-center">
+                            <div className="flex flex-col items-center gap-3 text-center">
+                                <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center text-muted-foreground">
+                                    <Search className="h-8 w-8" />
                                 </div>
-                                <h3 className="text-xl font-medium text-white">Canvas</h3>
-                                <p className="text-muted-foreground">
-                                    Start a conversation to search for content. Results will appear here as you explore.
-                                </p>
-                            </GlassCard>
+                                <div className="space-y-1">
+                                    <h3 className="text-lg font-semibold text-white">Canvas</h3>
+                                    <p className="text-sm text-muted-foreground">
+                                        Start a conversation to search for content. Results will appear here as you explore.
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     ) : (
                         <>
@@ -490,28 +416,46 @@ export default function ChatPage() {
                                         <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
                                             {/* Keyword Tabs (Scrollable) */}
                                             <div className="flex-1 min-w-0 flex justify-start">
-                                                <div className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto">
-                                                    {[...displaySearches].reverse().map((search) => (
-                                                        <button
+                                                <Reorder.Group
+                                                    axis="x"
+                                                    values={displaySearches}
+                                                    onReorder={(next) => {
+                                                        setSearchTabs(next);
+                                                        const orders = next.map((tab, idx) => ({
+                                                            id: tab.id,
+                                                            sort_order: idx,
+                                                        }));
+                                                        reorderTags.mutate(orders);
+                                                    }}
+                                                    className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto"
+                                                >
+                                                    {displaySearches.map((search) => (
+                                                        <Reorder.Item
                                                             key={search.id}
-                                                            onClick={() => setActiveSearchId(search.id)}
-                                                            className={cn(
-                                                                "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0",
-                                                                activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
-                                                            )}
+                                                            value={search}
+                                                            className="flex"
                                                         >
-                                                            {activeSearchId === search.id && (
-                                                                <div className="absolute inset-0 rounded-lg glass-pill" />
-                                                            )}
-                                                            <span className="relative z-10 mix-blend-normal flex items-center gap-2">
-                                                                {search.label}
-                                                                {streamingSearchIds[search.id] && (
-                                                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setActiveSearchId(search.id)}
+                                                                className={cn(
+                                                                    "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0 cursor-grab active:cursor-grabbing",
+                                                                    activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
                                                                 )}
-                                                            </span>
-                                                        </button>
+                                                            >
+                                                                {activeSearchId === search.id && (
+                                                                    <div className="absolute inset-0 rounded-lg glass-pill" />
+                                                                )}
+                                                                <span className="relative z-10 mix-blend-normal flex items-center gap-2">
+                                                                    {search.label}
+                                                                    {streamingSearchIds[search.id] && (
+                                                                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                                                    )}
+                                                                </span>
+                                                            </button>
+                                                        </Reorder.Item>
                                                     ))}
-                                                </div>
+                                                </Reorder.Group>
                                             </div>
 
                                             {/* Filters */}

@@ -15,13 +15,14 @@ from app.agent.tools import (
     get_search_items,
     search,
     report_step,
+    get_chat_searches,
 )
 from app.core import get_settings
 
 settings = get_settings()
 
 # Define tools available to the agent
-tools = [report_step, get_video_analysis, get_board_items, get_search_items, search]
+tools = [report_step, get_video_analysis, get_board_items, get_search_items, search, get_chat_searches]
 
 # Base system prompt
 BASE_SYSTEM_PROMPT = """You are a helpful content assistant for the ContHunt platform.

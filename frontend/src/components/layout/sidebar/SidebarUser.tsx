@@ -1,7 +1,7 @@
 "use client";
 
-import React from 'react';
-import { LogOut } from 'lucide-react';
+import React, { useRef } from 'react';
+import { LogoutIcon, type LogoutIconHandle } from '@/components/ui/logout';
 import { cn } from '@/lib/utils';
 import { LogoutButton } from "@/components/logout-button";
 import { useRouter } from 'next/navigation';
@@ -43,8 +43,8 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
                                 {profile?.role ? roleLabels[profile.role] : "Loading plan..."}
                             </p>
                         </div>
-                        <LogoutButton className="p-0 border-0 bg-transparent hover:bg-transparent shadow-none text-gray-500 hover:text-red-400 transition-colors">
-                            <LogOut size={16} />
+                        <LogoutButton className="glass-button-red w-8 h-8 p-0 shrink-0 group/logout">
+                            <LogoutIcon size={16} />
                         </LogoutButton>
                     </>
                 )}

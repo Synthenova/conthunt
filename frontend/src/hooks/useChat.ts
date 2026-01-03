@@ -229,6 +229,7 @@ export function useSendMessage() {
         resetStreaming,
         addCanvasSearchId,
     } = useChatStore();
+    const queryClient = useQueryClient();
 
     const sendMessage = useCallback(async (
         message: string,
@@ -366,11 +367,37 @@ export function useSendMessage() {
                                     }
 
                                     if (output?.search_ids) {
+                                        const newTags: Array<{ id: string; label?: string }> = [];
                                         output.search_ids.forEach((s: any) => {
                                             if (s.search_id) {
                                                 addCanvasSearchId(s.search_id, s.keyword);
+                                                newTags.push({ id: s.search_id, label: s.keyword });
                                             }
                                         });
+                                        // Optimistically update chat-tags cache so tabs appear during stream
+                                        const key = ['chat-tags', targetChatId];
+                                        const prev = queryClient.getQueryData<any[]>(key) || [];
+                                        if (newTags.length) {
+                                            const dedup = new Map(prev.map(t => [t.id, t]));
+                                            newTags.forEach(t => {
+                                                if (!dedup.has(t.id)) {
+                                                    dedup.set(t.id, {
+                                                        type: 'search',
+                                                        id: t.id,
+                                                        label: t.label || t.id,
+                                                        sort_order: (prev.length ? (prev[0].sort_order ?? 0) - 1 : 0),
+                                                        source: 'agent',
+                                                    });
+                                                }
+                                            });
+                                            const next = Array.from(dedup.values()).sort((a, b) => {
+                                                const ao = a.sort_order ?? 0;
+                                                const bo = b.sort_order ?? 0;
+                                                return ao - bo;
+                                            });
+                                            queryClient.setQueryData(key, next);
+                                        }
+                                        queryClient.invalidateQueries({ queryKey: key });
                                     }
                                 }
                                 break;

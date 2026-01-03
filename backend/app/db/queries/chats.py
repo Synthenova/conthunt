@@ -154,8 +154,25 @@ async def upsert_chat_tags(
     if not tags:
         return
 
+    # Determine a top sort_order to keep newest tags on top when none provided
+    top_order_row = await conn.execute(
+        text("""
+            SELECT MIN(sort_order) AS min_order
+            FROM conthunt.chat_tags
+            WHERE chat_id = :chat_id
+        """),
+        {"chat_id": chat_id}
+    )
+    min_order = top_order_row.scalar()
+    next_top = (min_order - 1) if min_order is not None else -1
+
     prepared = []
     for tag in tags:
+        sort_order = tag.get("sort_order")
+        if sort_order is None:
+            sort_order = next_top
+            next_top -= 1
+
         prepared.append({
             "id": str(tag.get("id") or uuid4()),
             "chat_id": str(chat_id),
@@ -163,23 +180,26 @@ async def upsert_chat_tags(
             "tag_id": str(tag["tag_id"]),
             "tag_label": tag.get("label"),
             "source": tag.get("source", "user"),
+            "sort_order": sort_order,
         })
 
     await conn.execute(
         text("""
-            INSERT INTO conthunt.chat_tags (id, chat_id, tag_type, tag_id, tag_label, source)
-            SELECT id, chat_id, tag_type, tag_id, tag_label, source
+            INSERT INTO conthunt.chat_tags (id, chat_id, tag_type, tag_id, tag_label, source, sort_order)
+            SELECT id, chat_id, tag_type, tag_id, tag_label, source, sort_order
             FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
                 id uuid,
                 chat_id uuid,
                 tag_type text,
                 tag_id uuid,
                 tag_label text,
-                source text
+                source text,
+                sort_order int
             )
             ON CONFLICT (chat_id, tag_type, tag_id) DO UPDATE
             SET tag_label = COALESCE(EXCLUDED.tag_label, conthunt.chat_tags.tag_label),
-                source = EXCLUDED.source
+                source = EXCLUDED.source,
+                sort_order = EXCLUDED.sort_order
         """),
         {"data": json.dumps(prepared)}
     )
@@ -193,10 +213,10 @@ async def get_chat_tags(
     """Fetch tags for a chat."""
     rows = await conn.execute(
         text("""
-            SELECT id, tag_type, tag_id, tag_label, source, created_at
+            SELECT id, tag_type, tag_id, tag_label, source, created_at, sort_order
             FROM conthunt.chat_tags
             WHERE chat_id = :chat_id
-            ORDER BY created_at ASC
+            ORDER BY sort_order ASC NULLS LAST, created_at DESC
         """),
         {"chat_id": chat_id}
     )
@@ -208,6 +228,35 @@ async def get_chat_tags(
             "label": r[3],
             "source": r[4],
             "created_at": r[5],
+            "sort_order": r[6],
         }
         for r in rows
     ]
+
+
+@log_query_timing
+async def update_chat_tag_orders(
+    conn: AsyncConnection,
+    chat_id: UUID,
+    orders: List[dict],
+) -> None:
+    """Update sort_order for multiple tags in a chat."""
+    if not orders:
+        return
+    prepared = [
+        {"chat_id": str(chat_id), "tag_id": str(o["tag_id"]), "sort_order": int(o["sort_order"])}
+        for o in orders
+    ]
+    await conn.execute(
+        text("""
+            UPDATE conthunt.chat_tags AS ct
+            SET sort_order = data.sort_order
+            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS data(
+                chat_id uuid,
+                tag_id uuid,
+                sort_order int
+            )
+            WHERE ct.chat_id = data.chat_id AND ct.tag_id = data.tag_id
+        """),
+        {"data": json.dumps(prepared)}
+    )

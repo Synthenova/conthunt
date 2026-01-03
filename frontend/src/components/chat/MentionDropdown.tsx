@@ -22,13 +22,20 @@ interface SearchOption {
     inputs?: Record<string, unknown>;
 }
 
+interface ChatOption {
+    id: string;
+    title: string;
+}
+
 interface MentionDropdownProps {
     boards: BoardOption[];
     searches: SearchOption[];
+    chats: ChatOption[];
     isLoadingBoards: boolean;
     isLoadingSearches: boolean;
+    isLoadingChats: boolean;
     query?: string;
-    onSelect: (type: 'board' | 'search', item: any) => void;
+    onSelect: (type: 'board' | 'search' | 'chat', item: any) => void;
 }
 
 function getPlatformIcon(platform: string) {
@@ -43,21 +50,26 @@ function getPlatformIcon(platform: string) {
 export function MentionDropdown({
     boards,
     searches,
+    chats,
     isLoadingBoards,
     isLoadingSearches,
+    isLoadingChats,
     query,
     onSelect
 }: MentionDropdownProps) {
     const [isBoardsOpen, setIsBoardsOpen] = React.useState(false);
     const [isSearchesOpen, setIsSearchesOpen] = React.useState(false);
+    const [isChatsOpen, setIsChatsOpen] = React.useState(false);
 
     React.useEffect(() => {
         if (query && query.trim().length > 0) {
             setIsBoardsOpen(true);
             setIsSearchesOpen(true);
+            setIsChatsOpen(true);
         } else {
             setIsBoardsOpen(false);
             setIsSearchesOpen(false);
+            setIsChatsOpen(false);
         }
     }, [query]);
 
@@ -100,6 +112,51 @@ export function MentionDropdown({
                                     >
                                         <div className="w-1 h-1 rounded-full bg-muted-foreground/50 group-hover:bg-primary transition-colors" />
                                         <span className="truncate">{board.name}</span>
+                                    </button>
+                                ))
+                            )}
+                        </div>
+                    </CollapsibleContent>
+                </Collapsible>
+
+                <div className="h-px bg-border my-1" />
+
+                {/* Chats Section */}
+                <Collapsible
+                    open={isChatsOpen}
+                    onOpenChange={setIsChatsOpen}
+                    className="space-y-1"
+                >
+                    <CollapsibleTrigger asChild>
+                        <Button
+                            variant="ghost"
+                            className="w-full justify-between h-8 px-2 text-sm font-medium hover:bg-zinc-800 hover:text-foreground rounded-sm"
+                        >
+                            <span className="flex items-center gap-2">
+                                <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
+                                <span>Chats</span>
+                            </span>
+                            <ChevronRight className={cn(
+                                "h-4 w-4 text-muted-foreground transition-transform duration-200",
+                                isChatsOpen && "rotate-90"
+                            )} />
+                        </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                        <div className="max-h-48 overflow-y-auto px-1 py-1 space-y-0.5">
+                            {isLoadingChats ? (
+                                <div className="text-xs text-muted-foreground px-2 py-1.5">Loading chats...</div>
+                            ) : chats.length === 0 ? (
+                                <div className="text-xs text-muted-foreground px-2 py-1.5">No chats found</div>
+                            ) : (
+                                chats.map((chat) => (
+                                    <button
+                                        key={chat.id}
+                                        onClick={() => onSelect('chat', chat)}
+                                        className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-zinc-800 hover:text-foreground text-sm flex items-center gap-2 group transition-colors outline-none focus:bg-zinc-800 focus:text-foreground"
+                                    >
+                                        <div className="w-1 h-1 rounded-full bg-muted-foreground/50 group-hover:bg-primary transition-colors" />
+                                        <span className="truncate">{chat.title || 'Untitled chat'}</span>
                                     </button>
                                 ))
                             )}
