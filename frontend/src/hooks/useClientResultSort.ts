@@ -88,6 +88,19 @@ export function useClientResultSort(rawResults: any[], options: UseClientResultS
             });
         }
 
+        // 3. Platform Ordering: push YouTube items to the end while keeping other ordering intact
+        const nonYoutube: FlatMediaItem[] = [];
+        const youtube: FlatMediaItem[] = [];
+        for (const item of results) {
+            const platform = String(item.platform || "").toLowerCase();
+            if (platform === "youtube") {
+                youtube.push(item);
+            } else {
+                nonYoutube.push(item);
+            }
+        }
+        results = [...nonYoutube, ...youtube];
+
         return results;
     }, [baseResults, clientSort, clientDateFilter, selectedPlatforms]);
 
