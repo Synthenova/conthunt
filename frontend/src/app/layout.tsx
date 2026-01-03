@@ -34,7 +34,7 @@ export default function RootLayout({
       <body
         className={`${plusJakartaSans.variable} ${spaceGrotesk.variable} ${dmSans.variable} antialiased bg-background text-foreground`}
       >
-        <GridTorch />
+        {/* <GridTorch /> */}
         <Providers>
           {children}
         </Providers>

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useBoards } from "@/hooks/useBoards";
-import { GlassPanel } from "@/components/ui/glass-card";
+import { BoardGlassCard } from "@/components/ui/board-glass-card";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import {
@@ -163,8 +163,8 @@ export default function BoardsPage() {
 
                             return (
                                 <StaggerItem key={board.id} layout initial="hidden" animate="show">
-                                    <GlassPanel
-                                        className="group relative overflow-hidden hover:border-primary/30 transition-all cursor-pointer h-64 flex flex-col"
+                                    <BoardGlassCard
+                                        className="relative h-64 flex flex-col cursor-pointer"
                                         role="link"
                                         tabIndex={0}
                                         onClick={() => router.push(`/app/boards/${board.id}`)}
@@ -177,7 +177,7 @@ export default function BoardsPage() {
                                     >
 
                                         {/* Collage Preview */}
-                                        <div className="h-40 relative bg-[#0D1118] overflow-hidden pointer-events-none">
+                                        <div className="h-40 relative bg-[#0D1118]/80 overflow-hidden pointer-events-none">
                                             {previewUrls.length > 0 ? (
                                                 <div className="grid grid-cols-2 gap-0.5 h-full">
                                                     {previewUrls.slice(0, 2).map((src, i) => (
@@ -196,7 +196,7 @@ export default function BoardsPage() {
                                                 </div>
                                             ) : (
                                                 <div className="w-full h-full flex items-center justify-center relative">
-                                                    <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-primary/5" />
+                                                    <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/5" />
                                                     <div className="relative z-10 flex flex-col items-center gap-2">
                                                         <div className="w-12 h-12 rounded-full border border-white/10 flex items-center justify-center bg-white/5 shadow-inner group-hover:scale-110 transition-transform duration-500">
                                                             <Film className="text-gray-500 group-hover:text-primary transition-colors" size={20} />
@@ -207,10 +207,10 @@ export default function BoardsPage() {
                                         </div>
 
                                         {/* Info */}
-                                        <div className="p-4 flex-1 flex flex-col relative bg-gradient-to-t from-[#0D1118] via-[#0D1118]/90 to-transparent z-10 pointer-events-none">
+                                        <div className="p-5 flex-1 flex flex-col relative z-10 pointer-events-none">
                                             <div>
-                                                <h3 className="text-lg font-semibold text-white mb-1 group-hover:text-primary transition-colors truncate">{boardName}</h3>
-                                                <p className="text-xs text-gray-500 font-medium">
+                                                <h3 className="text-lg font-semibold text-white mb-1 group-hover:text-primary transition-colors truncate tracking-tight">{boardName}</h3>
+                                                <p className="text-xs text-gray-400 font-medium">
                                                     {itemCount} {itemCount === 1 ? 'video' : 'videos'} • Updated {updatedAtLabel}
                                                 </p>
                                             </div>
@@ -246,7 +246,7 @@ export default function BoardsPage() {
                                                 </DropdownMenu>
                                             </div>
                                         </div>
-                                    </GlassPanel>
+                                    </BoardGlassCard>
                                 </StaggerItem>
                             );
                         })}

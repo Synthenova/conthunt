@@ -1,151 +1,45 @@
 "use client";
 
-import React, { useMemo, useState } from 'react';
-import Link from 'next/link';
+import React, { useMemo, useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
     LayoutGrid,
     Search,
-    LogOut,
+    PanelLeft,
+    PanelLeftClose,
+    Menu,
+    Loader2,
+    MessageSquare,
     ChevronRight,
     ChevronLeft,
-    MessageSquare,
-    Loader2
+    LayoutPanelTop
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSearch } from "@/hooks/useSearch";
 import { useBoards } from "@/hooks/useBoards";
 import { useChatList } from "@/hooks/useChat";
 import { useChatStore } from "@/lib/chatStore";
-import { LogoutButton } from "@/components/logout-button";
 import { StaggerContainer, StaggerItem, AnimatePresence } from "@/components/ui/animations";
 import { useUser } from "@/hooks/useUser";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { motion } from "framer-motion";
+
+// New icons
 import { SearchIcon } from "@/components/ui/search";
 import { HistoryIcon } from "@/components/ui/history";
 import { LayoutPanelTopIcon } from "@/components/ui/layout-panel-top";
+
+// Extracted Components
+import { NavItem } from "@/components/layout/sidebar/NavItem";
+import { RecentsItem } from "@/components/layout/sidebar/RecentsItem";
+import { SidebarUser } from "@/components/layout/sidebar/SidebarUser";
+import { SidebarRecentsModal } from "@/components/layout/sidebar/SidebarRecentsModal";
 
 const navItems = [
     { title: "Search", path: "/app", icon: SearchIcon },
     { title: "Chats", path: "/app/chats", icon: HistoryIcon },
     { title: "Boards", path: "/app/boards", icon: LayoutPanelTopIcon },
 ];
-
-const NavItem = ({ icon: Icon, label, path, active, isCollapsed, onModalClick }: any) => {
-    const isModalNav = label === 'Chats' || label === 'Searches';
-    const iconRef = React.useRef<any>(null);
-
-    const handleMouseEnter = () => {
-        iconRef.current?.startAnimation?.();
-    };
-
-    const handleMouseLeave = () => {
-        iconRef.current?.stopAnimation?.();
-    };
-
-    const content = (
-        <>
-            <div className="relative z-10 flex items-center gap-3">
-                <Icon
-                    ref={iconRef}
-                    size={20}
-                    className={cn("transition-colors shrink-0", active ? "text-white" : "group-hover:text-gray-200")}
-                />
-                {!isCollapsed && (
-                    <span className="font-medium text-sm whitespace-nowrap overflow-hidden transition-all duration-300 origin-left">
-                        {label}
-                    </span>
-                )}
-            </div>
-            {active && (
-                <motion.div
-                    layoutId="nav-pill"
-                    className="absolute inset-0 rounded-full glass-pill"
-                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                />
-            )}
-        </>
-    );
-
-    const classes = cn(
-        "flex items-center transition-all duration-200 group relative",
-        isCollapsed
-            ? "justify-center w-12 h-12 rounded-full mx-auto"
-            : "w-full space-x-3 px-3 py-2.5 rounded-full",
-        active
-            ? "text-white"
-            : "text-gray-400 hover:text-gray-200"
-    );
-
-    if (isModalNav) {
-        return (
-            <button
-                type="button"
-                onClick={onModalClick}
-                className={classes}
-                onMouseEnter={handleMouseEnter}
-                onMouseLeave={handleMouseLeave}
-            >
-                {content}
-            </button>
-        );
-    }
-
-    return (
-        <Link
-            href={path}
-            className={classes}
-            onMouseEnter={handleMouseEnter}
-            onMouseLeave={handleMouseLeave}
-        >
-            {content}
-        </Link>
-    );
-};
-
-const RecentsItem = ({ label, icon: Icon, active, onClick, href }: any) => {
-    const content = (
-        <>
-            <div className="relative z-10 flex items-center gap-3">
-                {Icon && <Icon size={16} className={cn("shrink-0 transition-colors opacity-70", active ? "text-white opacity-100" : "group-hover:text-gray-200 group-hover:opacity-100")} />}
-                <span className={cn("text-sm truncate font-medium transition-colors", active ? "text-white" : "text-gray-400 group-hover:text-gray-200")}>
-                    {label}
-                </span>
-            </div>
-            {active && (
-                <motion.div
-                    layoutId="recent-item-pill"
-                    className="absolute inset-0 rounded-lg bg-white/5 border border-white/5 shadow-sm"
-                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                />
-            )}
-        </>
-    );
-
-    const containerClasses = cn(
-        "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-left group relative"
-    );
-
-    if (onClick) {
-        return (
-            <button onClick={onClick} className={containerClasses}>
-                {content}
-            </button>
-        );
-    }
-
-    return (
-        <Link href={href} className={containerClasses}>
-            {content}
-        </Link>
-    );
-};
-
-import { useMediaQuery } from "@/hooks/use-media-query";
-import { PanelLeft, PanelLeftClose, Menu } from 'lucide-react';
-
-// ... (other imports remain, remove ChevronRight/Left if unused)
 
 export function AppSidebar({
     collapsed,
@@ -185,11 +79,9 @@ export function AppSidebar({
     const { user, profile } = useUser();
 
     // Reset mobile state on path change
-    React.useEffect(() => {
+    useEffect(() => {
         setIsMobileOpen(false);
     }, [pathname]);
-
-    // ... (rest of state and hooks)
 
     // Helper to group chats by date
     const groupChatsByDate = (chats: any[]) => {
@@ -236,11 +128,7 @@ export function AppSidebar({
         });
     }, [allChats]);
 
-    // Group only the top 12 for sidebar to avoid clutter, or maybe just group the sorted list
-    // For sidebar we just take top N then group them, OR group all and show limited? 
-    // Usually sidebar shows "Recent" which implies time sorted. 
-    // Let's group the `sortedChats` (top 10) for sidebar.
-    const sortedChats = useMemo(() => sortedAllChats.slice(0, 20), [sortedAllChats]); // Increased slice for grouping context
+    const sortedChats = useMemo(() => sortedAllChats.slice(0, 20), [sortedAllChats]);
     const groupedSidebarChats = useMemo(() => groupChatsByDate(sortedChats), [sortedChats]);
     const groupedAllChats = useMemo(() => groupChatsByDate(sortedAllChats), [sortedAllChats]);
 
@@ -286,17 +174,10 @@ export function AppSidebar({
         router.push(path);
     };
 
-    const roleLabels: Record<string, string> = {
-        free: "Free Plan",
-        creator: "Creator Plan",
-        pro_research: "Pro Research"
-    };
-
-    // Mobile View (Rendered conditionally after all hooks)
+    // Mobile View
     if (!isDesktop) {
         return (
             <>
-                {/* Mobile Toggle Button */}
                 <button
                     onClick={() => setIsMobileOpen(true)}
                     className="fixed top-4 right-4 z-50 p-2 bg-[#0B0E13] border border-white/10 rounded-full text-white shadow-lg"
@@ -304,7 +185,6 @@ export function AppSidebar({
                     <Menu size={20} />
                 </button>
 
-                {/* Mobile Overlay Sidebar */}
                 <AnimatePresence>
                     {isMobileOpen && (
                         <>
@@ -322,7 +202,6 @@ export function AppSidebar({
                                 transition={{ type: "spring", damping: 25, stiffness: 200 }}
                                 className="fixed inset-y-0 left-0 z-50 w-[280px] bg-[#030303] border-r border-white/10 flex flex-col font-main"
                             >
-                                {/* Mobile Header */}
                                 <div className="flex items-center justify-between h-[72px] px-5 border-b border-white/5">
                                     <div className="flex items-center space-x-3 text-white">
                                         <div className="w-8 h-8 rounded-lg bg-surface border border-white/10 flex items-center justify-center shrink-0">
@@ -335,13 +214,14 @@ export function AppSidebar({
                                     </button>
                                 </div>
 
-                                {/* Scrollable Content */}
                                 <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                                     <div className="px-3 space-y-1 mt-4">
                                         {navItems.map(item => (
                                             <NavItem
                                                 key={item.path}
-                                                {...item}
+                                                // @ts-ignore
+                                                icon={item.icon}
+                                                path={item.path}
                                                 label={item.title}
                                                 active={isActive(item.path)}
                                                 isCollapsed={false}
@@ -349,7 +229,6 @@ export function AppSidebar({
                                             />
                                         ))}
                                     </div>
-                                    {/* Mobile Recents (Always Expanded) */}
                                     <div className="mt-8 flex-1 flex flex-col min-h-0 px-4">
                                         <div className="flex items-center justify-between mb-4">
                                             <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Recents</span>
@@ -377,7 +256,6 @@ export function AppSidebar({
                                             ))}
                                         </div>
                                         <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar">
-                                            {/* Reuse list logic - duplicated for simplicity in this step */}
                                             {activeTab === 'chats' && (
                                                 isLoadingChats ? (
                                                     <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-gray-600" /></div>
@@ -432,25 +310,7 @@ export function AppSidebar({
                                         </div>
                                     </div>
 
-                                    {/* Footer */}
-                                    <div className="p-4 border-t border-white/5 mt-auto">
-                                        <div className="flex items-center space-x-3 p-2 rounded-xl bg-white/5">
-                                            <div className="w-8 h-8 rounded-full bg-surface border border-white/10 flex items-center justify-center text-xs text-primary font-bold shrink-0">
-                                                {user?.email?.[0].toUpperCase() || "U"}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <p className="text-xs font-semibold text-gray-200 truncate">
-                                                    {user?.displayName || user?.email?.split('@')[0] || "User"}
-                                                </p>
-                                                <p className="text-[9px] font-bold text-gray-500 uppercase tracking-tighter">
-                                                    {profile?.role ? roleLabels[profile.role] : "Loading..."}
-                                                </p>
-                                            </div>
-                                            <LogoutButton className="p-0 border-0 bg-transparent hover:bg-transparent shadow-none text-gray-500 hover:text-red-400 transition-colors">
-                                                <LogOut size={16} />
-                                            </LogoutButton>
-                                        </div>
-                                    </div>
+                                    <SidebarUser user={user} profile={profile} isCollapsed={false} />
                                 </div>
                             </motion.aside>
                         </>
@@ -593,7 +453,7 @@ export function AppSidebar({
                                                 <StaggerItem key={board.id}>
                                                     <RecentsItem
                                                         label={board.name}
-                                                        icon={LayoutGrid}
+                                                        icon={LayoutPanelTop}
                                                         active={isRecentActive('boards', board.id)}
                                                         href={`/app/boards/${board.id}`}
                                                     />
@@ -604,30 +464,6 @@ export function AppSidebar({
                                         )
                                     )}
 
-                                    {/* {activeTab === 'searches' && (
-                                        isLoadingHistory ? (
-                                            <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-gray-600" /></div>
-                                        ) : history.length > 0 ? (
-                                            history.slice(0, 10).map((item: any) => (
-                                                <StaggerItem key={item.id}>
-                                                    <Link
-                                                        href={`/app/searches/${item.id}`}
-                                                        className={cn(
-                                                            "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all group",
-                                                            isRecentActive('searches', item.id)
-                                                                ? "bg-white/10 text-white"
-                                                                : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                                                        )}
-                                                    >
-                                                        <Search size={14} className="shrink-0 opacity-50 group-hover:opacity-100" />
-                                                        <span className="text-xs truncate font-medium">{item.query}</span>
-                                                    </Link>
-                                                </StaggerItem>
-                                            ))
-                                        ) : (
-                                            <div className="px-3 py-8 text-[10px] text-gray-500 text-center border border-dashed border-white/5 rounded-xl">No search history</div>
-                                        )
-                                    )} */}
                                     <button
                                         onClick={() => {
                                             if (activeTab === 'boards') {
@@ -647,96 +483,18 @@ export function AppSidebar({
                 )}
             </div>
 
-            {/* Footer */}
-            <div className="p-4 border-t border-white/5 mt-auto">
-                <div
-                    onClick={() => router.push('/app/profile')}
-                    className={cn(
-                        "flex items-center p-2 rounded-xl hover:bg-white/5 cursor-pointer group transition-all",
-                        isCollapsed ? "justify-center" : "space-x-3"
-                    )}
-                >
-                    <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-xs text-primary font-bold shrink-0">
-                        {user?.email?.[0].toUpperCase() || "U"}
-                    </div>
-                    {!isCollapsed && (
-                        <>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-xs font-semibold text-gray-200 truncate">
-                                    {user?.displayName || user?.email?.split('@')[0] || "User"}
-                                </p>
-                                <p className="text-[9px] font-bold text-gray-500 uppercase tracking-tighter">
-                                    {profile?.role ? roleLabels[profile.role] : "Loading plan..."}
-                                </p>
-                            </div>
-                            <LogoutButton className="p-0 border-0 bg-transparent hover:bg-transparent shadow-none text-gray-500 hover:text-red-400 transition-colors">
-                                <LogOut size={16} />
-                            </LogoutButton>
-                        </>
-                    )}
-                </div>
-            </div>
-            <Dialog open={isRecentsModalOpen} onOpenChange={setIsRecentsModalOpen}>
-                <DialogContent className="bg-[#1C1C1C] border border-white/5 text-gray-200 max-w-lg p-0 gap-0 overflow-hidden shadow-2xl rounded-2xl">
-                    <div className="p-4 border-b border-white/5 flex items-center gap-3">
-                        <Search size={16} className="text-gray-500" />
-                        <input
-                            className="bg-transparent border-none outline-none text-sm placeholder:text-gray-500 flex-1 text-white"
-                            placeholder="Search chats..."
-                            autoFocus
-                        />
-                    </div>
-                    <div className="p-2 space-y-1">
-                        <button
-                            onClick={() => {
-                                // Logic to create new chat would go here
-                                setIsRecentsModalOpen(false);
-                                router.push('/app'); // Assuming /app is new chat
-                            }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-white hover:bg-white/5 transition-all text-left font-medium text-sm group"
-                        >
-                            <MessageSquare size={16} className="shrink-0 text-white" />
-                            New chat
-                        </button>
-                    </div>
+            <SidebarUser user={user} profile={profile} isCollapsed={isCollapsed} />
 
-                    <div className="max-h-[60vh] overflow-y-auto px-2 pb-4 custom-scrollbar">
-                        {recentsModalTab === 'chats' ? (
-                            isLoadingChats ? (
-                                <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-gray-500" /></div>
-                            ) : sortedAllChats.length > 0 ? (
-                                Object.entries(groupedAllChats).map(([group, chats]) => (
-                                    chats.length > 0 && (
-                                        <div key={group} className="mt-4 first:mt-2">
-                                            <div className="px-3 mb-2 text-[11px] font-medium text-gray-500">{group}</div>
-                                            <div className="space-y-0.5">
-                                                {chats.map((chat: any) => (
-                                                    <button
-                                                        key={chat.id}
-                                                        onClick={() => {
-                                                            handleOpenChat(chat.id);
-                                                            setIsRecentsModalOpen(false);
-                                                        }}
-                                                        className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-all text-left group"
-                                                    >
-                                                        <MessageSquare size={16} className="shrink-0 opacity-70 group-hover:opacity-100 transition-opacity" />
-                                                        <span className="text-sm truncate">{chat.title || "New Chat"}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )
-                                ))
-                            ) : (
-                                <div className="px-3 py-8 text-xs text-gray-500 text-center">
-                                    No active chats
-                                </div>
-                            )
-                        ) : null}
-                        {/* Searches modal list hidden for now. */}
-                    </div>
-                </DialogContent>
-            </Dialog>
+            <SidebarRecentsModal
+                isOpen={isRecentsModalOpen}
+                onOpenChange={setIsRecentsModalOpen}
+                tab={recentsModalTab}
+                isLoading={isLoadingChats}
+                chats={sortedAllChats}
+                handleOpenChat={handleOpenChat}
+                router={router}
+                groupedChats={groupedAllChats}
+            />
         </aside>
     );
 }
