@@ -25,11 +25,18 @@ class BoardInsightsResult(BaseModel):
     ctas: List[str] = Field(default_factory=list, description="Effective calls to action")
 
 
+class BoardInsightsProgress(BaseModel):
+    total_videos: int = Field(0, description="Total videos in board to analyze")
+    analyzed_videos: int = Field(0, description="Number of videos with completed analysis")
+    failed_videos: int = Field(0, description="Number of videos where analysis failed")
+
+
 class BoardInsightsResponse(BaseModel):
     id: Optional[UUID] = None
     board_id: UUID
     status: str = "processing"  # empty, processing, completed, failed
     insights: Optional[BoardInsightsResult] = None
+    progress: Optional[BoardInsightsProgress] = None
     error: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

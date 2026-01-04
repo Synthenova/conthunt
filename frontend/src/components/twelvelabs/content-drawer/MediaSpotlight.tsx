@@ -2,10 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Play, Volume2, VolumeX } from "lucide-react";
+import { Play, Volume2, VolumeX, X } from "lucide-react";
 import { useYouTubePlayer } from "@/lib/youtube";
 import { useSearchStore } from "@/lib/store";
-import { XIcon } from "./XIcon";
 
 interface MediaSpotlightProps {
     item: any;
@@ -460,7 +459,7 @@ export function MediaSpotlight({
                     className="h-8 w-8 bg-black/50 text-white hover:bg-black/70 rounded-full"
                     onClick={onClose}
                 >
-                    <XIcon className="h-4 w-4" />
+                    <X className="h-4 w-4" />
                 </Button>
             </div>
         </div>

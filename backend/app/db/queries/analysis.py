@@ -165,3 +165,38 @@ async def insert_video_analysis(
         }
     )
     return analysis_id
+
+
+@log_query_timing
+async def has_user_accessed_analysis(
+    conn: AsyncConnection,
+    user_id: UUID,
+    media_asset_id: UUID,
+) -> bool:
+    """Check if user has already been charged for this analysis."""
+    result = await conn.execute(
+        text("""
+            SELECT 1 FROM user_analysis_access
+            WHERE user_id = :user_id AND media_asset_id = :media_asset_id
+            LIMIT 1
+        """),
+        {"user_id": user_id, "media_asset_id": media_asset_id}
+    )
+    return result.fetchone() is not None
+
+
+@log_query_timing
+async def record_user_analysis_access(
+    conn: AsyncConnection,
+    user_id: UUID,
+    media_asset_id: UUID,
+) -> None:
+    """Record that user accessed this analysis (idempotent via ON CONFLICT)."""
+    await conn.execute(
+        text("""
+            INSERT INTO user_analysis_access (user_id, media_asset_id)
+            VALUES (:user_id, :media_asset_id)
+            ON CONFLICT (user_id, media_asset_id) DO NOTHING
+        """),
+        {"user_id": user_id, "media_asset_id": media_asset_id}
+    )

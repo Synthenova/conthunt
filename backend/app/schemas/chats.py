@@ -17,6 +17,7 @@ from langchain_core.messages import ContentBlock
 ContentType = Union[
     str,                                    # Simple text
     List[ContentBlock],                     # Multimodal content blocks
+    List[Dict[str, Any]],                   # Flexible multimodal blocks (e.g., image_url)
     Dict[str, Any],                         # Fallback for structured dicts
 ]
 
@@ -48,6 +49,8 @@ class SendMessageRequest(BaseModel):
     message: str
     client_id: Optional[str] = None
     tags: Optional[List[ChatTag]] = None
+    model: Optional[str] = None
+    image_urls: Optional[List[str]] = None
 
 class RenameChatRequest(BaseModel):
     title: str

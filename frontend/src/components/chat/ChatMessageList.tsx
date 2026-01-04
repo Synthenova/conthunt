@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { useChatStore, type ToolCallInfo, type ChatMessage } from '@/lib/chatStore';
 import { useChatMessages } from '@/hooks/useChat';
 import {
@@ -9,8 +9,6 @@ import {
     ChatContainerScrollAnchor,
 } from '@/components/ui/chat-container';
 import { Message, MessageContent } from '@/components/ui/message';
-import { TextShimmer } from '@/components/ui/text-shimmer';
-import { Tool, ToolPart } from '@/components/ui/tool';
 import {
     Collapsible,
     CollapsibleContent,
@@ -18,7 +16,7 @@ import {
 } from '@/components/ui/collapsible';
 import { Loader } from '@/components/ui/loader';
 import { ChatLoader } from './ChatLoader';
-import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Brain, Globe, Circle, ListTodo, Check } from 'lucide-react';
+import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus } from 'lucide-react';
 
 type MessageSegment = { type: 'text' | 'chip'; value: string };
 
@@ -55,6 +53,9 @@ function parseChipLabel(label: string) {
             }
             if (parsed?.type === "search") {
                 return { text: parsed.label || parsed.id || "Search", icon: "search" };
+            }
+            if (parsed?.type === "image") {
+                return { text: parsed.label || parsed.fileName || "Image", icon: "image" };
             }
         } catch (e) {
             // Fall through to legacy parsing.
@@ -100,6 +101,62 @@ function parseMessageSegments(content: string): MessageSegment[] {
     }
 
     return segments;
+}
+
+function extractPlainText(content: string | Array<any>) {
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return '';
+    return content
+        .map((block) => {
+            if (!block || typeof block !== 'object') return '';
+            if (block.type === 'text') return block.text || '';
+            return '';
+        })
+        .join('');
+}
+
+function getImageLabelFromUrl(url?: string) {
+    if (!url) return 'Image';
+    try {
+        const path = new URL(url).pathname;
+        const name = path.split('/').filter(Boolean).pop();
+        return decodeURIComponent(name || 'Image');
+    } catch (error) {
+        return 'Image';
+    }
+}
+
+function extractImageAttachments(content: string | Array<any>) {
+    if (!Array.isArray(content)) return [];
+    return content.reduce<Array<{ label: string; url?: string }>>((acc, block) => {
+        if (!block || typeof block !== 'object') return acc;
+        if (block.type === 'image_url' || block.type === 'image') {
+            const url = block.type === 'image_url'
+                ? block.image_url?.url
+                : block.url;
+            acc.push({ label: getImageLabelFromUrl(url), url });
+        }
+        return acc;
+    }, []);
+}
+
+function buildHumanContent(content: string | Array<any>) {
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return '';
+
+    const parts: string[] = [];
+    content.forEach((block) => {
+        if (!block || typeof block !== 'object') return;
+        if (block.type === 'text') {
+            parts.push(block.text || '');
+            return;
+        }
+        if (block.type === 'image_url' || block.type === 'image') {
+            return;
+        }
+    });
+
+    return parts.join('\n');
 }
 
 // Helper to extract tool info from messages
@@ -349,7 +406,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                 >
                                     {msg.type === 'human' ? (
                                         (() => {
-                                            const segments = parseMessageSegments(msg.content);
+                                            const segments = parseMessageSegments(buildHumanContent(msg.content));
                                             const groups: { type: 'text' | 'chip-group'; value?: string; items?: string[] }[] = [];
 
                                             let currentGroup: string[] = [];
@@ -370,15 +427,26 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                                 groups.push({ type: 'chip-group', items: [...currentGroup] });
                                             }
 
+                                            const imageAttachments = extractImageAttachments(msg.content);
+                                            if (imageAttachments.length && !groups.some((g) => g.type === 'chip-group')) {
+                                                groups.unshift({ type: 'chip-group', items: [] });
+                                            }
+
+                                            let attachmentsInserted = false;
                                             return groups.map((group, groupIndex) => {
                                                 if (group.type === 'chip-group' && group.items) {
+                                                    const attachmentItems = !attachmentsInserted ? imageAttachments : [];
+                                                    attachmentsInserted = attachmentsInserted || attachmentItems.length > 0;
                                                     return (
                                                         <div
                                                             key={`${msg.id}-group-${groupIndex}`}
-                                                            className="inline-flex flex-nowrap overflow-x-auto scrollbar-none gap-2 max-w-full align-bottom mr-1"
+                                                            className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 max-w-full align-bottom mb-1"
                                                         >
                                                             {group.items.map((chipValue, chipIndex) => {
                                                                 const chipMeta = parseChipLabel(chipValue);
+                                                                if (chipMeta.icon === "image") {
+                                                                    return null;
+                                                                }
                                                                 return (
                                                                     <span
                                                                         key={`${msg.id}-chip-${groupIndex}-${chipIndex}`}
@@ -390,26 +458,42 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                                                         {chipMeta.icon === "search" && (
                                                                             <Search className="h-3.5 w-3.5 text-muted-foreground" />
                                                                         )}
+                                                                        {chipMeta.icon === "image" && (
+                                                                            <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                        )}
                                                                         {chipMeta.Icon && (
                                                                             <chipMeta.Icon className="text-[12px]" />
                                                                         )}
                                                                         <span className="truncate" title={chipMeta.text}>
                                                                             {truncateLabel(chipMeta.text)}
                                                                         </span>
-                                                                    </span>
+                                                                        </span>
                                                                 );
                                                             })}
+                                                            {attachmentItems.map((attachment, attachmentIndex) => (
+                                                                <span
+                                                                    key={`${msg.id}-image-${groupIndex}-${attachmentIndex}`}
+                                                                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10"
+                                                                >
+                                                                    <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                    <span className="truncate" title={attachment.label}>
+                                                                        {truncateLabel(attachment.label)}
+                                                                    </span>
+                                                                </span>
+                                                            ))}
                                                         </div>
                                                     );
                                                 } else {
                                                     return (
-                                                        <span key={`${msg.id}-text-${groupIndex}`}>{group.value}</span>
+                                                        <span key={`${msg.id}-text-${groupIndex}`} className="block">
+                                                            {group.value}
+                                                        </span>
                                                     );
                                                 }
                                             });
                                         })()
                                     ) : (
-                                        msg.content
+                                        extractPlainText(msg.content)
                                     )}
                                 </MessageContent>
                             </Message>

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useChatStore, MediaChipInput } from '@/lib/chatStore';
-import { useSendMessage, useCreateChat, useChatList } from '@/hooks/useChat';
+import { useSendMessage, useCreateChat, useChatList, useUploadChatImage } from '@/hooks/useChat';
 import { useBoards } from '@/hooks/useBoards';
 import { useSearch } from '@/hooks/useSearch';
 import { usePathname, useRouter } from 'next/navigation';
@@ -17,10 +17,19 @@ import {
     PromptInputAction,
 } from '@/components/ui/prompt-input';
 import { Button } from '@/components/ui/button';
-import { ArrowUp, Square, X, LayoutDashboard, Search } from 'lucide-react';
+import { ArrowUp, Square, X, LayoutDashboard, Search, ImagePlus, ChevronDown, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 import { MentionDropdown } from './MentionDropdown';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuRadioGroup,
+    DropdownMenuRadioItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { FileUpload, FileUploadTrigger } from '@/components/ui/file-upload';
+import { toast } from "sonner";
 
 type ChatContext = { type: 'board' | 'search'; id: string };
 
@@ -45,6 +54,16 @@ type MediaChip = {
 };
 
 type ContextChip = BoardSearchChatChip | MediaChip;
+
+type ImageChip = {
+    type: 'image';
+    id: string;
+    fileName: string;
+    status: 'uploading' | 'ready';
+    url?: string;
+};
+
+type ChatChip = ContextChip | ImageChip;
 
 type SummaryItem = {
     title?: string;
@@ -102,6 +121,10 @@ interface ChatInputProps {
 const MENTION_RE = /(?:^|\s)@([^\s@]*)$/;
 const MEDIA_DRAG_TYPE = 'application/x-conthunt-media';
 const CHIP_TITLE_LIMIT = 10;
+const MODEL_OPTIONS = [
+    { label: 'Gemini 3 Flash (Vertex)', value: 'google/gemini-3-flash-preview' },
+    { label: 'Gemini 3 Flash (OpenRouter)', value: 'openrouter/google/gemini-3-flash-preview' },
+];
 
 function normalizeText(value?: string) {
     return value ? value.replace(/\s+/g, ' ').trim() : '';
@@ -112,7 +135,7 @@ function truncateText(value: string, limit: number) {
     return value.slice(0, limit - 1).trimEnd() + '…';
 }
 
-function formatChipFence(chip: ContextChip) {
+function formatChipFence(chip: ChatChip) {
     if (chip.type === 'media') {
         return JSON.stringify({
             type: 'media',
@@ -120,6 +143,13 @@ function formatChipFence(chip: ContextChip) {
             title: chip.title,
             platform: chip.platform,
             label: chip.label,
+        });
+    }
+    if (chip.type === 'image') {
+        return JSON.stringify({
+            type: 'image',
+            id: chip.id,
+            label: chip.fileName,
         });
     }
 
@@ -173,8 +203,10 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
 export function ChatInput({ context, isDragActive }: ChatInputProps) {
     const [message, setMessage] = useState('');
     const [chips, setChips] = useState<ContextChip[]>([]);
+    const [imageChips, setImageChips] = useState<ImageChip[]>([]);
     const [mentionQuery, setMentionQuery] = useState<string | null>(null);
     const [isDragOver, setIsDragOver] = useState(false);
+    const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].value);
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const queryClient = useQueryClient();
@@ -193,6 +225,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         openSidebar,
     } = useChatStore();
     const { sendMessage } = useSendMessage();
+    const { uploadChatImage } = useUploadChatImage();
     const createChat = useCreateChat();
 
     const boardQuery = getBoard(context?.type === 'board' ? context.id : '');
@@ -298,6 +331,10 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         openSidebar();
     }, [queuedMediaChips, addMediaChips, clearQueuedMediaChips, openSidebar]);
 
+    useEffect(() => {
+        setImageChips([]);
+    }, [activeChatId]);
+
 
     const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         setIsDragOver(false);
@@ -328,16 +365,76 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         setIsDragOver(false);
     }, []);
 
+    const handleRemoveImageChip = useCallback((chipId: string) => {
+        setImageChips((prev) => prev.filter((chip) => chip.id !== chipId));
+    }, []);
+
+    const handleFilesAdded = useCallback(async (files: File[]) => {
+        const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+        if (!imageFiles.length) return;
+
+        let targetChatId = activeChatId;
+        if (!targetChatId) {
+            try {
+                const chat = await createChat.mutateAsync({
+                    title: message.trim().slice(0, 50) || 'New Chat',
+                    contextType: context?.type,
+                    contextId: context?.id,
+                });
+                targetChatId = chat.id;
+            } catch (err) {
+                console.error('Failed to create chat for image upload:', err);
+                toast.error('Failed to create chat for image upload.');
+                return;
+            }
+        }
+
+        await Promise.all(imageFiles.map(async (imageFile) => {
+            const chipId = typeof crypto?.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `img-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+            setImageChips((prev) => [
+                ...prev,
+                {
+                    type: 'image',
+                    id: chipId,
+                    fileName: imageFile.name || 'Image',
+                    status: 'uploading',
+                },
+            ]);
+
+            try {
+                const url = await uploadChatImage(targetChatId as string, imageFile);
+                setImageChips((prev) => prev.map((chip) => (
+                    chip.id === chipId ? { ...chip, status: 'ready', url } : chip
+                )));
+            } catch (error) {
+                setImageChips((prev) => prev.filter((chip) => chip.id !== chipId));
+                toast.error('Image upload failed.');
+            }
+        }));
+    }, [activeChatId, context, createChat, message, uploadChatImage]);
+
     const handleSend = useCallback(async () => {
         if (!message.trim() || isStreaming) return;
+        if (imageChips.some((chip) => chip.status === 'uploading')) {
+            toast.info('Wait for image uploads to finish.');
+            return;
+        }
 
         const messageText = message.trim();
+        const imageUrls = imageChips
+            .filter((chip) => chip.status === 'ready' && chip.url)
+            .map((chip) => chip.url as string);
         setMessage('');
         setMentionQuery(null);
+        setImageChips([]);
 
         // Only send chips fence, no detailed context block
-        const chipFence = chips.length
-            ? chips.map((chip) => `\`\`\`chip ${formatChipFence(chip)}\`\`\``).join(' ')
+        const sendChips = [...chips, ...imageChips.filter((chip) => chip.status === 'ready')];
+        const chipFence = sendChips.length
+            ? sendChips.map((chip) => `\`\`\`chip ${formatChipFence(chip)}\`\`\``).join(' ')
             : '';
 
         const fullMessage = [chipFence, messageText].filter(Boolean).join('\n\n');
@@ -361,15 +458,23 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                 if (isChatRoute) {
                     router.push(`/app/chats/${chat.id}`);
                 }
-                await sendMessage(fullMessage, abortControllerRef.current, chat.id, { tags: tagPayload });
+                await sendMessage(fullMessage, abortControllerRef.current, chat.id, {
+                    tags: tagPayload,
+                    model: selectedModel,
+                    imageUrls,
+                });
             } catch (err) {
                 console.error('Failed to create chat:', err);
                 resetStreaming();
             }
         } else {
-            await sendMessage(fullMessage, abortControllerRef.current, undefined, { tags: tagPayload });
+            await sendMessage(fullMessage, abortControllerRef.current, undefined, {
+                tags: tagPayload,
+                model: selectedModel,
+                imageUrls,
+            });
         }
-    }, [message, isStreaming, chips, activeChatId, createChat, context, sendMessage, resetStreaming, isChatRoute, router]);
+    }, [message, isStreaming, imageChips, chips, activeChatId, createChat, context, sendMessage, resetStreaming, isChatRoute, router, selectedModel]);
 
     const handleStop = () => {
         if (abortControllerRef.current) {
@@ -400,8 +505,20 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
     const boardResults = boardOptions.slice(0, 5);
     const searchResults = searchOptions.slice(0, 5);
 
+    const allChips = useMemo(() => [...chips, ...imageChips], [chips, imageChips]);
+
+    const selectedModelLabel = useMemo(() => {
+        return MODEL_OPTIONS.find((option) => option.value === selectedModel)?.label || selectedModel;
+    }, [selectedModel]);
+
     return (
-        <div className="relative px-4 pb-4 pt-2 transition-colors" data-drag-active={isDragActive ? 'true' : 'false'}>
+        <FileUpload
+            onFilesAdded={handleFilesAdded}
+            multiple
+            accept="image/*"
+            disabled={createChat.isPending || isStreaming}
+        >
+            <div className="relative px-4 pb-4 pt-2 transition-colors" data-drag-active={isDragActive ? 'true' : 'false'}>
             {mentionQuery !== null && (
                 <MentionDropdown
                     boards={boardOptions}
@@ -436,9 +553,9 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                     (isDragOver || isDragActive) && "ring-1 ring-primary/60 border-primary/60"
                 )}
             >
-                {chips.length > 0 && (
+                {allChips.length > 0 && (
                     <div className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 px-2 pt-2">
-                        {chips.map((chip) => {
+                        {allChips.map((chip) => {
                             const PlatformIcon = chip.type === 'media' ? getPlatformIcon(chip.platform) : null;
                             return (
                                 <span
@@ -463,6 +580,16 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                                             <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
                                         </>
                                     )}
+                                    {chip.type === 'image' && (
+                                        <>
+                                            {chip.status === 'uploading' ? (
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                            ) : (
+                                                <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                            )}
+                                            <span className="truncate">{truncateText(chip.fileName, CHIP_TITLE_LIMIT)}</span>
+                                        </>
+                                    )}
                                     {chip.type === 'media' && PlatformIcon && (
                                         <>
                                             <PlatformIcon className="text-[12px]" />
@@ -471,7 +598,16 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                                             </span>
                                         </>
                                     )}
-                                    {!chip.locked && (
+                                    {chip.type === 'image' ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleRemoveImageChip(chip.id)}
+                                            className="rounded-full hover:text-foreground"
+                                            aria-label={`Remove ${chip.fileName}`}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    ) : !chip.locked && (
                                         <button
                                             type="button"
                                             onClick={() => handleRemoveChip(chip)}
@@ -490,33 +626,79 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                     placeholder="Message agent..."
                     className="text-sm min-h-[40px] text-foreground"
                 />
-                <PromptInputActions className="justify-end px-2 pb-2">
-                    {isStreaming ? (
-                        <PromptInputAction tooltip="Stop generating">
-                            <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-8 w-8 rounded-full"
-                                onClick={handleStop}
-                            >
-                                <Square className="h-4 w-4 fill-current" />
-                            </Button>
+                <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">
+                    <div className="flex items-center gap-2">
+                        <PromptInputAction tooltip="Attach image">
+                            <FileUploadTrigger asChild>
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 rounded-full"
+                                    disabled={createChat.isPending || isStreaming}
+                                >
+                                    <ImagePlus className="h-4 w-4" />
+                                </Button>
+                            </FileUploadTrigger>
                         </PromptInputAction>
-                    ) : (
-                        <PromptInputAction tooltip="Send message">
-                            <Button
-                                size="icon"
-                                variant="default"
-                                className="h-8 w-8 rounded-full bg-foreground text-background hover:bg-foreground/90"
-                                onClick={handleSend}
-                                disabled={!message.trim() || createChat.isPending}
-                            >
-                                <ArrowUp className="h-4 w-4" />
-                            </Button>
-                        </PromptInputAction>
-                    )}
+                        <DropdownMenu modal={false}>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-8 gap-1 rounded-full px-2 text-xs text-foreground/80"
+                                    onClick={(event) => event.stopPropagation()}
+                                >
+                                    <span className="max-w-[140px] truncate">{selectedModelLabel}</span>
+                                    <ChevronDown className="h-3.5 w-3.5" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" className="bg-zinc-900 border-white/10 text-white">
+                                <DropdownMenuRadioGroup
+                                    value={selectedModel}
+                                    onValueChange={setSelectedModel}
+                                >
+                                    {MODEL_OPTIONS.map((option) => (
+                                        <DropdownMenuRadioItem
+                                            key={option.value}
+                                            value={option.value}
+                                            className="focus:bg-white/10 focus:text-white"
+                                        >
+                                            {option.label}
+                                        </DropdownMenuRadioItem>
+                                    ))}
+                                </DropdownMenuRadioGroup>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    </div>
+                    <div>
+                        {isStreaming ? (
+                            <PromptInputAction tooltip="Stop generating">
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 rounded-full"
+                                    onClick={handleStop}
+                                >
+                                    <Square className="h-4 w-4 fill-current" />
+                                </Button>
+                            </PromptInputAction>
+                        ) : (
+                            <PromptInputAction tooltip="Send message">
+                                <Button
+                                    size="icon"
+                                    variant="default"
+                                    className="h-8 w-8 rounded-full bg-foreground text-background hover:bg-foreground/90"
+                                    onClick={handleSend}
+                                    disabled={!message.trim() || createChat.isPending || imageChips.some((chip) => chip.status === 'uploading')}
+                                >
+                                    <ArrowUp className="h-4 w-4" />
+                                </Button>
+                            </PromptInputAction>
+                        )}
+                    </div>
                 </PromptInputActions>
             </PromptInput>
         </div>
+        </FileUpload>
     );
 }

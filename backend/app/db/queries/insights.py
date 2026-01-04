@@ -137,3 +137,33 @@ async def get_board_media_assets_since(
         {"media_asset_id": row[0], "added_at": row[1]}
         for row in result.fetchall()
     ]
+
+
+@log_query_timing
+async def get_board_insights_progress(
+    conn: AsyncConnection,
+    board_id: UUID,
+) -> dict:
+    """Get progress of video analysis for a board (total, analyzed, failed counts)."""
+    result = await conn.execute(
+        text("""
+            SELECT 
+                COUNT(DISTINCT ma.id) AS total_videos,
+                COUNT(DISTINCT CASE WHEN va.status = 'completed' THEN va.media_asset_id END) AS analyzed_videos,
+                COUNT(DISTINCT CASE WHEN va.status = 'failed' THEN va.media_asset_id END) AS failed_videos
+            FROM board_items bi
+            JOIN media_assets ma
+              ON ma.content_item_id = bi.content_item_id
+             AND ma.asset_type = 'video'
+            LEFT JOIN video_analyses va
+              ON va.media_asset_id = ma.id
+            WHERE bi.board_id = :board_id
+        """),
+        {"board_id": board_id}
+    )
+    row = result.fetchone()
+    return {
+        "total_videos": row[0] if row else 0,
+        "analyzed_videos": row[1] if row else 0,
+        "failed_videos": row[2] if row else 0,
+    }

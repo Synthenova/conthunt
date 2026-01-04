@@ -11,7 +11,7 @@ export interface ToolCallInfo {
 export interface ChatMessage {
     id: string;
     type: 'human' | 'ai' | 'tool';
-    content: string;
+    content: string | Array<any>;
     tool_calls?: Array<{ name: string; args: Record<string, any>; id?: string }>;
     additional_kwargs?: Record<string, any>;
 }

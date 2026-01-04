@@ -3,12 +3,16 @@
 This module defines the LangGraph workflow that powers the chat interface.
 The graph is compiled with a checkpointer at startup for thread-based persistence.
 """
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import START, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 
+from app.agent.model_factory import (
+    get_model_provider,
+    init_chat_model,
+    normalize_messages_for_provider,
+)
 from app.agent.tools import (
     get_video_analysis,
     get_board_items,
@@ -17,10 +21,6 @@ from app.agent.tools import (
     report_step,
     get_chat_searches,
 )
-from app.core import get_settings
-
-settings = get_settings()
-
 # Define tools available to the agent
 tools = [report_step, get_video_analysis, get_board_items, get_search_items, search, get_chat_searches]
 
@@ -65,16 +65,14 @@ async def call_model(state: MessagesState, config: RunnableConfig):
     messages = state["messages"]
     
     system_prompt = BASE_SYSTEM_PROMPT
-    
-    # Create the LLM with tools
-    # Using Vertex AI via ChatGoogleGenerativeAI to match analysis.py pattern
-    # Native support without creating a separate ChatVertexAI instance if this works well
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-3-flash-preview",
-        temperature=0.5,
-        project=settings.GCLOUD_PROJECT,
-        vertexai=True,
-    )
+
+    model_name = (config.get("configurable") or {}).get("model_name")
+    image_urls = set((config.get("configurable") or {}).get("image_urls") or [])
+    provider = get_model_provider(model_name)
+    if provider == "google":
+        messages = _strip_stale_image_blocks(messages, image_urls)
+    llm = init_chat_model(model_name, temperature=0.5)
+    messages = normalize_messages_for_provider(messages, model_name)
     model = llm.bind_tools(tools)
     
     prompt = ChatPromptTemplate.from_messages([
@@ -85,6 +83,65 @@ async def call_model(state: MessagesState, config: RunnableConfig):
     chain = prompt | model
     response = await chain.ainvoke({"messages": messages}, config=config)
     return {"messages": [response]}
+
+
+def _strip_stale_image_blocks(messages: list, allowed_urls: set[str]) -> list:
+    """Remove image blocks not in the current request to avoid stale signed URLs."""
+    if not messages:
+        return messages
+
+    def extract_url(block: dict) -> str | None:
+        if block.get("type") == "image_url":
+            return (block.get("image_url") or {}).get("url")
+        if block.get("type") == "image":
+            return block.get("url")
+        return None
+
+    def update_message_content(message: object, content: object) -> object:
+        if isinstance(message, dict):
+            updated = dict(message)
+            updated["content"] = content
+            return updated
+        if hasattr(message, "model_copy"):
+            return message.model_copy(update={"content": content})
+        if hasattr(message, "copy"):
+            try:
+                return message.copy(update={"content": content})
+            except TypeError:
+                pass
+        try:
+            data = dict(message.__dict__)
+            data["content"] = content
+            return message.__class__(**data)
+        except Exception:
+            try:
+                setattr(message, "content", content)
+            except Exception:
+                return message
+            return message
+
+    updated_messages: list = []
+    for msg in messages:
+        content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+        if not isinstance(content, list):
+            updated_messages.append(msg)
+            continue
+
+        filtered = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") in ("image", "image_url"):
+                url = extract_url(block)
+                if url and url in allowed_urls:
+                    filtered.append(block)
+                continue
+            filtered.append(block)
+
+        if filtered == content:
+            updated_messages.append(msg)
+        else:
+            updated_messages.append(update_message_content(msg, filtered if filtered else ""))
+
+    return updated_messages
 
 
 def build_graph(checkpointer):

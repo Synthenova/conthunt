@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { motion, Reorder } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { FolderOpen, Search, Loader2, Pencil } from "lucide-react";
+import { FolderOpen, Search, Loader2, Pencil, Check, X } from "lucide-react";
 import { FlatMediaItem, transformToMediaItem } from "@/lib/transformers";
 import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { BoardFilterBar } from "@/components/boards/BoardFilterBar";
@@ -372,30 +372,55 @@ export default function ChatPage() {
                                                     />
                                                     <div className="flex items-center gap-2">
                                                         {isEditingTitle ? (
-                                                            <input
-                                                                ref={editTitleRef}
-                                                                value={editingTitle}
-                                                                onChange={(event) => setEditingTitle(event.target.value)}
-                                                                onKeyDown={(event) => {
-                                                                    if (event.key === 'Enter') {
-                                                                        event.preventDefault();
+                                                            <>
+                                                                <input
+                                                                    ref={editTitleRef}
+                                                                    value={editingTitle}
+                                                                    onChange={(event) => setEditingTitle(event.target.value)}
+                                                                    onKeyDown={(event) => {
+                                                                        if (event.key === 'Enter') {
+                                                                            event.preventDefault();
+                                                                            commitTitleEdit();
+                                                                        }
+                                                                        if (event.key === 'Escape') {
+                                                                            event.preventDefault();
+                                                                            cancelTitleEdit();
+                                                                        }
+                                                                    }}
+                                                                    onBlur={commitTitleEdit}
+                                                                    size={Math.max(1, editingTitle.length)}
+                                                                    className="bg-transparent text-xl font-medium text-white outline-none border-b border-white/50 border-radius-md"
+                                                                />
+                                                                <button
+                                                                    type="button"
+                                                                    onMouseDown={(e) => {
+                                                                        e.preventDefault();
                                                                         commitTitleEdit();
-                                                                    }
-                                                                    if (event.key === 'Escape') {
-                                                                        event.preventDefault();
+                                                                    }}
+                                                                    className="text-white/60 hover:text-white transition-colors"
+                                                                    aria-label="Save"
+                                                                >
+                                                                    <Check size={14} />
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onMouseDown={(e) => {
+                                                                        e.preventDefault();
                                                                         cancelTitleEdit();
-                                                                    }
-                                                                }}
-                                                                onBlur={cancelTitleEdit}
-                                                                className="bg-transparent text-xl font-medium text-white outline-none border border-white/15 rounded-md px-2 py-1"
-                                                            />
+                                                                    }}
+                                                                    className="text-white/60 hover:text-white transition-colors"
+                                                                    aria-label="Cancel"
+                                                                >
+                                                                    <X size={14} />
+                                                                </button>
+                                                            </>
                                                         ) : (
                                                             <>
                                                                 <h1 className="text-xl font-medium text-white">{activeChatTitle}</h1>
                                                                 <button
                                                                     type="button"
                                                                     onClick={startTitleEdit}
-                                                                    className="text-gray-400 hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                    className="text-white/60 hover:text-white opacity-0 group-hover:opacity-100 transition-all"
                                                                     aria-label="Rename chat"
                                                                 >
                                                                     <Pencil size={14} />

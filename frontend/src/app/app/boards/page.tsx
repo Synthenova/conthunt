@@ -164,7 +164,7 @@ export default function BoardsPage() {
                             return (
                                 <StaggerItem key={board.id} layout initial="hidden" animate="show">
                                     <BoardGlassCard
-                                        className="relative h-80 flex flex-col cursor-pointer board-card"
+                                        className="relative flex flex-col cursor-pointer board-card"
                                         role="link"
                                         tabIndex={0}
                                         onClick={() => router.push(`/app/boards/${board.id}`)}
@@ -207,9 +207,9 @@ export default function BoardsPage() {
                                         </div>
 
                                         {/* Info */}
-                                        <div className="mt-auto p-3 flex flex-col relative z-10 pointer-events-none board-card__info">
+                                        <div className="p-4 flex flex-col justify-center relative z-10 pointer-events-none board-card__info h-20">
                                             <div>
-                                                <h3 className="text-lg font-semibold text-white mb-1 group-hover:text-primary transition-colors truncate tracking-tight board-card__title">{boardName}</h3>
+                                                <h3 className="text-lg font-semibold text-white mb-0.5 group-hover:text-primary transition-colors truncate tracking-tight board-card__title">{boardName}</h3>
                                                 <p className="text-xs text-gray-400 font-medium board-card__meta">
                                                     {itemCount} {itemCount === 1 ? 'video' : 'videos'} • Updated {updatedAtLabel}
                                                 </p>
@@ -255,7 +255,7 @@ export default function BoardsPage() {
                         <StaggerItem key="create-board-fixed" initial="hidden" animate="show">
                             <button
                                 onClick={() => setIsDialogOpen(true)}
-                                className="w-full h-80 border border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-gray-500 hover:text-white hover:border-white/20 hover:bg-white/5 transition-all group/create"
+                                className="w-full h-[288px] border border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-gray-500 hover:text-white hover:border-white/20 hover:bg-white/5 transition-all group/create"
                             >
                                 <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3 group-hover/create:scale-110 group-hover/create:bg-primary/10 group-hover/create:text-primary transition-all duration-300">
                                     <Plus size={24} />

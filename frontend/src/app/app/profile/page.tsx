@@ -1,5 +1,7 @@
 "use client";
 
+import { useRef } from "react";
+
 import { useUser } from "@/hooks/useUser";
 import { GlassPanel } from "@/components/ui/glass-card";
 import { Badge } from "@/components/ui/badge";
@@ -21,9 +23,11 @@ import {
 import Link from "next/link";
 import { FadeIn, StaggerContainer, StaggerItem } from "@/components/ui/animations";
 import { cn } from "@/lib/utils";
+import { RocketIcon, type RocketIconHandle } from "@/components/ui/rocket";
 
 export default function ProfilePage() {
     const { profile, user, isLoading } = useUser();
+    const rocketRef = useRef<RocketIconHandle>(null);
 
     if (isLoading) {
         return (
@@ -46,7 +50,7 @@ export default function ProfilePage() {
     };
 
     return (
-        <div className="min-h-full bg-black text-white p-6 lg:p-12 max-w-6xl mx-auto space-y-12">
+        <div className="min-h-full bg-background text-foreground p-6 lg:p-12 max-w-6xl mx-auto space-y-12">
             {/* Header Section */}
             <FadeIn>
                 <div className="flex flex-col md:flex-row items-start md:items-center gap-8">
@@ -55,11 +59,11 @@ export default function ProfilePage() {
                             "absolute inset-0 blur-3xl opacity-20 group-hover:opacity-40 transition-opacity rounded-full bg-gradient-to-br",
                             profile?.role ? roleGradients[profile.role] : "from-primary to-zinc-600"
                         )} />
-                        <div className="w-24 h-24 md:w-32 md:h-32 rounded-3xl bg-white/5 border border-white/10 flex items-center justify-center text-4xl font-bold relative overflow-hidden">
+                        <div className="w-24 h-24 md:w-32 md:h-32 rounded-3xl bg-primary/5 border border-primary/10 flex items-center justify-center text-4xl font-bold relative overflow-hidden">
                             {user?.photoURL ? (
                                 <img src={user.photoURL} alt="Avatar" className="w-full h-full object-cover" />
                             ) : (
-                                <span className="bg-gradient-to-br from-white to-white/40 bg-clip-text text-transparent italic">
+                                <span className="bg-gradient-to-br from-foreground to-foreground/40 bg-clip-text text-transparent italic">
                                     {user?.email?.[0].toUpperCase()}
                                 </span>
                             )}
@@ -81,7 +85,7 @@ export default function ProfilePage() {
                         </p>
                     </div>
 
-                    <Button size="lg" asChild className="rounded-full px-8 bg-white text-black hover:bg-white/90 shadow-[0_0_20px_rgba(255,255,255,0.1)]">
+                    <Button size="lg" asChild className="rounded-full px-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_20px_rgba(255,255,255,0.1)]">
                         <Link href="/app/billing/return">
                             <CreditCard className="h-4 w-4 mr-2" />
                             Manage Plan
@@ -94,10 +98,8 @@ export default function ProfilePage() {
                 {/* Usage Stats */}
                 <div className="lg:col-span-2 space-y-6">
                     <div className="flex items-center justify-between">
-                        <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-gray-500">Usage Analytics</h2>
-                        <span className="text-[10px] text-gray-500 flex items-center gap-1 italic">
-                            Resets daily • {new Date().toLocaleDateString()}
-                        </span>
+                        <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground">Usage Analytics</h2>
+
                     </div>
 
                     <StaggerContainer className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -110,7 +112,7 @@ export default function ProfilePage() {
                                                 {item.feature === 'search_query' ? <Search className="h-4 w-4 text-primary" /> : <Sparkles className="h-4 w-4 text-primary" />}
                                             </div>
                                             <div>
-                                                <p className="text-sm font-medium text-white capitalize">
+                                                <p className="text-sm font-medium text-foreground capitalize">
                                                     {item.feature.replace('_', ' ')}
                                                 </p>
                                                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{item.period}</p>
@@ -118,12 +120,12 @@ export default function ProfilePage() {
                                         </div>
                                         <div className="text-right">
                                             <p className="text-lg font-bold">
-                                                {item.used} <span className="text-xs text-gray-500">/ {item.limit}</span>
+                                                {item.used} <span className="text-xs text-muted-foreground">/ {item.limit}</span>
                                             </p>
                                         </div>
                                     </div>
 
-                                    <div className="relative h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                                    <div className="relative h-1.5 w-full bg-primary/5 rounded-full overflow-hidden">
                                         <div
                                             className="absolute inset-y-0 left-0 bg-primary shadow-[0_0_10px_rgba(206,206,206,0.5)] transition-all duration-1000 ease-out"
                                             style={{ width: `${Math.min((item.used / item.limit) * 100, 100)}%` }}
@@ -134,7 +136,7 @@ export default function ProfilePage() {
                         ))}
 
                         {(!profile?.usage || profile.usage.length === 0) && (
-                            <div className="col-span-2 py-12 text-center border border-dashed border-white/10 rounded-2xl">
+                            <div className="col-span-2 py-12 text-center border border-dashed border-primary/10 rounded-2xl">
                                 <p className="text-sm text-muted-foreground">No usage data found.</p>
                             </div>
                         )}
@@ -143,27 +145,27 @@ export default function ProfilePage() {
 
                 {/* Account Details */}
                 <div className="space-y-6">
-                    <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-gray-500">Account Details</h2>
-                    <GlassPanel className="p-6 divide-y divide-white/5 space-y-4">
+                    <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground">Account Details</h2>
+                    <GlassPanel className="p-6 divide-y divide-primary/5 space-y-4">
                         <div className="pt-0 pb-4 space-y-1">
-                            <p className="text-[10px] uppercase tracking-widest text-gray-500">Internal ID</p>
+                            <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Internal ID</p>
                             <div className="flex items-center justify-between group cursor-pointer">
-                                <p className="text-xs font-mono text-gray-300 truncate max-w-[180px]">
+                                <p className="text-xs font-mono text-foreground/70 truncate max-w-[180px]">
                                     {profile?.id || user?.uid}
                                 </p>
-                                <Fingerprint className="h-3 w-3 text-gray-600 group-hover:text-primary transition-colors" />
+                                <Fingerprint className="h-3 w-3 text-muted-foreground group-hover:text-primary transition-colors" />
                             </div>
                         </div>
 
                         <div className="py-4 space-y-3">
                             <div className="flex items-center justify-between text-xs">
-                                <span className="text-gray-500">Member Since</span>
-                                <span className="text-gray-300">
+                                <span className="text-muted-foreground">Member Since</span>
+                                <span className="text-foreground/70">
                                     {user?.metadata.creationTime ? new Date(user.metadata.creationTime).toLocaleDateString() : 'N/A'}
                                 </span>
                             </div>
                             <div className="flex items-center justify-between text-xs">
-                                <span className="text-gray-500">Status</span>
+                                <span className="text-muted-foreground">Status</span>
                                 <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-green-500 h-5 px-2 text-[10px]">
                                     Verified
                                 </Badge>
@@ -171,12 +173,12 @@ export default function ProfilePage() {
                         </div>
 
                         <div className="pt-4 pb-0">
-                            <Link href="/app/billing/return" className="flex items-center justify-between group p-2 -mx-2 rounded-lg hover:bg-white/5 transition-colors">
+                            <Link href="/app/billing/return" className="flex items-center justify-between group p-2 -mx-2 rounded-lg hover:bg-primary/5 transition-colors">
                                 <div className="flex items-center gap-3">
-                                    <Shield className="h-4 w-4 text-gray-500" />
+                                    <Shield className="h-4 w-4 text-muted-foreground" />
                                     <span className="text-sm">Subscription</span>
                                 </div>
-                                <ChevronRight className="h-4 w-4 text-gray-700 group-hover:translate-x-0.5 transition-transform" />
+                                <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
                             </Link>
                         </div>
                     </GlassPanel>
@@ -194,8 +196,13 @@ export default function ProfilePage() {
                             <h3 className="text-2xl font-bold">Unleash Full Potential</h3>
                             <p className="text-muted-foreground">Unlock unlimited analyses and all video platforms today.</p>
                         </div>
-                        <Button variant="default" className="bg-primary text-white hover:bg-primary/90 rounded-full px-8 h-12">
-                            Upgrade Now <ArrowUpRight className="ml-2 h-4 w-4" />
+                        <Button
+                            variant="default"
+                            className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-full px-8 h-12"
+                            onMouseEnter={() => rocketRef.current?.startAnimation()}
+                            onMouseLeave={() => rocketRef.current?.stopAnimation()}
+                        >
+                            Upgrade Now <RocketIcon ref={rocketRef} className="ml-2 text-primary-foreground" size={16} />
                         </Button>
                     </div>
                 </GlassPanel>

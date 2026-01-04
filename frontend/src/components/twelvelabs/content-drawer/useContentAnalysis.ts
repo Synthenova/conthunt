@@ -32,14 +32,19 @@ export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: U
     const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
     const analysisNotReadyRetries = useRef(0);
 
+    const getMediaAssetId = useCallback(() => {
+        if (!item) return null;
+        const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
+        return videoAsset?.id || null;
+    }, [item]);
+
     const fetchAnalysis = useCallback(async () => {
         if (!item) return null;
 
         const user = auth.currentUser;
         if (!user) return null;
 
-        const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
-        const mediaAssetId = videoAsset?.id;
+        const mediaAssetId = getMediaAssetId();
 
         if (!mediaAssetId) {
             const isYouTube = item.platform === "youtube" || item.platform === "youtube_search";
@@ -70,7 +75,28 @@ export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: U
         }
 
         return await response.json();
-    }, [item]);
+    }, [item, getMediaAssetId]);
+
+    const fetchExistingAnalysis = useCallback(async () => {
+        const user = auth.currentUser;
+        if (!user) return null;
+
+        const mediaAssetId = getMediaAssetId();
+        if (!mediaAssetId) return null;
+
+        const token = await user.getIdToken();
+        const { BACKEND_URL } = await import("@/lib/api");
+
+        const response = await fetch(`${BACKEND_URL}/v1/video-analysis/${mediaAssetId}`, {
+            method: "GET",
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
+
+        if (!response.ok) return null;
+        return await response.json();
+    }, [getMediaAssetId]);
 
     useEffect(() => {
         if (!analyzing && !polling) return;
@@ -120,8 +146,19 @@ export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: U
             setAnalyzing(false);
             setPolling(false);
             analysisNotReadyRetries.current = 0;
+            
+            // Auto-fetch existing analysis if user has already accessed it (GET - no credit charge)
+            if (!analysisDisabled) {
+                fetchExistingAnalysis().then((data) => {
+                    if (data && data.status === "completed") {
+                        setAnalysisResult(data);
+                    }
+                }).catch(() => {
+                    // Silently ignore - user can manually trigger if needed
+                });
+            }
         }
-    }, [isOpen, item]);
+    }, [isOpen, item, analysisDisabled, fetchExistingAnalysis]);
 
     const handleAnalyze = useCallback(async () => {
         if (!item || analyzing || polling || analysisDisabled) return;

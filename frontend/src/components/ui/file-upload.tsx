@@ -54,24 +54,31 @@ function FileUpload({
   )
 
   useEffect(() => {
+    const isFileDrag = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types || []).includes("Files")
+
     const handleDrag = (e: DragEvent) => {
+      if (!isFileDrag(e)) return
       e.preventDefault()
       e.stopPropagation()
     }
 
     const handleDragIn = (e: DragEvent) => {
+      if (!isFileDrag(e)) return
       handleDrag(e)
       dragCounter.current++
       if (e.dataTransfer?.items.length) setIsDragging(true)
     }
 
     const handleDragOut = (e: DragEvent) => {
+      if (!isFileDrag(e)) return
       handleDrag(e)
       dragCounter.current--
       if (dragCounter.current === 0) setIsDragging(false)
     }
 
     const handleDrop = (e: DragEvent) => {
+      if (!isFileDrag(e)) return
       handleDrag(e)
       setIsDragging(false)
       dragCounter.current = 0

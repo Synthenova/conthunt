@@ -125,7 +125,7 @@ export function ContentMetadata({
                         <PopoverTrigger asChild>
                             <button className="glass-button-white h-8 px-3 text-xs font-medium flex-shrink-0">
                                 <Save className="mr-1.5 h-3.5 w-3.5" />
-                                Save
+                                Add to board
                             </button>
                         </PopoverTrigger>
                         <PopoverContent

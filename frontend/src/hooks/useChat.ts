@@ -165,9 +165,7 @@ export function useChatMessages(chatId: string | null) {
             const messages = data.messages.map((m: any) => ({
                 id: m.id,
                 type: m.type as 'human' | 'ai',
-                content: Array.isArray(m.content)
-                    ? m.content.map((c: any) => c.text || '').join('')
-                    : m.content,
+                content: Array.isArray(m.content) ? m.content : (m.content ?? ''),
                 additional_kwargs: m.additional_kwargs,
                 tool_calls: m.tool_calls,
             }));
@@ -217,6 +215,36 @@ export function useChatMessages(chatId: string | null) {
     return query;
 }
 
+export function useUploadChatImage() {
+    const uploadChatImage = useCallback(async (chatId: string, file: File) => {
+        const token = await getAuthToken();
+        const formData = new FormData();
+        formData.append('image', file);
+
+        const res = await fetch(`${BACKEND_URL}/v1/chats/${chatId}/uploads`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
+            body: formData,
+        });
+
+        if (!res.ok) {
+            const error = await res.json().catch(() => ({ detail: res.statusText }));
+            throw new Error(error.detail || 'Image upload failed');
+        }
+
+        const data = await res.json().catch(() => ({}));
+        if (!data?.url) {
+            throw new Error('Invalid upload response');
+        }
+
+        return data.url as string;
+    }, []);
+
+    return { uploadChatImage };
+}
+
 // Send a message and stream the response
 export function useSendMessage() {
     const {
@@ -239,6 +267,8 @@ export function useSendMessage() {
             detach?: boolean;
             onSendOk?: () => void;
             tags?: Array<{ type: 'board' | 'search' | 'media'; id: string; label?: string }>;
+            model?: string;
+            imageUrls?: string[];
         }
     ) => {
         // Use passed chatId or fall back to activeChatId from store
@@ -256,23 +286,35 @@ export function useSendMessage() {
             ? crypto.randomUUID()
             : `client-${Date.now()}`;
         const tempUserMsgId = `temp-${Date.now()}`;
+        const optimisticContent = options?.imageUrls?.length
+            ? [
+                { type: 'text', text: message },
+                ...options.imageUrls.map((url) => ({
+                    type: 'image_url',
+                    image_url: { url },
+                })),
+            ]
+            : message;
         addMessage({
             id: tempUserMsgId,
             type: 'human',
-            content: message,
+            content: optimisticContent,
             additional_kwargs: { client_id: clientId },
         });
 
         startStreaming();
 
         try {
-            const payload: any = { message, client_id: clientId };
+            const payload: any = { message, client_id: clientId, model: options?.model };
             if (options?.tags?.length) {
                 payload.tags = options.tags.map((t) => ({
                     type: t.type,
                     id: t.id,
                     label: t.label,
                 }));
+            }
+            if (options?.imageUrls?.length) {
+                payload.image_urls = options.imageUrls;
             }
 
             // 1. Send message to start background streaming

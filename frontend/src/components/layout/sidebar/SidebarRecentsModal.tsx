@@ -11,7 +11,7 @@ interface SidebarRecentsModalProps {
     tab: 'chats' | 'searches';
     isLoading: boolean;
     chats: any[]; // Using generalized type for now, ideally strictly typed
-    handleOpenChat: (id: string) => void;
+    handleOpenChat: (chat: any) => void;
     router: any; // NextRouter
     groupedChats: Record<string, any[]>;
 }
@@ -102,14 +102,14 @@ export const SidebarRecentsModal = ({
                                                     tabIndex={0}
                                                     onClick={() => {
                                                         if (editingChatId === chat.id) return;
-                                                        handleOpenChat(chat.id);
+                                                        handleOpenChat(chat);
                                                         onOpenChange(false);
                                                     }}
                                                     onKeyDown={(event) => {
                                                         if (editingChatId === chat.id) return;
                                                         if (event.key === 'Enter' || event.key === ' ') {
                                                             event.preventDefault();
-                                                            handleOpenChat(chat.id);
+                                                            handleOpenChat(chat);
                                                             onOpenChange(false);
                                                         }
                                                     }}

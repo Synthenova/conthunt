@@ -148,12 +148,43 @@ async def get_video_analysis(
     This includes summary, key topics, and hashtags.
     Use this when the user asks for "analysis" or "summary" of a specific video they found.
     """
+    from firebase_admin import auth as firebase_auth
+    from app.services.usage_tracker import usage_tracker
+    
     try:
         headers = await _get_headers(config)
         if not headers.get("Authorization"):
             return {"error": "Authentication required. Please provide x-auth-token."}
 
-        return await run_inline_video_analysis(UUID(media_asset_id))
+        # Decode JWT to get user info
+        auth_token = config.get("configurable", {}).get("x-auth-token")
+        firebase_uid = None
+        user_role = "free"
+        
+        if auth_token:
+            try:
+                decoded = firebase_auth.verify_id_token(auth_token)
+                firebase_uid = decoded.get("uid")
+                user_role = decoded.get("role", "free")
+            except Exception:
+                pass  # Continue without credit tracking if token decode fails
+        
+        media_asset_uuid = UUID(media_asset_id)
+        
+        # Check and record per-user analysis access
+        if firebase_uid:
+            try:
+                await usage_tracker.check_and_record_analysis_access(
+                    firebase_uid=firebase_uid,
+                    user_role=user_role,
+                    media_asset_id=media_asset_uuid,
+                    context={"source": "agent_tool"}
+                )
+            except Exception as limit_err:
+                return {"error": str(limit_err)}
+        
+        # Run the analysis
+        return await run_inline_video_analysis(media_asset_uuid)
     except ValueError:
         return {"error": "Invalid media_asset_id format."}
     except Exception as e:

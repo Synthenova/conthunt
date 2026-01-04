@@ -64,11 +64,18 @@ export interface BoardInsightsResult {
     ctas: string[];
 }
 
+export interface BoardInsightsProgress {
+    total_videos: number;
+    analyzed_videos: number;
+    failed_videos: number;
+}
+
 export interface BoardInsights {
     id?: string;
     board_id: string;
     status: "empty" | "processing" | "completed" | "failed";
     insights?: BoardInsightsResult | null;
+    progress?: BoardInsightsProgress | null;
     error?: string | null;
     created_at?: string | null;
     updated_at?: string | null;

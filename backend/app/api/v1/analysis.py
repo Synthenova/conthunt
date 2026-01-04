@@ -62,41 +62,60 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
     logger.info(f"[ANALYSIS] Starting background task for media_asset_id={media_asset_id}, analysis_id={analysis_id}")
     logger.debug(f"[ANALYSIS] Video URI: {video_uri}")
     
-    # 1. Build Message
-    logger.info(f"[ANALYSIS] Building HumanMessage with video...")
-    message = HumanMessage(
-        content=[
-            {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
-            {      
-                "type": "media",              
-                "file_uri": video_uri,
-                "mime_type": "video/mp4", 
-            }
-        ]
-    )
-    
-    # 2. Invoke LLM
-    logger.info(f"[ANALYSIS] Invoking Gemini LLM (structured output)...")
-    invoke_start = time.time()
-    result: VideoAnalysisResult = await structured_llm.ainvoke([message])
-    invoke_duration = time.time() - invoke_start
-    
-    logger.info(f"[ANALYSIS] Gemini LLM returned in {invoke_duration:.2f}s")
-    logger.info(f"[ANALYSIS] Result summary: {result.summary[:100] if result.summary else 'N/A'}...")
-    
-    # 3. Update to completed
-    logger.info(f"[ANALYSIS] Updating status to 'completed'...")
-    async with get_db_connection() as conn:
-        await update_analysis_status(
-            conn,
-            analysis_id=analysis_id,
-            status="completed",
-            analysis_result=result.model_dump(),
+    try:
+        # 1. Build Message
+        logger.info(f"[ANALYSIS] Building HumanMessage with video...")
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
+                {      
+                    "type": "media",              
+                    "file_uri": video_uri,
+                    "mime_type": "video/mp4", 
+                }
+            ]
         )
-        await conn.commit()
+        
+        # 2. Invoke LLM
+        logger.info(f"[ANALYSIS] Invoking Gemini LLM (structured output)...")
+        invoke_start = time.time()
+        result: VideoAnalysisResult = await structured_llm.ainvoke([message])
+        invoke_duration = time.time() - invoke_start
+        
+        logger.info(f"[ANALYSIS] Gemini LLM returned in {invoke_duration:.2f}s")
+        logger.info(f"[ANALYSIS] Result summary: {result.summary[:100] if result.summary else 'N/A'}...")
+        
+        # 3. Update to completed
+        logger.info(f"[ANALYSIS] Updating status to 'completed'...")
+        async with get_db_connection() as conn:
+            await update_analysis_status(
+                conn,
+                analysis_id=analysis_id,
+                status="completed",
+                analysis_result=result.model_dump(),
+            )
+            await conn.commit()
+        
+        total_duration = time.time() - start_time
+        logger.info(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
     
-    total_duration = time.time() - start_time
-    logger.info(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
+    except Exception as e:
+        # Mark as failed so insights don't get stuck waiting
+        logger.error(f"[ANALYSIS] ❌ Failed analysis for media_asset {media_asset_id}: {e}")
+        logger.error(traceback.format_exc())
+        try:
+            async with get_db_connection() as conn:
+                await update_analysis_status(
+                    conn,
+                    analysis_id=analysis_id,
+                    status="failed",
+                    error=str(e),
+                )
+                await conn.commit()
+        except Exception as db_err:
+            logger.error(f"[ANALYSIS] Failed to update status to failed: {db_err}")
+        # Re-raise for Cloud Tasks retry mechanism
+        raise
 
 
 
@@ -211,13 +230,17 @@ async def analyze_video(
     Analyze a video using Google Gemini 3 Flash Preview.
     Returns immediately with 'processing' status. Poll to check completion.
     Also triggers 12Labs indexing in the background.
+    
+    Credit is charged per-user on first access, regardless of global cache state.
     """
-    # 0. Check Usage Limits
     from app.services.usage_tracker import usage_tracker
-    await usage_tracker.check_limit(
-        firebase_uid=_user["uid"], 
-        role=_user["role"], 
-        feature="gemini_analysis"
+    
+    # Check and record per-user analysis access (handles limits, access tracking, usage recording)
+    await usage_tracker.check_and_record_analysis_access(
+        firebase_uid=_user["uid"],
+        user_role=_user["role"],
+        media_asset_id=media_asset_id,
+        context={"source": "api"}
     )
 
     # Check if this is a YouTube video (TwelveLabs can't handle YouTube URLs directly)
@@ -236,16 +259,57 @@ async def analyze_video(
         )
     
     # Run non-blocking Gemini analysis (via Cloud Tasks)
-    response = await run_gemini_analysis(media_asset_id, background_tasks=background_tasks, use_cloud_tasks=True)
+    return await run_gemini_analysis(media_asset_id, background_tasks=background_tasks, use_cloud_tasks=True)
+
+
+@router.get(
+    "/video-analysis/{media_asset_id}",
+    response_model=VideoAnalysisResponse,
+    summary="Get existing video analysis (read-only)",
+)
+async def get_video_analysis(
+    media_asset_id: UUID,
+    _user: dict = Depends(get_current_user),
+):
+    """
+    Get existing video analysis if the user has already accessed it.
+    Does NOT trigger new analysis or charge credits.
+    Returns 404 if user hasn't accessed this analysis before.
+    """
+    from app.services.usage_tracker import usage_tracker
+    from app.db.queries.analysis import has_user_accessed_analysis
+    from app.db import set_rls_user
     
-    # Track usage (only if not cached)
-    if not response.cached:
-        background_tasks.add_task(
-            usage_tracker.record_usage,
-            firebase_uid=_user["uid"],
-            feature="gemini_analysis",
-            quantity=1,
-            context={"media_asset_id": str(media_asset_id)}
-        )
+    async with get_db_connection() as conn:
+        # Get internal user_id
+        internal_user_id = await usage_tracker.get_internal_user_id(conn, _user["uid"])
+        if not internal_user_id:
+            raise HTTPException(status_code=403, detail="User account not fully established")
         
-    return response
+        # Set RLS context
+        await set_rls_user(conn, internal_user_id)
+        
+        # Check if user has accessed this analysis
+        user_accessed = await has_user_accessed_analysis(conn, internal_user_id, media_asset_id)
+        if not user_accessed:
+            raise HTTPException(status_code=404, detail="Analysis not found for this user")
+        
+        # Get the cached analysis
+        existing = await get_video_analysis_by_media_asset(conn, media_asset_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Analysis not found")
+        
+        status = existing.get("status", "completed")
+        analysis = None
+        if status == "completed" and existing.get("analysis_result"):
+            analysis = VideoAnalysisResult(**existing["analysis_result"])
+        
+        return VideoAnalysisResponse(
+            id=existing["id"],
+            media_asset_id=media_asset_id,
+            status=status,
+            analysis=analysis,
+            error=existing.get("error"),
+            created_at=existing["created_at"],
+            cached=True,
+        )

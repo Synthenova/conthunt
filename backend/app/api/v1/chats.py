@@ -5,11 +5,12 @@ with AsyncPostgresSaver for thread-based persistence.
 """
 import asyncio
 import json
+import mimetypes
 import uuid
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Header, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Request, Header, BackgroundTasks, UploadFile, File
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as redis
 from pydantic import BaseModel
@@ -22,6 +23,8 @@ from app.auth import get_current_user
 from app.core import get_settings, logger
 from app.db import get_db_connection, set_rls_user, get_or_create_user, queries
 from app.services.user_cache import get_cached_user_uuid
+from app.storage import async_gcs_client
+from app.services.cdn_signer import generate_signed_url
 from app.agent.runtime import create_agent_graph
 from app.schemas.chats import (
     Chat, 
@@ -53,6 +56,85 @@ async def get_redis():
         await client.close()
 
 
+# --- Helpers ---
+
+def _guess_image_extension(content_type: str | None) -> str:
+    if not content_type:
+        return "jpg"
+    ext = mimetypes.guess_extension(content_type) or ".jpg"
+    if ext == ".jpe":
+        ext = ".jpg"
+    return ext.lstrip(".")
+
+
+async def _upload_chat_image(
+    image_file: UploadFile,
+    user_uuid: uuid.UUID,
+    chat_id: uuid.UUID,
+) -> str:
+    if not image_file.content_type or not image_file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are supported")
+
+    data = await image_file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded image is empty")
+
+    extension = _guess_image_extension(image_file.content_type)
+    object_key = f"chat_uploads/{user_uuid}/{chat_id}/{uuid.uuid4()}.{extension}"
+    gcs_uri = await async_gcs_client.upload_blob(
+        bucket_name=settings.GCS_BUCKET_MEDIA,
+        key=object_key,
+        data=data,
+        content_type=image_file.content_type,
+    )
+    return generate_signed_url(gcs_uri)
+
+
+def _build_multimodal_content(
+    message: str,
+    image_urls: list[str],
+):
+    if not image_urls:
+        return message
+
+    content_blocks = []
+    if message:
+        content_blocks.append({"type": "text", "text": message})
+
+    content_blocks.extend(
+        {"type": "image_url", "image_url": {"url": url}} for url in image_urls
+    )
+
+    return content_blocks
+
+
+@router.post("/{chat_id}/uploads")
+async def upload_chat_image(
+    chat_id: uuid.UUID,
+    image: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+):
+    """Upload an image for a chat and return a signed URL."""
+    user_id = user.get("uid")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, user_id)
+        await set_rls_user(conn, user_uuid)
+
+        exists = await queries.check_chat_exists(conn, chat_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
+    try:
+        url = await _upload_chat_image(image, user_uuid, chat_id)
+    finally:
+        await image.close()
+
+    return {"url": url}
+
+
 # --- Background Task Logic ---
 
 async def stream_generator_to_redis(
@@ -61,6 +143,8 @@ async def stream_generator_to_redis(
     thread_id: str,
     inputs: dict,
     context: dict | None = None,
+    model_name: str | None = None,
+    image_urls: list[str] | None = None,
 ):
     """
     Background task:
@@ -81,6 +165,8 @@ async def stream_generator_to_redis(
                 "thread_id": thread_id,
                 "x-auth-token": (context or {}).get("x-auth-token"),
                 "chat_id": chat_id,
+                "model_name": model_name,
+                "image_urls": image_urls or [],
             }
         }
         tool_run_ids = set()
@@ -387,7 +473,6 @@ async def update_tag_order(
 @router.post("/{chat_id}/send")
 async def send_message(
     chat_id: uuid.UUID,
-    request: SendMessageRequest,
     background_tasks: BackgroundTasks,
     req_obj: Request,
     user: dict = Depends(get_current_user),
@@ -404,6 +489,8 @@ async def send_message(
     
     auth_token = auth_header.split(" ")[1]
 
+    send_request = SendMessageRequest.model_validate(await req_obj.json())
+
     # Get graph from app state
     graph = await _get_agent_graph(req_obj)
     
@@ -415,7 +502,7 @@ async def send_message(
         if not thread_id:
             raise HTTPException(status_code=404, detail="Chat not found")
 
-        if request.tags:
+        if send_request.tags:
             tags = [
                 {
                     "type": tag.type,
@@ -423,15 +510,21 @@ async def send_message(
                     "label": tag.label,
                     "source": tag.source or "user",
                 }
-                for tag in request.tags
+                for tag in send_request.tags
             ]
             await queries.upsert_chat_tags(conn, chat_id, tags)
             await conn.commit()
-        
+
     # Trigger Background Task
-    user_message: dict = {"role": "user", "content": request.message}
-    if request.client_id:
-        user_message["additional_kwargs"] = {"client_id": request.client_id}
+    image_urls = [url for url in (send_request.image_urls or []) if url]
+    content = _build_multimodal_content(
+        send_request.message,
+        image_urls,
+    )
+
+    user_message: dict = {"role": "user", "content": content}
+    if send_request.client_id:
+        user_message["additional_kwargs"] = {"client_id": send_request.client_id}
 
     inputs = {
         "messages": [user_message],
@@ -442,7 +535,11 @@ async def send_message(
         "x-auth-token": auth_token,
     }
     
-    logger.info(f"[CHAT] Sending to agent, auth_token present: {bool(auth_token)}")
+    logger.info(
+        "[CHAT] Sending to agent, auth_token present: %s, images: %s",
+        bool(auth_token),
+        bool(image_urls),
+    )
 
     # Clear previous stream data to prevent replaying old messages within 60s window
     r = redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -458,6 +555,8 @@ async def send_message(
         thread_id=thread_id,
         inputs=inputs,
         context=context,
+        model_name=send_request.model,
+        image_urls=image_urls,
     )
     
     return {"ok": True}

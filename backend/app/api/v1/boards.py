@@ -11,7 +11,7 @@ from app.schemas.boards import (
     BoardCreate, BoardResponse,
     BoardItemCreate, BoardItemBatchCreate, BoardItemResponse
 )
-from app.schemas.insights import BoardInsightsResponse, BoardInsightsResult
+from app.schemas.insights import BoardInsightsResponse, BoardInsightsResult, BoardInsightsProgress
 from app.api.v1.analysis import run_gemini_analysis
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.services.cdn_signer import generate_signed_url
@@ -197,7 +197,7 @@ async def get_board_insights(
     board_id: UUID,
     user: dict = Depends(get_current_user),
 ):
-    """Get cached board insights."""
+    """Get cached board insights with progress tracking."""
     firebase_uid = user.get("uid")
     if not firebase_uid:
         raise HTTPException(status_code=401, detail="Invalid user")
@@ -211,10 +211,18 @@ async def get_board_insights(
             raise HTTPException(status_code=404, detail="Board not found")
 
         insights = await queries.get_board_insights(conn, board_id)
+        progress_data = await queries.get_board_insights_progress(conn, board_id)
+        progress = BoardInsightsProgress(
+            total_videos=progress_data["total_videos"],
+            analyzed_videos=progress_data["analyzed_videos"],
+            failed_videos=progress_data["failed_videos"],
+        )
+
         if not insights:
             return BoardInsightsResponse(
                 board_id=board_id,
                 status="empty",
+                progress=progress,
             )
 
         insights_result = insights.get("insights_result") or {}
@@ -227,6 +235,7 @@ async def get_board_insights(
             board_id=board_id,
             status=insights.get("status", "processing"),
             insights=parsed_insights,
+            progress=progress,
             error=insights.get("error"),
             created_at=insights.get("created_at"),
             updated_at=insights.get("updated_at"),
@@ -254,6 +263,7 @@ async def refresh_board_insights(
 
         await queries.upsert_pending_board_insights(conn, board_id)
         insights = await queries.get_board_insights(conn, board_id)
+        progress_data = await queries.get_board_insights_progress(conn, board_id)
 
     await cloud_tasks.create_http_task(
         queue_name=settings.QUEUE_GEMINI,
@@ -269,11 +279,18 @@ async def refresh_board_insights(
     if insights_result:
         parsed_insights = BoardInsightsResult(**insights_result)
 
+    progress = BoardInsightsProgress(
+        total_videos=progress_data["total_videos"],
+        analyzed_videos=progress_data["analyzed_videos"],
+        failed_videos=progress_data["failed_videos"],
+    )
+
     return BoardInsightsResponse(
         id=insights.get("id") if insights else None,
         board_id=board_id,
         status="processing",
         insights=parsed_insights,
+        progress=progress,
         created_at=insights.get("created_at") if insights else None,
         updated_at=insights.get("updated_at") if insights else None,
         last_completed_at=insights.get("last_completed_at") if insights else None,

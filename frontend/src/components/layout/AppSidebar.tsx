@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
     LayoutGrid,
@@ -41,6 +42,19 @@ const navItems = [
     { title: "Chats", path: "/app/chats", icon: HistoryIcon },
     { title: "Boards", path: "/app/boards", icon: LayoutPanelTopIcon },
 ];
+
+const SidebarLogo = () => (
+    <div className="flex items-center text-white overflow-hidden">
+        <Image
+            src="/images/logo-title-white.png"
+            alt="Conthunt"
+            width={80}
+            height={22}
+            priority
+            className="w-20 h-auto object-contain"
+        />
+    </div>
+);
 
 export function AppSidebar({
     collapsed,
@@ -150,10 +164,16 @@ export function AppSidebar({
             ? boards.length
             : history.length;
 
-    const handleOpenChat = (chatId: string) => {
+    const handleOpenChat = (chat: any) => {
         if (editingChatId) return;
-        const targetPath = `/app/chats/${chatId}`;
-        setActiveChatId(chatId);
+
+        if (chat.context_id && chat.context_type === 'board') {
+            router.push(`/app/boards/${chat.context_id}`);
+            return;
+        }
+
+        const targetPath = `/app/chats/${chat.id}`;
+        setActiveChatId(chat.id);
         openSidebar();
         if (pathname !== targetPath) {
             router.push(targetPath);
@@ -221,14 +241,14 @@ export function AppSidebar({
                 tabIndex={0}
                 onClick={() => {
                     if (isEditing) return;
-                    handleOpenChat(chat.id);
+                    handleOpenChat(chat);
                     options?.onSelect?.();
                 }}
                 onKeyDown={(event) => {
                     if (isEditing) return;
                     if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        handleOpenChat(chat.id);
+                        handleOpenChat(chat);
                         options?.onSelect?.();
                     }
                 }}
@@ -334,12 +354,7 @@ export function AppSidebar({
                                 className="fixed inset-y-0 left-0 z-50 w-[280px] bg-[#030303] border-r border-white/10 flex flex-col font-main"
                             >
                                 <div className="flex items-center justify-between h-[72px] px-5 border-b border-white/5">
-                                    <div className="flex items-center space-x-3 text-white">
-                                        <div className="w-8 h-8 rounded-lg bg-surface border border-white/10 flex items-center justify-center shrink-0">
-                                            <span className="font-bold text-lg text-primary">C</span>
-                                        </div>
-                                        <span className="font-semibold text-lg tracking-tight">Conthunt</span>
-                                    </div>
+                                    <SidebarLogo />
                                     <button onClick={() => setIsMobileOpen(false)} className="text-gray-400 hover:text-white">
                                         <PanelLeftClose size={20} />
                                     </button>
@@ -448,20 +463,13 @@ export function AppSidebar({
         <aside className={cn(
             "bg-background border-r border-white/5 flex flex-col transition-all duration-300 ease-in-out font-main",
             overlay ? "fixed inset-y-0 left-0 z-50 shadow-2xl" : "relative z-40 h-full",
-            isCollapsed ? "w-20" : "w-[280px]"
+            isCollapsed ? "w-20 group/sidebar" : "w-[280px]"
         )}>
             {/* Header with Integrated Toggle */}
             <div className={cn("flex items-center h-[72px] transition-all", isCollapsed ? "justify-center" : "px-5 justify-between")}>
                 {!isCollapsed ? (
                     <>
-                        <div className="flex items-center space-x-3 text-white overflow-hidden">
-                            <div className="w-8 h-8 rounded-lg bg-surface border border-white/10 flex items-center justify-center shrink-0">
-                                <span className="font-bold text-lg text-primary">C</span>
-                            </div>
-                            <span className="font-semibold text-lg tracking-tight whitespace-nowrap animate-in fade-in duration-300">
-                                Conthunt
-                            </span>
-                        </div>
+                        <SidebarLogo />
                         <button
                             onClick={() => setCollapsed(true)}
                             className="text-gray-500 hover:text-white transition-colors"
@@ -474,9 +482,20 @@ export function AppSidebar({
                         onClick={() => {
                             setCollapsed(false);
                         }}
-                        className="w-10 h-10 rounded-xl bg-surface border border-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:scale-105 transition-all shadow-sm"
+                        className="w-10 h-10 flex items-center justify-center transition-all relative"
                     >
-                        <PanelLeft size={20} />
+                        <div className="absolute inset-0 flex items-center justify-center transition-all duration-300 opacity-100 group-hover/sidebar:opacity-0 group-hover/sidebar:scale-75">
+                            <Image
+                                src="/images/image.png"
+                                alt="Expand"
+                                width={24}
+                                height={24}
+                                className="opacity-60"
+                            />
+                        </div>
+                        <div className="absolute inset-0 flex items-center justify-center transition-all duration-300 opacity-0 scale-75 group-hover/sidebar:opacity-100 group-hover/sidebar:scale-100 text-gray-400">
+                            <PanelLeft size={20} />
+                        </div>
                     </button>
                 )}
             </div>

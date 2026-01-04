@@ -71,6 +71,7 @@ from app.db.queries.insights import (
     upsert_pending_board_insights,
     update_board_insights_status,
     get_board_media_assets_since,
+    get_board_insights_progress,
 )
 
 # Content queries (shared)
@@ -146,6 +147,7 @@ __all__ = [
     "upsert_pending_board_insights",
     "update_board_insights_status",
     "get_board_media_assets_since",
+    "get_board_insights_progress",
     # Content
     "get_content_item_by_id",
     "get_video_media_asset_for_content_item",

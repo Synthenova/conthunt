@@ -47,11 +47,16 @@ async def _ensure_video_analyses(
     Fetch cached analyses for media assets.
     If any analyses are missing, trigger Gemini analysis in background.
     Returns (analysis_rows, has_pending).
+    
+    has_pending is True only if there are missing or processing analyses.
+    Failed analyses are treated as "done" - insights will proceed with whatever succeeded.
     """
     async with get_db_connection() as conn:
         analyses = await queries.get_video_analyses_by_media_assets(conn, media_asset_ids)
 
     analyses_by_id = {row["media_asset_id"]: row for row in analyses}
+    
+    # Find truly missing analyses (no record at all)
     missing_ids = [mid for mid in media_asset_ids if mid not in analyses_by_id]
 
     if missing_ids:
@@ -65,6 +70,8 @@ async def _ensure_video_analyses(
         ]
         await _gather_safely(tasks)
 
+    # Only pending if missing or still processing
+    # Failed analyses are NOT pending - we proceed with whatever succeeded
     has_pending = bool(missing_ids)
     for row in analyses:
         if row.get("status") == "processing":

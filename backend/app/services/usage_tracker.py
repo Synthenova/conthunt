@@ -173,5 +173,66 @@ class UsageTracker:
                 })
             return summary
 
+    async def check_and_record_analysis_access(
+        self,
+        firebase_uid: str,
+        user_role: str,
+        media_asset_id: UUID,
+        context: Optional[dict] = None,
+    ) -> bool:
+        """
+        Check if user has accessed this analysis before. If not, check limits,
+        record access, and record usage.
+        
+        Returns True if this is first access (credit charged), False if already accessed.
+        Raises HTTPException(403) if limit exceeded.
+        """
+        from app.db.queries.analysis import has_user_accessed_analysis, record_user_analysis_access
+        
+        async with get_db_connection() as conn:
+            user_id = await self.get_internal_user_id(conn, firebase_uid)
+            if not user_id:
+                logger.error(f"check_and_record_analysis_access failed: User {firebase_uid} not found")
+                raise HTTPException(status_code=403, detail="User account not fully established")
+            
+            # Debug: Check current role and RLS setting
+            role_result = await conn.execute(text("SELECT current_user, current_setting('app.user_id', true)"))
+            role_row = role_result.fetchone()
+            logger.info(f"[DEBUG] Before set_rls_user - DB role: {role_row[0]}, app.user_id: {role_row[1]}")
+            
+            # Set RLS context for all operations in this connection
+            await set_rls_user(conn, user_id)
+            
+            # Debug: Verify RLS was set
+            rls_result = await conn.execute(text("SELECT current_setting('app.user_id', true)"))
+            rls_row = rls_result.fetchone()
+            logger.info(f"[DEBUG] After set_rls_user - app.user_id: {rls_row[0]}, expected: {user_id}")
+            
+            # Check if user already accessed this analysis
+            already_accessed = await has_user_accessed_analysis(conn, user_id, media_asset_id)
+            if already_accessed:
+                logger.info(f"User {firebase_uid} already accessed analysis for {media_asset_id}, no credit charged")
+                return False
+            
+            # Check limits before allowing first access
+            # Note: check_limit opens its own connection, which is fine
+            await self.check_limit(firebase_uid, user_role, "gemini_analysis")
+            
+            # Record access (RLS already set on this connection)
+            logger.info(f"[DEBUG] About to insert - user_id: {user_id}, media_asset_id: {media_asset_id}")
+            await record_user_analysis_access(conn, user_id, media_asset_id)
+            await conn.commit()
+        
+        # Record usage (opens its own connection with RLS)
+        await self.record_usage(
+            firebase_uid=firebase_uid,
+            feature="gemini_analysis",
+            quantity=1,
+            context={"media_asset_id": str(media_asset_id), **(context or {})}
+        )
+        
+        logger.info(f"First access for user {firebase_uid} to analysis {media_asset_id}, credit charged")
+        return True
+
 # Global instance
 usage_tracker = UsageTracker()

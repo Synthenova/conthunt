@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { useSearchStore } from "@/lib/store";
 import { useBoards } from "@/hooks/useBoards";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,8 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
-import { Check, ChevronDown, Plus, X, Loader2, FolderPlus, Download, Trash2, MessageSquarePlus } from "lucide-react";
+import { Check, ChevronDown, Plus, X, Loader2, FolderPlus, Trash2, MessageSquarePlus } from "lucide-react";
+import { DownloadIcon, type DownloadIconHandle } from "@/components/ui/download";
 import { Input } from "@/components/ui/input";
 import { auth } from "@/lib/firebaseClient";
 import { toast } from "sonner";
@@ -44,6 +45,7 @@ export function SelectionBar({
     const [newBoardName, setNewBoardName] = useState("");
     const [showNewBoardInput, setShowNewBoardInput] = useState(false);
     const [isDownloading, setIsDownloading] = useState(false);
+    const downloadIconRef = useRef<DownloadIconHandle>(null);
 
     const count = selectedItems.length;
     const downloadableItems = useMemo(() => {
@@ -375,11 +377,13 @@ export function SelectionBar({
                     className="gap-2 rounded-full text-white cursor-pointer"
                     onClick={handleDownloadZip}
                     disabled={downloadDisabled || isDownloading || count === 0}
+                    onMouseEnter={() => downloadIconRef.current?.startAnimation()}
+                    onMouseLeave={() => downloadIconRef.current?.stopAnimation()}
                 >
                     {isDownloading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
-                        <Download className="h-4 w-4" />
+                        <DownloadIcon ref={downloadIconRef} size={16} />
                     )}
                     {downloadDisabled ? "Download after search completes" : "Download ZIP"}
                 </Button>

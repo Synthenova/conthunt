@@ -30,7 +30,7 @@ export function ChatHeader({ title = "Agent" }: ChatHeaderProps) {
                 >
                     <Plus className="h-4 w-4" />
                 </Button>
-                <Button
+{/*                <Button
                     variant="ghost"
                     size="icon"
                     className={`h-8 w-8 ${showHistory ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
@@ -38,7 +38,7 @@ export function ChatHeader({ title = "Agent" }: ChatHeaderProps) {
                     title="Chat History"
                 >
                     <History className="h-4 w-4" />
-                </Button>
+                </Button> */}
                 <Button
                     variant="ghost"
                     size="icon"

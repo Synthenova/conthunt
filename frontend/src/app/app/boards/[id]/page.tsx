@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useBoards } from "@/hooks/useBoards";
@@ -113,12 +113,19 @@ export default function BoardDetailPage() {
     const hasInsights = Boolean(insights?.insights);
     const isProcessingInsights = insights?.status === "processing";
 
-    // useEffect(() => {
-    //     if (!insights) return;
-    //     if (insights.status === "completed" || insights.status === "failed") {
-    //         setShouldPollInsights(false);
-    //     }
-    // }, [insights]);
+    // Progress tracking
+    const progress = insights?.progress;
+    const totalVideos = progress?.total_videos ?? 0;
+    const analyzedVideos = progress?.analyzed_videos ?? 0;
+    const failedVideos = progress?.failed_videos ?? 0;
+
+    // Auto-stop polling when insights complete or fail
+    useEffect(() => {
+        if (!insights) return;
+        if (insights.status === "completed" || insights.status === "failed") {
+            setShouldPollInsights(false);
+        }
+    }, [insights]);
 
     const handleDeleteBoard = async () => {
         try {
@@ -142,11 +149,13 @@ export default function BoardDetailPage() {
     };
 
     const handleRefreshInsights = async () => {
+        // Start polling immediately to avoid loader gap when mutation finishes
+        setShouldPollInsights(true);
         try {
             await refreshBoardInsights(boardId);
-            setShouldPollInsights(true);
         } catch (error) {
             console.error("Failed to refresh insights:", error);
+            setShouldPollInsights(false);
         }
     };
 
@@ -311,9 +320,11 @@ export default function BoardDetailPage() {
                                 </div>
                                 {hasInsights ? (
                                     <div className="flex flex-wrap items-center gap-2">
-                                        {isProcessingInsights ? (
+                                        {(isProcessingInsights || isRefreshingInsights) && totalVideos > 0 ? (
                                             <Badge variant="outline" className="border-white/10 text-muted-foreground">
-                                                Updating...
+                                                {isRefreshingInsights && !isProcessingInsights 
+                                                    ? "Starting..." 
+                                                    : `Analyzing ${analyzedVideos + failedVideos}/${totalVideos} videos`}
                                             </Badge>
                                         ) : null}
                                         <Button
@@ -368,28 +379,53 @@ export default function BoardDetailPage() {
                             ) : !hasInsights ? (
                                 <div className="min-h-[55vh] flex flex-col items-center justify-center text-center gap-4 py-16">
                                     <div className="h-14 w-14 rounded-full bg-white/5 flex items-center justify-center">
-                                        <Sparkles className="h-7 w-7 text-white/80" />
+                                        {(isProcessingInsights || isRefreshingInsights) ? (
+                                            <Loader2 className="h-7 w-7 text-white/80 animate-spin" />
+                                        ) : (
+                                            <Sparkles className="h-7 w-7 text-white/80" />
+                                        )}
                                     </div>
                                     <div className="space-y-2 max-w-xl">
                                         <h3 className="text-2xl font-semibold text-white">
-                                            {isProcessingInsights ? "Generating insights..." : "Get insights when you are ready"}
+                                            {(isProcessingInsights || isRefreshingInsights) 
+                                                ? (totalVideos > 0 && (analyzedVideos + failedVideos) >= totalVideos 
+                                                    ? "Generating insights..." 
+                                                    : "Analyzing videos...")
+                                                : "Get insights when you are ready"}
                                         </h3>
                                         <p className="text-sm text-muted-foreground">
-                                            Run insights to surface hooks, angles, and patterns across this board. Results land in 2–3 minutes.
+                                            {isProcessingInsights && totalVideos > 0
+                                                ? ((analyzedVideos + failedVideos) >= totalVideos
+                                                    ? "All videos analyzed. Creating your insights..."
+                                                    : `Analyzing ${analyzedVideos + failedVideos}/${totalVideos} videos...`)
+                                                : (isRefreshingInsights 
+                                                    ? "Starting analysis..."
+                                                    : "Run insights to surface hooks, angles, and patterns across this board. Results land in 2–3 minutes.")}
                                         </p>
-                                    </div>
-                                    <Button
-                                        onClick={handleRefreshInsights}
-                                        disabled={isRefreshingInsights || isProcessingInsights}
-                                        className="gap-2 glass-button-white hover:text-black"
-                                    >
-                                        {isRefreshingInsights || isProcessingInsights ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                            <Sparkles className="h-4 w-4" />
+                                        {isProcessingInsights && totalVideos > 0 && (analyzedVideos + failedVideos) < totalVideos && (
+                                            <div className="w-64 mx-auto mt-4">
+                                                <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                                                    <div
+                                                        className="h-full rounded-full bg-primary transition-all duration-500"
+                                                        style={{ width: `${totalVideos > 0 ? ((analyzedVideos + failedVideos) / totalVideos) * 100 : 0}%` }}
+                                                    />
+                                                </div>
+                                                <p className="text-xs text-muted-foreground mt-2">
+                                                    {analyzedVideos + failedVideos}/{totalVideos} videos analyzed
+                                                </p>
+                                            </div>
                                         )}
-                                        {isProcessingInsights ? "Working..." : "Get insights"}
-                                    </Button>
+                                    </div>
+                                    {!(isProcessingInsights || isRefreshingInsights) && (
+                                        <Button
+                                            onClick={handleRefreshInsights}
+                                            disabled={isRefreshingInsights || isProcessingInsights}
+                                            className="gap-2 glass-button-white hover:text-black"
+                                        >
+                                            <Sparkles className="h-4 w-4" />
+                                            Get insights
+                                        </Button>
+                                    )}
                                 </div>
                             ) : (
                                 <div className="grid gap-4 lg:grid-cols-2">
