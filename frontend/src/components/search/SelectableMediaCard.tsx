@@ -5,7 +5,7 @@ import { useSearchStore } from "@/lib/store";
 import { Badge } from "@/components/ui/badge";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useRef } from "react";
+import { useRef, memo } from "react";
 
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 import { ExternalLink } from "lucide-react";
@@ -19,7 +19,7 @@ interface SelectableMediaCardProps {
 
 const MEDIA_DRAG_TYPE = 'application/x-conthunt-media';
 
-export function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: SelectableMediaCardProps) {
+export const SelectableMediaCard = memo(function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: SelectableMediaCardProps) {
     const { selectedItems, toggleItemSelection } = useSearchStore();
     const isSelected = selectedItems.includes(item.id);
     const selectionMode = selectedItems.length > 0;
@@ -183,7 +183,7 @@ export function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: 
             />
         </div>
     );
-}
+});
 
 function getPlatformIcon(platform: string) {
     const normalized = platform.toLowerCase();

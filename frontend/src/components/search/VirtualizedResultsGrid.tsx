@@ -1,81 +1,156 @@
 "use client";
 
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, Virtualizer } from "@tanstack/react-virtual";
 import { SelectableMediaCard } from "./SelectableMediaCard";
 import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
 
 const GAP = 16;
 const CARD_ASPECT = 9 / 16;
 
-function useResponsiveLayout(containerRef: React.RefObject<any>) {
-    const [layout, setLayout] = useState({ columns: 4, width: 0 });
+// ✅ Only track columns in state. Track width in a ref to avoid rerenders on every resize tick.
+function useResponsiveColumns(
+    containerRef: React.RefObject<any>,
+    opts: {
+        onResizeTick?: (width: number) => void;
+        onColumnsChange?: (prev: number, next: number, width: number) => void;
+    } = {}
+) {
+    const [columns, setColumns] = useState(4);
 
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
 
-        const observer = new ResizeObserver((entries) => {
-            const width = entries[0].contentRect.width;
-            let columns = 1;
-            // Breakpoints adjusted for container width
-            if (width >= 1800) columns = 6;
-            else if (width >= 1500) columns = 5;
-            else if (width >= 1200) columns = 4;
-            else if (width >= 900) columns = 3;
-            else if (width >= 600) columns = 2;
+        let rafId: number | null = null;
 
-            setLayout({ columns, width });
+        const observer = new ResizeObserver((entries) => {
+            const width = entries[0]?.contentRect?.width ?? 0;
+            if (!width) return;
+
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(() => {
+                // Breakpoints based on container width
+                let nextCols = 1;
+                if (width >= 1800) nextCols = 6;
+                else if (width >= 1500) nextCols = 5;
+                else if (width >= 1200) nextCols = 4;
+                else if (width >= 900) nextCols = 3;
+                else if (width >= 600) nextCols = 2;
+
+                opts.onResizeTick?.(width);
+
+                setColumns((prev) => {
+                    if (prev !== nextCols) {
+                        opts.onColumnsChange?.(prev, nextCols, width);
+                        return nextCols;
+                    }
+                    return prev;
+                });
+            });
         });
 
         observer.observe(el);
-        return () => observer.disconnect();
-    }, [containerRef]);
 
-    return layout;
+        return () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            observer.disconnect();
+        };
+    }, [containerRef, opts]);
+
+    return columns;
 }
 
 export function VirtualizedResultsGrid({ results, analysisDisabled = false, itemsById }: any) {
-    // console.log("[VirtualGrid] Render results:", results.length);
-
     // ✅ make our OWN scroll container
     const scrollRef = useRef<HTMLDivElement>(null);
     const parentRef = useRef<HTMLDivElement>(null);
+
     const [selectedItem, setSelectedItem] = useState<any | null>(null);
     const [selectedResumeTime, setSelectedResumeTime] = useState(0);
 
-    // Use container width for columns
-    const { columns, width } = useResponsiveLayout(scrollRef);
+    // --- Resize smoothing controls ---
+    const widthRef = useRef(0);
+    const rafMeasureRef = useRef<number | null>(null);
+    const resizeEndTimerRef = useRef<number | null>(null);
+    const [isResizing, setIsResizing] = useState(false);
 
+    const scheduleMeasure = useCallback((reason: string) => {
+        if (rafMeasureRef.current) cancelAnimationFrame(rafMeasureRef.current);
+        rafMeasureRef.current = requestAnimationFrame(() => {
+            virtualizerRef.current?.measure();
+        });
+    }, []);
+
+    const markResizing = useCallback((reason: string) => {
+        if (!isResizing) setIsResizing(true);
+
+        if (resizeEndTimerRef.current) window.clearTimeout(resizeEndTimerRef.current);
+        resizeEndTimerRef.current = window.setTimeout(() => {
+            setIsResizing(false);
+            scheduleMeasure("resize-end");
+        }, 180);
+    }, [isResizing, scheduleMeasure]);
+
+    // We need the virtualizer instance inside scheduleMeasure, so keep a ref
+    const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | null>(null);
+
+    const columns = useResponsiveColumns(scrollRef, {
+        onResizeTick: (w) => {
+            widthRef.current = w;
+            // important: we still want to re-measure even if columns didn't change,
+            // but we do NOT want to set React state every tick.
+            markResizing("resize-tick");
+            scheduleMeasure("resize-tick");
+        },
+        onColumnsChange: () => {
+            markResizing("columns-change");
+            scheduleMeasure("columns-change");
+        },
+    });
+
+    // Group results into rows
     const rows = useMemo(() => {
         const rowArray: any[][] = [];
-        for (let i = 0; i < results.length; i += columns) rowArray.push(results.slice(i, i + columns));
+        for (let i = 0; i < results.length; i += columns) {
+            rowArray.push(results.slice(i, i + columns));
+        }
         return rowArray;
     }, [results, columns]);
 
-    const getRowHeight = useCallback(() => {
+    // Estimate row height (fast). Real cards may have extra footer height; ok.
+    const estimateRowHeight = useCallback(() => {
         const el = parentRef.current;
         if (!el) return 400;
         const containerWidth = el.offsetWidth;
         const cardWidth = (containerWidth - GAP * (columns - 1)) / columns;
-        const cardHeight = cardWidth / CARD_ASPECT;
-        return cardHeight + GAP;
+        const mediaHeight = cardWidth / CARD_ASPECT;
+        // add some footer space so estimate is closer and reduces jump
+        return Math.ceil(mediaHeight + GAP);
     }, [columns]);
 
     const virtualizer = useVirtualizer({
         count: rows.length,
         getScrollElement: () => scrollRef.current,
-        estimateSize: getRowHeight,
+        estimateSize: estimateRowHeight,
         overscan: 6,
         enabled: true,
     });
 
+    virtualizerRef.current = virtualizer;
+
+    // One solid measure when data/columns changes
     useEffect(() => {
-        // console.log("[VirtualGrid] Measuring. Rows:", rows.length, "Columns:", columns);
         virtualizer.measure();
-    }, [columns, rows.length, width]);
+    }, [columns, rows.length]); // intentionally no width
 
     const virtualRows = virtualizer.getVirtualItems();
+
+    // stable onOpen callback (pairs well with React.memo children)
+    const handleOpen = useCallback((nextItem: any, resumeTime: number) => {
+        setSelectedItem(nextItem);
+        setSelectedResumeTime(resumeTime);
+    }, []);
 
     return (
         <>
@@ -90,6 +165,7 @@ export function VirtualizedResultsGrid({ results, analysisDisabled = false, item
                 >
                     {virtualRows.map((virtualRow) => {
                         const rowItems = rows[virtualRow.index];
+
                         return (
                             <div
                                 key={virtualRow.key}
@@ -100,6 +176,9 @@ export function VirtualizedResultsGrid({ results, analysisDisabled = false, item
                                     width: "100%",
                                     height: `${virtualRow.size - GAP}px`,
                                     transform: `translateY(${virtualRow.start}px)`,
+                                    // ✅ Smooth ONLY during resize (keep scrolling snappy)
+                                    transition: isResizing ? "transform 160ms ease" : "none",
+                                    willChange: "transform",
                                 }}
                             >
                                 <div
@@ -115,10 +194,7 @@ export function VirtualizedResultsGrid({ results, analysisDisabled = false, item
                                                 item={item}
                                                 platform={item.platform || "unknown"}
                                                 itemsById={itemsById}
-                                                onOpen={(nextItem: any, resumeTime: number) => {
-                                                    setSelectedItem(nextItem);
-                                                    setSelectedResumeTime(resumeTime);
-                                                }}
+                                                onOpen={handleOpen}
                                             />
                                         </div>
                                     ))}
