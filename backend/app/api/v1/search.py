@@ -11,6 +11,7 @@ import traceback
 import httpx
 import json
 import redis.asyncio as redis
+from sqlalchemy import text
 from sse_starlette.sse import EventSourceResponse
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 
@@ -340,6 +341,193 @@ async def search_worker(
             pass
 
 
+async def load_more_worker(
+    search_id: UUID,
+    user_uuid: UUID,
+    query: str,
+    platform_cursors: dict,
+):
+    """
+    Background worker for "load more" pagination.
+    Same pattern as search_worker but with cursors.
+    
+    platform_cursors = {
+        "tiktok_keyword": {"cursor": 30},
+        "youtube": {"continuationToken": "abc..."},
+        ...
+    }
+    """
+    settings = get_settings()
+    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    stream_key = f"search:{search_id}:more:stream"
+    
+    collected_results: List[PlatformCallResult] = []
+    
+    try:
+        # Push start event
+        await r.xadd(stream_key, {"data": json.dumps({
+            "type": "start", 
+            "platforms": [normalize_platform_slug(slug) for slug in platform_cursors.keys()],
+            "search_id": str(search_id),
+        })})
+        
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            # Create all platform tasks with cursors merged into params
+            tasks = [
+                call_platform(client, slug, query, cursor_params)
+                for slug, cursor_params in platform_cursors.items()
+            ]
+            
+            # Process as they complete
+            for coro in asyncio.as_completed(tasks):
+                result: PlatformCallResult = await coro
+                collected_results.append(result)
+                
+                # Transform and push to Redis
+                event_data = transform_result_to_stream_item(result)
+                await r.xadd(stream_key, {"data": json.dumps(event_data, default=str)})
+        
+        # ========== DB WORK ==========
+        assets_to_download = []
+        
+        async with get_db_connection() as conn:
+            await set_rls_user(conn, user_uuid)
+            
+            # Get current max rank for this search
+            rank_result = await conn.execute(
+                text("SELECT COALESCE(MAX(rank), 0) FROM search_results WHERE search_id = :search_id"),
+                {"search_id": search_id}
+            )
+            current_max_rank = rank_result.scalar() or 0
+            
+            # Prepare batch data
+            platform_calls_batch = []
+            all_content_items = []
+            items_with_rank = []
+            rank = current_max_rank
+            
+            for result in collected_results:
+                slug = result.platform
+                
+                # Collect platform call (new call with updated cursor)
+                platform_calls_batch.append({
+                    "search_id": search_id,
+                    "platform": slug,
+                    "request_params": result.request_params,
+                    "success": result.success,
+                    "http_status": result.http_status,
+                    "error": result.error,
+                    "duration_ms": result.duration_ms,
+                    "next_cursor": result.parsed.next_cursor if result.parsed else None,
+                    "response_gcs_uri": None,
+                    "response_meta": result.parsed.response_meta if result.parsed else {},
+                })
+                
+                # Queue GCS upload as task
+                if result.success and result.parsed:
+                    raw_json_bytes = json.dumps(result.parsed.raw_response).encode('utf-8')
+                    compressed = gzip.compress(raw_json_bytes)
+                    compressed_b64 = base64.b64encode(compressed).decode('ascii')
+                    
+                    await cloud_tasks.create_http_task(
+                        queue_name=settings.QUEUE_RAW_ARCHIVE,
+                        relative_uri="/v1/tasks/raw/archive",
+                        payload={
+                            "platform": slug,
+                            "search_id": str(search_id),
+                            "raw_json_compressed": compressed_b64
+                        }
+                    )
+                
+                # Collect items
+                if result.success and result.parsed:
+                    for item in result.parsed.items:
+                        rank += 1
+                        all_content_items.append(item)
+                        items_with_rank.append((item, rank))
+            
+            # Batch Operations
+            if platform_calls_batch:
+                await queries.insert_platform_calls_batch(conn, platform_calls_batch)
+            
+            item_id_map = await queries.upsert_content_items_batch(conn, all_content_items)
+            
+            search_results_batch = []
+            media_assets_batch = []
+            
+            for item, item_rank in items_with_rank:
+                key = (item.platform, item.external_id)
+                if key not in item_id_map:
+                    continue
+                    
+                content_item_id, was_inserted = item_id_map[key]
+                
+                search_results_batch.append({
+                    "search_id": search_id,
+                    "content_item_id": content_item_id,
+                    "platform": item.platform,
+                    "rank": item_rank,
+                })
+                
+                if was_inserted:
+                    det_content_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
+                    
+                    for media_url in item.media_urls:
+                        asset_seed = f"{det_content_id}:{media_url.asset_type.value}:{media_url.source_url}"
+                        asset_id = uuid.uuid5(uuid.NAMESPACE_URL, asset_seed)
+                        media_assets_batch.append({
+                            "id": asset_id,
+                            "content_item_id": content_item_id,
+                            "asset_type": media_url.asset_type.value,
+                            "source_url": media_url.source_url,
+                            "source_url_list": media_url.source_url_list,
+                        })
+                        assets_to_download.append({
+                            "id": str(asset_id),
+                            "platform": item.platform,
+                            "external_id": item.external_id,
+                        })
+
+            if search_results_batch:
+                await queries.insert_search_results_batch(conn, search_results_batch)
+            
+            if media_assets_batch:
+                await queries.insert_media_assets_batch(conn, media_assets_batch)
+            
+            await conn.commit()
+            logger.info(f"Load more for search {search_id}: added {len(items_with_rank)} results")
+
+        # ========== FINISH STREAMING ==========
+        await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
+        await r.expire(stream_key, 300)
+        await r.close()
+        
+        # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
+        if assets_to_download:
+            logger.info(f"Dispatching {len(assets_to_download)} media download tasks for load_more...")
+            for asset_info in assets_to_download:
+                await cloud_tasks.create_http_task(
+                    queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
+                    relative_uri="/v1/tasks/media/download",
+                    payload={
+                        "asset_id": str(asset_info["id"]),
+                        "platform": asset_info["platform"],
+                        "external_id": asset_info["external_id"]
+                    }
+                )
+        
+    except Exception as e:
+        logger.error(f"Load more worker failed for {search_id}: {e}", exc_info=True)
+        
+        try:
+            r2 = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            await r2.xadd(stream_key, {"data": json.dumps({"type": "error", "error": str(e)})})
+            await r2.expire(stream_key, 300)
+            await r2.close()
+        except:
+            pass
+
+
 # --- Redis Dependency ---
 
 async def get_redis():
@@ -464,6 +652,147 @@ async def stream_search(
     
     # Status is 'running' - stream from Redis
     stream_key = f"search:{search_id}:stream"
+    
+    async def event_generator():
+        last_id = "0-0"
+        
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                
+                streams = await redis_client.xread(
+                    {stream_key: last_id},
+                    count=50,
+                    block=10000  # 10 second timeout
+                )
+                
+                if not streams:
+                    yield {"event": "ping", "data": ""}
+                    continue
+                
+                for _, messages in streams:
+                    for msg_id, data_map in messages:
+                        last_id = msg_id
+                        payload_str = data_map.get("data")
+                        yield {
+                            "id": msg_id,
+                            "event": "message",
+                            "data": payload_str
+                        }
+                        
+                        # Check if done
+                        if payload_str and '"type": "done"' in payload_str:
+                            return
+                        if payload_str and '"type": "error"' in payload_str:
+                            return
+        except asyncio.CancelledError:
+            pass
+    
+    return EventSourceResponse(event_generator())
+
+
+@router.post("/search/{search_id}/more")
+async def load_more(
+    search_id: UUID,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Load more results for an existing search using pagination cursors.
+    
+    Returns search_id immediately, runs load_more in background.
+    Frontend should connect to /search/{id}/more/stream for results.
+    """
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+    
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
+        
+        # Get search with cursors
+        search_data = await queries.get_search_with_cursors(conn, search_id)
+        
+        if not search_data:
+            raise HTTPException(status_code=404, detail="Search not found")
+        
+        cursors = search_data.get("cursors", {})
+        
+        # Filter out platforms without cursors and Instagram (no pagination support)
+        platform_cursors = {}
+        original_inputs = search_data.get("inputs", {})
+        
+        for platform, cursor in cursors.items():
+            if platform == "instagram_reels":
+                continue
+            if cursor and platform in original_inputs:
+                # Merge original params with cursor
+                params = {**original_inputs[platform], **cursor}
+                platform_cursors[platform] = params
+        
+        if not platform_cursors:
+            raise HTTPException(
+                status_code=400, 
+                detail="No more results available (no platforms have pagination cursors)"
+            )
+    
+    # Check Usage Limits
+    from app.services.usage_tracker import usage_tracker
+    await usage_tracker.check_limit(
+        firebase_uid=firebase_uid, 
+        role=user.get("role", "free"), 
+        feature="search_query"
+    )
+    
+    # Record Usage
+    background_tasks.add_task(
+        usage_tracker.record_usage,
+        firebase_uid=firebase_uid,
+        feature="search_query",
+        quantity=1,
+        context={"search_id": str(search_id), "platforms": list(platform_cursors.keys()), "action": "load_more"}
+    )
+    
+    # Spawn background worker
+    background_tasks.add_task(
+        load_more_worker,
+        search_id=search_id,
+        user_uuid=user_uuid,
+        query=search_data["query"],
+        platform_cursors=platform_cursors,
+    )
+    
+    return {"search_id": str(search_id), "platforms": list(platform_cursors.keys())}
+
+
+@router.get("/search/{search_id}/more/stream")
+async def stream_load_more(
+    search_id: UUID,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """
+    SSE endpoint to stream load_more results from Redis.
+    Same pattern as /search/{id}/stream but uses different stream key.
+    """
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+    
+    # Verify user owns this search
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
+        await set_rls_user(conn, user_uuid)
+        search = await queries.get_search_by_id(conn, search_id)
+        
+        if not search:
+            raise HTTPException(status_code=404, detail="Search not found")
+    
+    # Stream from Redis
+    stream_key = f"search:{search_id}:more:stream"
     
     async def event_generator():
         last_id = "0-0"

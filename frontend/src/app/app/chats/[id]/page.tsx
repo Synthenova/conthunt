@@ -19,8 +19,11 @@ import { FlatMediaItem, transformToMediaItem } from "@/lib/transformers";
 import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { BoardFilterBar } from "@/components/boards/BoardFilterBar";
 import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
+import { LoadMoreButton } from "@/components/search/LoadMoreButton";
 import { SearchIcon, SearchIconHandle } from "@/components/ui/search";
 import { useChatTags } from "@/hooks/useChatTags";
+import { useLoadMore } from "@/hooks/useLoadMore";
+import { transformSearchResults } from "@/lib/transformers";
 
 export default function ChatPage() {
     const params = useParams();
@@ -46,6 +49,8 @@ export default function ChatPage() {
     const [resultsMap, setResultsMap] = useState<Record<string, FlatMediaItem[]>>({});
     const [streamingSearchIds, setStreamingSearchIds] = useState<Record<string, boolean>>({});
     const [loadingSearchIds, setLoadingSearchIds] = useState<Record<string, boolean>>({});
+    const [cursorsMap, setCursorsMap] = useState<Record<string, Record<string, any>>>({});
+    const [hasMoreMap, setHasMoreMap] = useState<Record<string, boolean>>({});
     // rawSearchResults is less useful now that we filter by active ID, but checking logic...
     // We can probably remove it or keep it for the "All Results" aggregation if we wanted that later.
     // For now, let's keep the state but not use it for rendering.
@@ -227,6 +232,42 @@ export default function ChatPage() {
         });
     }, []);
 
+    const handleSearchCursorsChange = useCallback((id: string, cursors: Record<string, any>, hasMore: boolean) => {
+        setCursorsMap(prev => {
+            if (JSON.stringify(prev[id]) === JSON.stringify(cursors)) return prev;
+            return { ...prev, [id]: cursors };
+        });
+        setHasMoreMap(prev => {
+            if (prev[id] === hasMore) return prev;
+            return { ...prev, [id]: hasMore };
+        });
+    }, []);
+
+    // Load More hook
+    const { loadMore, isLoading: isLoadingMore } = useLoadMore(activeSearchId);
+
+    const handleLoadMore = useCallback(() => {
+        if (!activeSearchId) return;
+        
+        loadMore(
+            // onNewResults - append new items
+            (newItems) => {
+                const transformed = transformSearchResults(newItems);
+                setResultsMap(prev => {
+                    const existing = prev[activeSearchId] || [];
+                    const existingIds = new Set(existing.map(item => item.id));
+                    const uniqueNew = transformed.filter(item => !existingIds.has(item.id));
+                    return { ...prev, [activeSearchId]: [...existing, ...uniqueNew] };
+                });
+            },
+            // onNewCursors - update cursors
+            (newCursors) => {
+                setCursorsMap(prev => ({ ...prev, [activeSearchId]: newCursors }));
+                setHasMoreMap(prev => ({ ...prev, [activeSearchId]: Object.keys(newCursors).length > 0 }));
+            }
+        );
+    }, [activeSearchId, loadMore]);
+
     // Flatten results for display
     useEffect(() => {
         // Aggregate all values from resultsMap
@@ -313,6 +354,7 @@ export default function ChatPage() {
                     onResults={handleSearchResults}
                     onStreamingChange={handleSearchStreamingChange}
                     onLoadingChange={handleSearchLoadingChange}
+                    onCursorsChange={handleSearchCursorsChange}
                 />
             ))}
 
@@ -506,6 +548,11 @@ export default function ChatPage() {
                                                 results={filteredResults}
                                                 loading={(!!streamingSearchIds[activeSearchId] || !!loadingSearchIds[activeSearchId]) && (filteredResults.length === 0)}
                                                 analysisDisabled={false}
+                                            />
+                                            <LoadMoreButton
+                                                onLoadMore={handleLoadMore}
+                                                hasMore={hasMoreMap[activeSearchId] ?? false}
+                                                isLoading={isLoadingMore}
                                             />
                                         </div>
                                     )}

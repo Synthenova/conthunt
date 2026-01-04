@@ -8,10 +8,17 @@ interface SearchStreamerProps {
     onResults: (searchId: string, results: FlatMediaItem[]) => void;
     onStreamingChange?: (searchId: string, isStreaming: boolean) => void;
     onLoadingChange?: (searchId: string, isLoading: boolean) => void;
+    onCursorsChange?: (searchId: string, cursors: Record<string, any>, hasMore: boolean) => void;
 }
 
-export function SearchStreamer({ searchId, onResults, onStreamingChange, onLoadingChange }: SearchStreamerProps) {
-    const { results, isStreaming, isLoading } = useSearchStream(searchId);
+export function SearchStreamer({ 
+    searchId, 
+    onResults, 
+    onStreamingChange, 
+    onLoadingChange,
+    onCursorsChange 
+}: SearchStreamerProps) {
+    const { results, cursors, hasMore, isStreaming, isLoading } = useSearchStream(searchId);
 
     useEffect(() => {
         // Transform the raw results to FlatMediaItem
@@ -28,6 +35,12 @@ export function SearchStreamer({ searchId, onResults, onStreamingChange, onLoadi
         if (!onLoadingChange) return;
         onLoadingChange(searchId, isLoading);
     }, [isLoading, searchId, onLoadingChange]);
+
+    useEffect(() => {
+        console.log("[SearchStreamer] cursors changed:", searchId, cursors, "hasMore:", hasMore);
+        if (!onCursorsChange) return;
+        onCursorsChange(searchId, cursors, hasMore);
+    }, [cursors, hasMore, searchId, onCursorsChange]);
 
     return null;
 }

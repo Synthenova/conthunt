@@ -658,6 +658,61 @@ async def get_media_asset_with_access_check(
 
 
 @log_query_timing
+async def get_search_with_cursors(
+    conn: AsyncConnection,
+    search_id: UUID,
+) -> dict | None:
+    """
+    Get search metadata with the latest cursor for each platform.
+    Used for "load more" pagination.
+    
+    Returns: {
+        "id": UUID,
+        "query": str,
+        "inputs": dict,
+        "cursors": {platform: next_cursor_dict}  # Only platforms with cursors
+    }
+    """
+    result = await conn.execute(
+        text("""
+            WITH latest_cursors AS (
+                SELECT DISTINCT ON (platform)
+                    platform,
+                    next_cursor
+                FROM platform_calls
+                WHERE search_id = :search_id
+                  AND next_cursor IS NOT NULL
+                ORDER BY platform, created_at DESC
+            )
+            SELECT 
+                s.id,
+                s.query,
+                s.inputs,
+                COALESCE(
+                    json_object_agg(lc.platform, lc.next_cursor) FILTER (WHERE lc.platform IS NOT NULL),
+                    '{}'::json
+                ) as cursors
+            FROM searches s
+            LEFT JOIN latest_cursors lc ON true
+            WHERE s.id = :search_id
+            GROUP BY s.id, s.query, s.inputs
+        """),
+        {"search_id": search_id}
+    )
+    
+    row = result.fetchone()
+    if not row:
+        return None
+    
+    return {
+        "id": row[0],
+        "query": row[1],
+        "inputs": row[2],
+        "cursors": row[3] or {},
+    }
+
+
+@log_query_timing
 async def get_full_search_detail(conn: AsyncConnection, search_id: UUID) -> dict | None:
     """
     Fetch ALL search data in a single query:
