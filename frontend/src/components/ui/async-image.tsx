@@ -84,7 +84,6 @@ export function AsyncImage({ src, className, alt, ...props }: AsyncImageProps) {
             return;
         }
 
-        console.log("[AsyncImage] Image load failed. Checking for hidden HEIC...", src);
         setIsConverting(true);
 
         try {
@@ -105,7 +104,6 @@ export function AsyncImage({ src, className, alt, ...props }: AsyncImageProps) {
             const isFtyp = arr[4] === 0x66 && arr[5] === 0x74 && arr[6] === 0x79 && arr[7] === 0x70;
 
             if (isFtyp) {
-                console.log("[AsyncImage] Detected hidden HEIC (ftyp signature). Converting...");
                 const heic2any = (await import('heic2any')).default;
                 const convertedBlob = await heic2any({
                     blob,
@@ -120,7 +118,6 @@ export function AsyncImage({ src, className, alt, ...props }: AsyncImageProps) {
                 setError(true);
             }
         } catch (e) {
-            console.error("[AsyncImage] Fallback check failed:", e);
             setError(true);
         } finally {
             setIsConverting(false);
