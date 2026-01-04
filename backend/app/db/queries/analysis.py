@@ -79,14 +79,14 @@ async def create_pending_analysis(
     media_asset_id: UUID,
     prompt: str,
 ) -> UUID:
-    """Create a pending analysis record (status='processing')."""
+    """Create a pending analysis record (status='queued')."""
     analysis_id = uuid4()
     await conn.execute(
         text("""
             INSERT INTO video_analyses (
                 id, media_asset_id, prompt, status, analysis_result
             )
-            VALUES (:id, :media_asset_id, :prompt, 'processing', :analysis_result)
+            VALUES (:id, :media_asset_id, :prompt, 'queued', :analysis_result)
         """),
         {
             "id": analysis_id,

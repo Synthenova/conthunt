@@ -69,75 +69,162 @@ class CloudTasksService:
     async def _run_local_task(self, uri: str, payload: dict | None):
         """
         Execute task logic locally (mirroring app/api/v1/tasks.py).
+        All tasks have proper error handling to mark DB status as failed.
         """
-        try:
-            if not payload:
-                payload = {}
-                 
-            if uri == "/v1/tasks/gemini/analyze":
-                from app.api.v1.analysis import _execute_gemini_analysis
-                from uuid import UUID
+        from uuid import UUID
+        
+        if not payload:
+            payload = {}
+             
+        if uri == "/v1/tasks/gemini/analyze":
+            from app.api.v1.analysis import _execute_gemini_analysis
+            from app.db.queries.analysis import update_analysis_status
+            from app.db.queries.content import get_media_asset_by_id
+            import asyncio
+            
+            analysis_id = UUID(payload["analysis_id"])
+            media_asset_id = UUID(payload["media_asset_id"])
+            try:
+                # Mark as processing on pickup
+                async with get_db_connection() as conn:
+                    await update_analysis_status(conn, analysis_id, status="processing")
+                    await conn.commit()
+                
+                # Check if YouTube (no wait needed)
+                async with get_db_connection() as conn:
+                    asset = await get_media_asset_by_id(conn, media_asset_id)
+                source_url = asset.get("source_url", "") if asset else ""
+                is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
+                
+                # Wait for video to be ready (max 3 min) - non-YouTube only
+                if not is_youtube:
+                    for attempt in range(18):
+                        async with get_db_connection() as conn:
+                            asset = await get_media_asset_by_id(conn, media_asset_id)
+                        status = asset.get("status", "") if asset else ""
+                        if status in ("stored", "downloaded"):
+                            break
+                        if status == "failed":
+                            raise Exception("Video download failed")
+                        logger.info(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/18")
+                        await asyncio.sleep(10)
+                    else:
+                        raise Exception("Video not ready after 3 min timeout")
+                
                 await _execute_gemini_analysis(
-                    analysis_id=UUID(payload["analysis_id"]),
-                    media_asset_id=UUID(payload["media_asset_id"]),
+                    analysis_id=analysis_id,
+                    media_asset_id=media_asset_id,
                     video_uri=payload["video_uri"]
                 )
+            except Exception as e:
+                logger.error(f"[LOCAL] Gemini analysis failed: {e}", exc_info=True)
+                async with get_db_connection() as conn:
+                    await update_analysis_status(conn, analysis_id, status="failed", error=str(e))
+                    await conn.commit()
                 
-            elif uri == "/v1/tasks/twelvelabs/index":
-                from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
-                from uuid import UUID
-                await process_twelvelabs_indexing_by_media_asset(
-                    media_asset_id=UUID(payload["media_asset_id"])
-                )
-                
-            elif uri == "/v1/tasks/media/download":
-                from app.media.downloader import download_asset_with_claim
-                from app.media.downloader import update_asset_failed
-                from uuid import UUID
-                import httpx
-
-                async with httpx.AsyncClient(timeout=self.settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
-                    try:
-                        await download_asset_with_claim(
-                            http_client=client,
-                            asset_id=UUID(payload["asset_id"]),
-                            platform=payload["platform"],
-                            external_id=payload["external_id"]
-                        )
-                    except Exception as download_err:
-                        # Fail-fast locally: mark asset failed so it doesn't stay stuck in 'downloading'
-                        async with get_db_connection() as conn:
-                            await update_asset_failed(conn, UUID(payload["asset_id"]), str(download_err))
-                        raise
+        elif uri == "/v1/tasks/twelvelabs/index":
+            from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
+            from app.db.queries import update_twelvelabs_asset_status
+            from app.db.queries.content import get_media_asset_by_id
+            import asyncio
             
-            elif uri == "/v1/tasks/raw/archive":
-                from app.storage.raw_archive import upload_raw_compressed
-                from uuid import UUID
-                import base64
+            media_asset_id = UUID(payload["media_asset_id"])
+            try:
+                # Mark as processing on pickup
+                async with get_db_connection() as conn:
+                    await update_twelvelabs_asset_status(
+                        conn, media_asset_id=media_asset_id,
+                        asset_status="processing", index_status="processing"
+                    )
+                    await conn.commit()
                 
-                # Decode base64 to get compressed bytes (already gzipped)
+                # Wait for video to be ready (max 3 min)
+                for attempt in range(18):
+                    async with get_db_connection() as conn:
+                        asset = await get_media_asset_by_id(conn, media_asset_id)
+                    status = asset.get("status", "") if asset else ""
+                    if status in ("stored", "downloaded"):
+                        break
+                    if status == "failed":
+                        raise Exception("Video download failed")
+                    logger.info(f"[LOCAL] Video not ready (status={status}), waiting for TwelveLabs... {attempt+1}/18")
+                    await asyncio.sleep(10)
+                else:
+                    raise Exception("Video not ready after 3 min timeout")
+                
+                await process_twelvelabs_indexing_by_media_asset(media_asset_id=media_asset_id)
+            except Exception as e:
+                logger.error(f"[LOCAL] TwelveLabs indexing failed: {e}", exc_info=True)
+                async with get_db_connection() as conn:
+                    await update_twelvelabs_asset_status(
+                        conn, media_asset_id=media_asset_id,
+                        asset_status="failed", index_status="failed", error=str(e)
+                    )
+                    await conn.commit()
+                
+        elif uri == "/v1/tasks/media/download":
+            from app.media.downloader import download_asset_with_claim, update_asset_failed
+            import httpx
+
+            asset_id = UUID(payload["asset_id"])
+            async with httpx.AsyncClient(timeout=self.settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
+                try:
+                    await download_asset_with_claim(
+                        http_client=client,
+                        asset_id=asset_id,
+                        platform=payload["platform"],
+                        external_id=payload["external_id"]
+                    )
+                except Exception as e:
+                    logger.error(f"[LOCAL] Media download failed: {e}", exc_info=True)
+                    async with get_db_connection() as conn:
+                        await update_asset_failed(conn, asset_id, str(e))
+        
+        elif uri == "/v1/tasks/raw/archive":
+            from app.storage.raw_archive import upload_raw_compressed
+            import base64
+            
+            try:
                 compressed_bytes = base64.b64decode(payload["raw_json_compressed"])
-                
                 await upload_raw_compressed(
                     platform=payload["platform"],
                     search_id=UUID(payload["search_id"]),
                     compressed_data=compressed_bytes
                 )
+            except Exception as e:
+                logger.error(f"[LOCAL] Raw archive failed: {e}", exc_info=True)
+                # No DB row for raw archive - just log
                 
-            elif uri == "/v1/tasks/boards/insights":
-                from app.services.board_insights import execute_board_insights
-                from uuid import UUID
+        elif uri == "/v1/tasks/boards/insights":
+            from app.services.board_insights import execute_board_insights
+            from app.db.queries import get_board_insights, update_board_insights_status
+            from app.db import set_rls_user
+            
+            board_id = UUID(payload["board_id"])
+            user_id = UUID(payload["user_id"])
+            try:
+                # Mark as processing on pickup
+                async with get_db_connection() as conn:
+                    await set_rls_user(conn, user_id)
+                    row = await get_board_insights(conn, board_id)
+                    if row:
+                        await update_board_insights_status(conn, insights_id=row["id"], status="processing")
+                        await conn.commit()
                 
-                await execute_board_insights(
-                    board_id=UUID(payload["board_id"]),
-                    user_id=UUID(payload["user_id"]),
-                )
+                await execute_board_insights(board_id=board_id, user_id=user_id)
+            except Exception as e:
+                logger.error(f"[LOCAL] Board insights failed: {e}", exc_info=True)
+                async with get_db_connection() as conn:
+                    await set_rls_user(conn, user_id)
+                    row = await get_board_insights(conn, board_id)
+                    if row:
+                        await update_board_insights_status(
+                            conn, insights_id=row["id"], status="failed", error=str(e)
+                        )
+                        await conn.commit()
                 
-            else:
-                logger.warning(f"[LOCAL] Unknown task URI: {uri}")
-                
-        except Exception as e:
-            logger.error(f"[LOCAL] Background task failed for {uri}: {e}", exc_info=True)
+        else:
+            logger.warning(f"[LOCAL] Unknown task URI: {uri}")
 
 # Global instance
 cloud_tasks = CloudTasksService()

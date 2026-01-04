@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime
 from typing import Optional
@@ -11,7 +12,6 @@ from app.db import get_db_connection, set_rls_user
 from app.db import queries
 from app.api.v1.analysis import run_gemini_analysis
 from app.schemas.insights import BoardInsightsResult
-from app.services.cloud_tasks import cloud_tasks
 
 settings = get_settings()
 
@@ -42,14 +42,13 @@ def _format_analysis_entry(media_asset_id: UUID, analysis: dict) -> str:
 
 async def _ensure_video_analyses(
     media_asset_ids: list[UUID],
-) -> tuple[list[dict], bool]:
+) -> list[dict]:
     """
-    Fetch cached analyses for media assets.
-    If any analyses are missing, trigger Gemini analysis in background.
-    Returns (analysis_rows, has_pending).
+    Ensure all video analyses exist and wait for them to complete.
+    Triggers Gemini analysis for missing videos, then polls until all done (max 5 min).
     
-    has_pending is True only if there are missing or processing analyses.
     Failed analyses are treated as "done" - insights will proceed with whatever succeeded.
+    Returns the final list of analysis rows.
     """
     async with get_db_connection() as conn:
         analyses = await queries.get_video_analyses_by_media_assets(conn, media_asset_ids)
@@ -60,6 +59,7 @@ async def _ensure_video_analyses(
     missing_ids = [mid for mid in media_asset_ids if mid not in analyses_by_id]
 
     if missing_ids:
+        logger.info(f"[INSIGHTS] Triggering {len(missing_ids)} missing video analyses")
         tasks = [
             run_gemini_analysis(
                 media_asset_id=mid,
@@ -68,23 +68,38 @@ async def _ensure_video_analyses(
             )
             for mid in missing_ids
         ]
-        await _gather_safely(tasks)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Only pending if missing or still processing
-    # Failed analyses are NOT pending - we proceed with whatever succeeded
-    has_pending = bool(missing_ids)
-    for row in analyses:
-        if row.get("status") == "processing":
-            has_pending = True
-
-    return analyses, has_pending
-
-
-async def _gather_safely(tasks: list) -> None:
-    import asyncio
-    if not tasks:
-        return
-    await asyncio.gather(*tasks, return_exceptions=True)
+    # Poll until all analyses are done (completed/failed) or timeout
+    # Max 5 min (30 attempts x 10s)
+    for attempt in range(30):
+        async with get_db_connection() as conn:
+            analyses = await queries.get_video_analyses_by_media_assets(conn, media_asset_ids)
+        
+        # Check if any are still pending (queued or processing)
+        pending = [
+            row for row in analyses 
+            if row.get("status") in ("queued", "processing")
+        ]
+        
+        # Also check for missing (not yet created)
+        analyses_by_id = {row["media_asset_id"]: row for row in analyses}
+        missing = [mid for mid in media_asset_ids if mid not in analyses_by_id]
+        
+        if not pending and not missing:
+            logger.info(f"[INSIGHTS] All {len(analyses)} video analyses complete")
+            break
+        
+        logger.info(f"[INSIGHTS] Waiting for analyses... {len(pending)} processing, {len(missing)} missing (attempt {attempt+1}/30)")
+        await asyncio.sleep(10)
+    else:
+        logger.warning(f"[INSIGHTS] Timeout waiting for analyses after 5 min")
+    
+    # Return final state
+    async with get_db_connection() as conn:
+        analyses = await queries.get_video_analyses_by_media_assets(conn, media_asset_ids)
+    
+    return analyses
 
 
 async def execute_board_insights(
@@ -141,28 +156,12 @@ async def execute_board_insights(
         return
 
     media_asset_ids = [row["media_asset_id"] for row in media_assets]
-    analyses, has_pending = await _ensure_video_analyses(media_asset_ids)
+    analyses = await _ensure_video_analyses(media_asset_ids)
 
     completed_analyses = [
         row for row in analyses
         if row.get("status") == "completed" and row.get("analysis_result")
     ]
-
-    if has_pending:
-        async with get_db_connection() as conn:
-            await set_rls_user(conn, user_id)
-            await queries.update_board_insights_status(
-                conn,
-                insights_id=insights_id,
-                status="processing",
-            )
-        await cloud_tasks.create_http_task(
-            queue_name=settings.QUEUE_GEMINI,
-            relative_uri="/v1/tasks/boards/insights",
-            payload={"board_id": str(board_id), "user_id": str(user_id)},
-            schedule_seconds=120,
-        )
-        return
 
     if not completed_analyses and not previous_insights:
         async with get_db_connection() as conn:

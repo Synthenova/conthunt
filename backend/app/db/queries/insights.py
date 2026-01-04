@@ -44,6 +44,7 @@ async def upsert_pending_board_insights(
     conn: AsyncConnection,
     board_id: UUID,
 ) -> UUID:
+    """Create or update board insights with 'queued' status (processing starts on pickup)."""
     insights_id = uuid4()
     result = await conn.execute(
         text("""
@@ -51,10 +52,10 @@ async def upsert_pending_board_insights(
                 id, board_id, status, insights_result
             )
             VALUES (
-                :id, :board_id, 'processing', :insights_result
+                :id, :board_id, 'queued', :insights_result
             )
             ON CONFLICT (board_id) DO UPDATE
-            SET status = 'processing',
+            SET status = 'queued',
                 error = NULL,
                 updated_at = now()
             RETURNING id
