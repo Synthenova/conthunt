@@ -8,8 +8,8 @@ import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
 const GAP = 16;
 const CARD_ASPECT = 9 / 16;
 
-function useResponsiveColumns(containerRef: React.RefObject<any>) {
-    const [columns, setColumns] = useState(4);
+function useResponsiveLayout(containerRef: React.RefObject<any>) {
+    const [layout, setLayout] = useState({ columns: 4, width: 0 });
 
     useEffect(() => {
         const el = containerRef.current;
@@ -17,18 +17,22 @@ function useResponsiveColumns(containerRef: React.RefObject<any>) {
 
         const observer = new ResizeObserver((entries) => {
             const width = entries[0].contentRect.width;
+            let columns = 1;
             // Breakpoints adjusted for container width
-            if (width >= 1100) setColumns(4);
-            else if (width >= 800) setColumns(3);
-            else if (width >= 500) setColumns(2);
-            else setColumns(1);
+            if (width >= 1800) columns = 6;
+            else if (width >= 1500) columns = 5;
+            else if (width >= 1200) columns = 4;
+            else if (width >= 900) columns = 3;
+            else if (width >= 600) columns = 2;
+
+            setLayout({ columns, width });
         });
 
         observer.observe(el);
         return () => observer.disconnect();
     }, [containerRef]);
 
-    return columns;
+    return layout;
 }
 
 export function VirtualizedResultsGrid({ results, analysisDisabled = false, itemsById }: any) {
@@ -41,7 +45,7 @@ export function VirtualizedResultsGrid({ results, analysisDisabled = false, item
     const [selectedResumeTime, setSelectedResumeTime] = useState(0);
 
     // Use container width for columns
-    const columns = useResponsiveColumns(scrollRef);
+    const { columns, width } = useResponsiveLayout(scrollRef);
 
     const rows = useMemo(() => {
         const rowArray: any[][] = [];
@@ -69,7 +73,7 @@ export function VirtualizedResultsGrid({ results, analysisDisabled = false, item
     useEffect(() => {
         // console.log("[VirtualGrid] Measuring. Rows:", rows.length, "Columns:", columns);
         virtualizer.measure();
-    }, [columns, rows.length]);
+    }, [columns, rows.length, width]);
 
     const virtualRows = virtualizer.getVirtualItems();
 

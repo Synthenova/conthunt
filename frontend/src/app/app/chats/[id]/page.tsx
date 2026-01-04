@@ -318,7 +318,7 @@ export default function ChatPage() {
 
             {/* Canvas (left/center) */}
             <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0">
-                <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8">
+                <div className="w-full py-4 px-4 space-y-6">
                     {isInitialLoading ? (
                         <div className="min-h-[70vh] flex items-center justify-center">
                             <div className="flex flex-col items-center gap-3 text-center">
