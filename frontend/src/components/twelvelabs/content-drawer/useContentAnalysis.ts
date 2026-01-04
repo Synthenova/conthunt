@@ -27,6 +27,7 @@ interface UseContentAnalysisOptions {
 export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: UseContentAnalysisOptions) {
     const [analyzing, setAnalyzing] = useState(false);
     const [polling, setPolling] = useState(false);
+    const [checkingExisting, setCheckingExisting] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<any>(null);
     const [error, setError] = useState<string | null>(null);
     const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
@@ -145,17 +146,25 @@ export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: U
             setError(null);
             setAnalyzing(false);
             setPolling(false);
+            setCheckingExisting(false);
             analysisNotReadyRetries.current = 0;
             
             // Auto-fetch existing analysis if user has already accessed it (GET - no credit charge)
             if (!analysisDisabled) {
-                fetchExistingAnalysis().then((data) => {
-                    if (data && data.status === "completed") {
-                        setAnalysisResult(data);
-                    }
-                }).catch(() => {
-                    // Silently ignore - user can manually trigger if needed
-                });
+                setCheckingExisting(true);
+                setLoadingMessage("Checking for existing analysis...");
+                fetchExistingAnalysis()
+                    .then((data) => {
+                        if (data && data.status === "completed") {
+                            setAnalysisResult(data);
+                        }
+                    })
+                    .catch(() => {
+                        // Silently ignore - user can manually trigger if needed
+                    })
+                    .finally(() => {
+                        setCheckingExisting(false);
+                    });
             }
         }
     }, [isOpen, item, analysisDisabled, fetchExistingAnalysis]);
@@ -190,13 +199,13 @@ export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: U
     return useMemo(
         () => ({
             analysisResult,
-            analyzing,
+            analyzing: analyzing || checkingExisting,
             polling,
             error,
             loadingMessage,
             handleAnalyze,
         }),
-        [analysisResult, analyzing, polling, error, loadingMessage, handleAnalyze]
+        [analysisResult, analyzing, checkingExisting, polling, error, loadingMessage, handleAnalyze]
     );
 }
 
