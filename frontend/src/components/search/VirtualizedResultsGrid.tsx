@@ -2,6 +2,7 @@
 
 import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useVirtualizer, Virtualizer } from "@tanstack/react-virtual";
+import { motion } from "framer-motion";
 import { SelectableMediaCard } from "./SelectableMediaCard";
 import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
 
@@ -189,14 +190,25 @@ export function VirtualizedResultsGrid({ results, analysisDisabled = false, item
                                     }}
                                 >
                                     {rowItems.map((item: any, colIndex: number) => (
-                                        <div key={item.id || `${virtualRow.index}-${colIndex}`}>
+                                        <motion.div
+                                            key={item.id || `${virtualRow.index}-${colIndex}`}
+                                            layoutId={`grid-item-${item.id}`}
+                                            initial={false}
+                                            transition={{
+                                                type: "spring",
+                                                stiffness: 350,
+                                                damping: 25,
+                                                mass: 1
+                                            }}
+                                            style={{ height: "100%" }}
+                                        >
                                             <SelectableMediaCard
                                                 item={item}
                                                 platform={item.platform || "unknown"}
                                                 itemsById={itemsById}
                                                 onOpen={handleOpen}
                                             />
-                                        </div>
+                                        </motion.div>
                                     ))}
                                 </div>
                             </div>
