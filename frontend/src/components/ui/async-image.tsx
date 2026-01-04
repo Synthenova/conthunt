@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 
 interface AsyncImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
@@ -10,14 +10,22 @@ interface AsyncImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
 
 export function AsyncImage({ src, className, alt, ...props }: AsyncImageProps) {
     const [loaded, setLoaded] = useState(false);
+    const imgRef = useRef<HTMLImageElement>(null);
 
     useEffect(() => {
         setLoaded(false);
     }, [src]);
 
+    useEffect(() => {
+        if (imgRef.current?.complete) {
+            setLoaded(true);
+        }
+    }, [src]);
+
     return (
         <div className={cn("relative overflow-hidden", className)}>
             <img
+                ref={imgRef}
                 src={src}
                 alt={alt || ""}
                 className={cn(
