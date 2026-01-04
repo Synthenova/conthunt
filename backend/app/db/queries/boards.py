@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.decorators import log_query_timing
 
-from app.services.content_builder import extract_author_from_payload, content_item_from_row
+from app.services.content_builder import content_item_from_row
 
 
 @log_query_timing
@@ -229,7 +229,8 @@ async def get_board_items(
                 bi.board_id, bi.added_at,
                 ci.id, ci.platform, ci.external_id, ci.content_type,
                 ci.canonical_url, ci.title, ci.primary_text, ci.published_at,
-                ci.creator_handle, ci.metrics, ci.payload
+                ci.creator_handle, ci.author_id, ci.author_name, ci.author_url, ci.author_image_url,
+                ci.metrics
             FROM board_items bi
             JOIN content_items ci ON bi.content_item_id = ci.id
             WHERE bi.board_id = :board_id
@@ -248,7 +249,7 @@ async def get_board_items(
     
     assets_result = await conn.execute(
         text("""
-            SELECT content_item_id, id, asset_type, source_url, gcs_uri, status, sha256, mime_type, bytes
+            SELECT content_item_id, id, asset_type, source_url, gcs_uri, status
             FROM media_assets
             WHERE content_item_id = ANY(:ids)
         """),
@@ -266,9 +267,6 @@ async def get_board_items(
             "source_url": a[3],
             "gcs_uri": a[4],
             "status": a[5],
-            "sha256": a[6],
-            "mime_type": a[7],
-            "bytes": a[8],
         })
 
     for row in rows:
@@ -384,7 +382,8 @@ async def search_in_board(
                 bi.board_id, bi.added_at,
                 ci.id, ci.platform, ci.external_id, ci.content_type,
                 ci.canonical_url, ci.title, ci.primary_text, ci.published_at,
-                ci.creator_handle, ci.metrics, ci.payload
+                ci.creator_handle, ci.author_id, ci.author_name, ci.author_url, ci.author_image_url,
+                ci.metrics
             FROM board_items bi
             JOIN content_items ci ON bi.content_item_id = ci.id
             WHERE bi.board_id = :board_id
@@ -404,7 +403,7 @@ async def search_in_board(
     item_ids = [row[2] for row in rows]
     assets_result = await conn.execute(
         text("""
-            SELECT content_item_id, id, asset_type, source_url, gcs_uri, status, sha256, mime_type, bytes
+            SELECT content_item_id, id, asset_type, source_url, gcs_uri, status
             FROM media_assets
             WHERE content_item_id = ANY(:ids)
         """),
@@ -422,9 +421,6 @@ async def search_in_board(
             "source_url": a[3],
             "gcs_uri": a[4],
             "status": a[5],
-            "sha256": a[6],
-            "mime_type": a[7],
-            "bytes": a[8],
         })
 
     items = []

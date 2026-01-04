@@ -75,16 +75,17 @@ def content_item_from_row(row: tuple, offset: int = 0) -> dict:
     
     Expected column order at offset:
         id, platform, external_id, content_type, canonical_url,
-        title, primary_text, published_at, creator_handle, metrics, payload
+        title, primary_text, published_at, creator_handle,
+        author_id, author_name, author_url, author_image_url, metrics
     
     Args:
         row: Database result row (tuple)
         offset: Starting index for content_item columns (default 0)
         
     Returns:
-        Complete content_item dict including extracted author info
+        Complete content_item dict with author info from columns
     """
-    content_item = {
+    return {
         "id": row[offset + 0],
         "platform": row[offset + 1],
         "external_id": row[offset + 2],
@@ -94,14 +95,9 @@ def content_item_from_row(row: tuple, offset: int = 0) -> dict:
         "primary_text": row[offset + 6],
         "published_at": row[offset + 7],
         "creator_handle": row[offset + 8],
-        "metrics": row[offset + 9],
-        "payload": row[offset + 10],
+        "author_id": row[offset + 9],
+        "author_name": row[offset + 10],
+        "author_url": row[offset + 11],
+        "author_image_url": row[offset + 12],
+        "metrics": row[offset + 13],
     }
-    
-    # Extract author info using shared utility
-    payload = content_item["payload"] or {}
-    platform = content_item["platform"]
-    author_info = extract_author_from_payload(platform, payload, content_item["creator_handle"])
-    content_item.update(author_info)
-    
-    return content_item

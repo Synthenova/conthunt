@@ -252,6 +252,10 @@ async def upsert_content_items_batch(
             "primary_text": item.primary_text,
             "published_at": item.published_at.isoformat() if item.published_at else None,
             "creator_handle": item.creator_handle,
+            "author_id": item.author_id,
+            "author_name": item.author_name,
+            "author_url": item.author_url,
+            "author_image_url": item.author_image_url,
             "metrics": json.dumps(item.metrics),
             "payload": json.dumps(item.payload),
         })
@@ -261,6 +265,7 @@ async def upsert_content_items_batch(
             INSERT INTO content_items (
                 id, platform, external_id, content_type, canonical_url,
                 title, primary_text, published_at, creator_handle,
+                author_id, author_name, author_url, author_image_url,
                 metrics, payload
             )
             SELECT 
@@ -268,10 +273,12 @@ async def upsert_content_items_batch(
                 title, primary_text, 
                 CAST(published_at AS TIMESTAMP WITH TIME ZONE), 
                 creator_handle,
+                author_id, author_name, author_url, author_image_url,
                 metrics::jsonb, payload::jsonb
             FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
                 id uuid, platform text, external_id text, content_type text, canonical_url text,
                 title text, primary_text text, published_at text, creator_handle text,
+                author_id text, author_name text, author_url text, author_image_url text,
                 metrics text, payload text
             )
             ON CONFLICT (platform, external_id) DO UPDATE SET
@@ -280,7 +287,11 @@ async def upsert_content_items_batch(
                 title = COALESCE(content_items.title, EXCLUDED.title),
                 primary_text = COALESCE(content_items.primary_text, EXCLUDED.primary_text),
                 canonical_url = COALESCE(content_items.canonical_url, EXCLUDED.canonical_url),
-                published_at = COALESCE(content_items.published_at, EXCLUDED.published_at)
+                published_at = COALESCE(content_items.published_at, EXCLUDED.published_at),
+                author_id = COALESCE(content_items.author_id, EXCLUDED.author_id),
+                author_name = COALESCE(content_items.author_name, EXCLUDED.author_name),
+                author_url = COALESCE(content_items.author_url, EXCLUDED.author_url),
+                author_image_url = COALESCE(content_items.author_image_url, EXCLUDED.author_image_url)
             RETURNING id, platform, external_id, (xmax = 0) AS inserted
         """),
         {"data": json.dumps(prepared_items)}
@@ -518,7 +529,8 @@ async def get_search_results_with_content(
                 sr.rank,
                 ci.id, ci.platform, ci.external_id, ci.content_type,
                 ci.canonical_url, ci.title, ci.primary_text, ci.published_at,
-                ci.creator_handle, ci.metrics, ci.payload
+                ci.creator_handle, ci.author_id, ci.author_name, ci.author_url, ci.author_image_url,
+                ci.metrics
             FROM search_results sr
             JOIN content_items ci ON sr.content_item_id = ci.id
             WHERE sr.search_id = :search_id
@@ -541,7 +553,7 @@ async def get_search_results_with_content(
     # Since we paginate searches typically, this is safe.
     assets_result = await conn.execute(
         text("""
-            SELECT content_item_id, id, asset_type, source_url, gcs_uri, status, sha256, mime_type, bytes
+            SELECT content_item_id, id, asset_type, source_url, gcs_uri, status
             FROM media_assets
             WHERE content_item_id = ANY(:ids)
         """),
@@ -559,9 +571,6 @@ async def get_search_results_with_content(
             "source_url": a[3],
             "gcs_uri": a[4],
             "status": a[5],
-            "sha256": a[6],
-            "mime_type": a[7],
-            "bytes": a[8],
         })
     
     items = []
@@ -754,12 +763,9 @@ async def get_full_search_detail(conn: AsyncConnection, search_id: UUID) -> dict
                     json_agg(json_build_object(
                         'id', ma.id,
                         'asset_type', ma.asset_type,
-                        'status', ma.status,
                         'source_url', ma.source_url,
                         'gcs_uri', ma.gcs_uri,
-                        'sha256', ma.sha256,
-                        'mime_type', ma.mime_type,
-                        'bytes', ma.bytes
+                        'status', ma.status
                     )) as assets
                 FROM search_results sr
                 JOIN media_assets ma ON sr.content_item_id = ma.content_item_id
@@ -781,8 +787,11 @@ async def get_full_search_detail(conn: AsyncConnection, search_id: UUID) -> dict
                             'primary_text', ci.primary_text,
                             'published_at', ci.published_at,
                             'creator_handle', ci.creator_handle,
-                            'metrics', COALESCE(ci.metrics, '{}'::jsonb),
-                            'payload', COALESCE(ci.payload, '{}'::jsonb)
+                            'author_id', ci.author_id,
+                            'author_name', ci.author_name,
+                            'author_url', ci.author_url,
+                            'author_image_url', ci.author_image_url,
+                            'metrics', COALESCE(ci.metrics, '{}'::jsonb)
                         ),
                         'assets', COALESCE(aa.assets, '[]'::json)
                     ) ORDER BY sr.rank) as results

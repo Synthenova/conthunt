@@ -17,7 +17,6 @@ from app.schemas import (
     AssetDetail,
 )
 from app.services.cdn_signer import generate_signed_url
-from app.services.content_builder import extract_author_from_payload
 from app.platforms.registry import normalize_platform_slug
 
 
@@ -126,20 +125,10 @@ async def get_search_detail(
             assets.append(AssetDetail(
                 id=a["id"],
                 asset_type=a["asset_type"],
-                status=a["status"],
                 source_url=source_url,
-                gcs_uri=a["gcs_uri"],
-                sha256=a["sha256"],
-                mime_type=a["mime_type"],
-                bytes=a["bytes"],
             ))
             
         ci = r["content_item"]
-        payload = ci.get("payload") or {}
-        platform = ci["platform"]
-        
-        # Extract author info from payload using shared utility
-        author_info = extract_author_from_payload(platform, payload, ci.get("creator_handle"))
         
         response_results.append(SearchResultDetail(
             rank=r["rank"],
@@ -153,12 +142,11 @@ async def get_search_detail(
                 primary_text=ci["primary_text"],
                 published_at=ci["published_at"],
                 creator_handle=ci["creator_handle"],
-                author_id=author_info["author_id"],
-                author_name=author_info["author_name"],
-                author_url=author_info["author_url"],
-                author_image_url=author_info["author_image_url"],
+                author_id=ci.get("author_id"),
+                author_name=ci.get("author_name"),
+                author_url=ci.get("author_url"),
+                author_image_url=ci.get("author_image_url"),
                 metrics=ci["metrics"] or {},
-                payload=ci["payload"] or {},
             ),
             assets=assets
         ))

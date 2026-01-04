@@ -36,12 +36,7 @@ class AssetDetail(BaseModel):
     """Asset detail in search results."""
     id: UUID
     asset_type: str
-    status: str
     source_url: Optional[str] = None
-    gcs_uri: Optional[str] = None
-    sha256: Optional[str] = None
-    mime_type: Optional[str] = None
-    bytes: Optional[int] = None
 
 
 class ContentItemDetail(BaseModel):
@@ -60,7 +55,6 @@ class ContentItemDetail(BaseModel):
     author_url: Optional[str] = None
     author_image_url: Optional[str] = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
-    payload: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchResultDetail(BaseModel):
