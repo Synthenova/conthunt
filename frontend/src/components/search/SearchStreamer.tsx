@@ -11,12 +11,12 @@ interface SearchStreamerProps {
     onCursorsChange?: (searchId: string, cursors: Record<string, any>, hasMore: boolean) => void;
 }
 
-export function SearchStreamer({ 
-    searchId, 
-    onResults, 
-    onStreamingChange, 
+export function SearchStreamer({
+    searchId,
+    onResults,
+    onStreamingChange,
     onLoadingChange,
-    onCursorsChange 
+    onCursorsChange
 }: SearchStreamerProps) {
     const { results, cursors, hasMore, isStreaming, isLoading } = useSearchStream(searchId);
 
@@ -37,7 +37,6 @@ export function SearchStreamer({
     }, [isLoading, searchId, onLoadingChange]);
 
     useEffect(() => {
-        console.log("[SearchStreamer] cursors changed:", searchId, cursors, "hasMore:", hasMore);
         if (!onCursorsChange) return;
         onCursorsChange(searchId, cursors, hasMore);
     }, [cursors, hasMore, searchId, onCursorsChange]);
