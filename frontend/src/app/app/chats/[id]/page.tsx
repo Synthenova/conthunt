@@ -228,12 +228,12 @@ export default function ChatPage() {
     useEffect(() => {
         if (allSearchIds.length > 0) {
             const latestId = allSearchIds[0];
-            setActiveSearchId(prev => {
-                if (!prev || !allSearchIds.includes(prev)) return latestId;
-                return prev;
-            });
+            const nextActive = !activeSearchId || !allSearchIds.includes(activeSearchId)
+                ? latestId
+                : activeSearchId;
+            setActiveSearchId(nextActive);
         }
-    }, [allSearchIds]);
+    }, [allSearchIds, activeSearchId, setActiveSearchId]);
 
     // Better Auto-switch logic using ref
     const prevSearchCountRef = useRef(0);
