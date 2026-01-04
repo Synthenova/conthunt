@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useChatStore, ChatMessage } from "@/lib/chatStore";
 import { useChatMessages, useSendMessage, useRenameChat } from "@/hooks/useChat";
 import { useBoards } from "@/hooks/useBoards";
@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { motion, Reorder } from "framer-motion";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { FolderOpen, Search, Loader2, Pencil, Check, X } from "lucide-react";
 import { FlatMediaItem, transformToMediaItem } from "@/lib/transformers";
@@ -27,7 +27,9 @@ import { transformSearchResults } from "@/lib/transformers";
 
 export default function ChatPage() {
     const params = useParams();
+    const searchParams = useSearchParams();
     const chatId = params.id as string;
+    const searchIdFromUrl = searchParams.get('search');
 
     const { setActiveChatId, messages, openSidebar, canvasSearchIds, chats } = useChatStore();
     const { isLoading: isLoadingMessages } = useChatMessages(chatId);
@@ -36,7 +38,51 @@ export default function ChatPage() {
     const abortControllerRef = useRef<AbortController | null>(null);
     const searchIconRef = useRef<SearchIconHandle>(null);
     const editTitleRef = useRef<HTMLInputElement | null>(null);
+    const tabsScrollRef = useRef<HTMLDivElement>(null);
     const renameChat = useRenameChat();
+
+    // Drag-to-scroll for tabs
+    const isDraggingTabs = useRef(false);
+    const wasDragged = useRef(false);
+    const dragStartX = useRef(0);
+    const scrollStartX = useRef(0);
+
+    const handleTabsMouseDown = useCallback((e: React.MouseEvent) => {
+        const el = tabsScrollRef.current;
+        if (!el) return;
+        isDraggingTabs.current = true;
+        wasDragged.current = false;
+        dragStartX.current = e.clientX;
+        scrollStartX.current = el.scrollLeft;
+        el.style.cursor = 'grabbing';
+        el.style.userSelect = 'none';
+    }, []);
+
+    const handleTabsMouseMove = useCallback((e: React.MouseEvent) => {
+        if (!isDraggingTabs.current) return;
+        const el = tabsScrollRef.current;
+        if (!el) return;
+        const dx = e.clientX - dragStartX.current;
+        if (Math.abs(dx) > 3) {
+            wasDragged.current = true;
+        }
+        el.scrollLeft = scrollStartX.current - dx;
+    }, []);
+
+    const handleTabsMouseUp = useCallback(() => {
+        isDraggingTabs.current = false;
+        const el = tabsScrollRef.current;
+        if (el) {
+            el.style.cursor = 'grab';
+            el.style.userSelect = '';
+        }
+    }, []);
+
+    const handleTabsMouseLeave = useCallback(() => {
+        if (isDraggingTabs.current) {
+            handleTabsMouseUp();
+        }
+    }, [handleTabsMouseUp]);
 
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editingTitle, setEditingTitle] = useState('');
@@ -69,6 +115,13 @@ export default function ChatPage() {
         openSidebar();
     }, [chatId, setActiveChatId, openSidebar]);
 
+    // Auto-select search tab when navigating from search chip
+    useEffect(() => {
+        if (searchIdFromUrl && searchTabs.some(tab => tab.id === searchIdFromUrl)) {
+            setActiveSearchId(searchIdFromUrl);
+        }
+    }, [searchIdFromUrl, searchTabs]);
+
     useEffect(() => {
         if (isEditingTitle) {
             editTitleRef.current?.focus();
@@ -97,7 +150,7 @@ export default function ChatPage() {
         }
     };
 
-    const { tagsQuery, reorder: reorderTags } = useChatTags(chatId);
+    const { tagsQuery, deleteTag } = useChatTags(chatId);
 
     // derive searches from chat tags (search only)
     const searchTags = useMemo(() => {
@@ -248,7 +301,7 @@ export default function ChatPage() {
 
     const handleLoadMore = useCallback(() => {
         if (!activeSearchId) return;
-        
+
         loadMore(
             // onNewResults - append new items
             (newItems) => {
@@ -483,46 +536,69 @@ export default function ChatPage() {
                                         <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
                                             {/* Keyword Tabs (Scrollable) */}
                                             <div className="flex-1 min-w-0 flex justify-start">
-                                                <Reorder.Group
-                                                    axis="x"
-                                                    values={displaySearches}
-                                                    onReorder={(next) => {
-                                                        setSearchTabs(next);
-                                                        const orders = next.map((tab, idx) => ({
-                                                            id: tab.id,
-                                                            sort_order: idx,
-                                                        }));
-                                                        reorderTags.mutate(orders);
-                                                    }}
-                                                    className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto"
+                                                <div
+                                                    ref={tabsScrollRef}
+                                                    className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto scrollbar-hide cursor-grab"
+                                                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                                                    onMouseDown={handleTabsMouseDown}
+                                                    onMouseMove={handleTabsMouseMove}
+                                                    onMouseUp={handleTabsMouseUp}
+                                                    onMouseLeave={handleTabsMouseLeave}
                                                 >
                                                     {displaySearches.map((search) => (
-                                                        <Reorder.Item
+                                                        <button
                                                             key={search.id}
-                                                            value={search}
-                                                            className="flex"
+                                                            type="button"
+                                                            onClick={() => {
+                                                                if (wasDragged.current) return;
+                                                                setActiveSearchId(search.id);
+                                                            }}
+                                                            className={cn(
+                                                                "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0 group/tab",
+                                                                activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
+                                                            )}
                                                         >
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setActiveSearchId(search.id)}
+                                                            {activeSearchId === search.id && (
+                                                                <div className="absolute inset-0 rounded-lg glass-pill" />
+                                                            )}
+                                                            <span className="relative z-10 flex items-center gap-2">
+                                                                {search.label}
+                                                                {streamingSearchIds[search.id] && (
+                                                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                                                )}
+                                                            </span>
+                                                            {/* X on hover */}
+                                                            <span
+                                                                role="button"
+                                                                tabIndex={0}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    deleteTag.mutate(search.id);
+                                                                    if (activeSearchId === search.id) {
+                                                                        const remaining = displaySearches.filter(s => s.id !== search.id);
+                                                                        setActiveSearchId(remaining[0]?.id || null);
+                                                                    }
+                                                                }}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                                        e.stopPropagation();
+                                                                        deleteTag.mutate(search.id);
+                                                                    }
+                                                                }}
                                                                 className={cn(
-                                                                    "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0 cursor-grab active:cursor-grabbing",
-                                                                    activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
+                                                                    "absolute right-2 z-20 flex items-center justify-center cursor-pointer transition-opacity",
+                                                                    "opacity-0 group-hover/tab:opacity-100",
+                                                                    activeSearchId === search.id 
+                                                                        ? "text-white/70 hover:text-white" 
+                                                                        : "text-gray-400 hover:text-white"
                                                                 )}
+                                                                aria-label={`Remove ${search.label}`}
                                                             >
-                                                                {activeSearchId === search.id && (
-                                                                    <div className="absolute inset-0 rounded-lg glass-pill" />
-                                                                )}
-                                                                <span className="relative z-10 mix-blend-normal flex items-center gap-2">
-                                                                    {search.label}
-                                                                    {streamingSearchIds[search.id] && (
-                                                                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                                                                    )}
-                                                                </span>
-                                                            </button>
-                                                        </Reorder.Item>
+                                                                <X size={12} />
+                                                            </span>
+                                                        </button>
                                                     ))}
-                                                </Reorder.Group>
+                                                </div>
                                             </div>
 
                                             {/* Filters */}

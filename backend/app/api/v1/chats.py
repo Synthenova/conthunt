@@ -470,6 +470,33 @@ async def update_tag_order(
     return {"ok": True}
 
 
+@router.delete("/{chat_id}/tags/{tag_id}")
+async def delete_chat_tag(
+    chat_id: uuid.UUID,
+    tag_id: uuid.UUID,
+    user: dict = Depends(get_current_user),
+):
+    """Soft delete a tag from a chat."""
+    user_id = user.get("uid")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    async with get_db_connection() as conn:
+        user_uuid = await get_cached_user_uuid(conn, user_id)
+        await set_rls_user(conn, user_uuid)
+
+        exists = await queries.check_chat_exists(conn, chat_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
+        deleted = await queries.soft_delete_chat_tag(conn, chat_id, tag_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Tag not found")
+        await conn.commit()
+
+    return {"ok": True}
+
+
 @router.post("/{chat_id}/send")
 async def send_message(
     chat_id: uuid.UUID,

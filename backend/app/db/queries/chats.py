@@ -210,12 +210,12 @@ async def get_chat_tags(
     conn: AsyncConnection,
     chat_id: UUID,
 ) -> List[dict]:
-    """Fetch tags for a chat."""
+    """Fetch tags for a chat (excludes soft-deleted)."""
     rows = await conn.execute(
         text("""
             SELECT id, tag_type, tag_id, tag_label, source, created_at, sort_order
             FROM conthunt.chat_tags
-            WHERE chat_id = :chat_id
+            WHERE chat_id = :chat_id AND deleted_at IS NULL
             ORDER BY sort_order ASC NULLS LAST, created_at DESC
         """),
         {"chat_id": chat_id}
@@ -260,3 +260,21 @@ async def update_chat_tag_orders(
         """),
         {"data": json.dumps(prepared)}
     )
+
+
+@log_query_timing
+async def soft_delete_chat_tag(
+    conn: AsyncConnection,
+    chat_id: UUID,
+    tag_id: UUID,
+) -> bool:
+    """Soft delete a tag from a chat. Returns True if a row was updated."""
+    result = await conn.execute(
+        text("""
+            UPDATE conthunt.chat_tags
+            SET deleted_at = NOW()
+            WHERE chat_id = :chat_id AND tag_id = :tag_id AND deleted_at IS NULL
+        """),
+        {"chat_id": chat_id, "tag_id": tag_id}
+    )
+    return result.rowcount > 0

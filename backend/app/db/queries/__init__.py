@@ -80,6 +80,7 @@ from app.db.queries.content import (
     get_content_item_by_id,
     get_video_media_asset_for_content_item,
     get_media_asset_by_id,
+    get_media_asset_with_content,
 )
 
 # User queries
@@ -101,6 +102,7 @@ from app.db.queries.chats import (
     upsert_chat_tags,
     get_chat_tags,
     update_chat_tag_orders,
+    soft_delete_chat_tag,
 )
 
 __all__ = [
@@ -153,6 +155,7 @@ __all__ = [
     # Content
     "get_content_item_by_id",
     "get_video_media_asset_for_content_item",
+    "get_media_asset_with_content",
     # Users
     "get_user_role",
     "update_user_role",
@@ -167,4 +170,5 @@ __all__ = [
     "upsert_chat_tags",
     "get_chat_tags",
     "update_chat_tag_orders",
+    "soft_delete_chat_tag",
 ]

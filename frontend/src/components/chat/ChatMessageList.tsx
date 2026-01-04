@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo } from 'react';
+import { useMemo, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useChatStore, type ToolCallInfo, type ChatMessage } from '@/lib/chatStore';
 import { useChatMessages } from '@/hooks/useChat';
+import { useMediaView, type MediaViewData } from '@/hooks/useMediaView';
 import {
     ChatContainerRoot,
     ChatContainerContent,
@@ -16,6 +18,8 @@ import {
 } from '@/components/ui/collapsible';
 import { Loader } from '@/components/ui/loader';
 import { ChatLoader } from './ChatLoader';
+import { ImageLightbox } from '@/components/ui/image-lightbox';
+import { ContentDrawer } from '@/components/twelvelabs/ContentDrawer';
 import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus } from 'lucide-react';
 
 type MessageSegment = { type: 'text' | 'chip'; value: string };
@@ -265,6 +269,61 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
 
     const { isLoading, isFetching } = useChatMessages(activeChatId);
 
+    const router = useRouter();
+    const { fetchMediaView, isLoading: isLoadingMedia } = useMediaView();
+
+    // State for interactive chips
+    const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+    const [drawerItem, setDrawerItem] = useState<any | null>(null);
+
+    // Handle chip clicks based on type
+    const handleChipClick = useCallback(async (chipValue: string) => {
+        // Parse the chip JSON
+        let chipData: any;
+        try {
+            chipData = JSON.parse(chipValue);
+        } catch {
+            return; // Not a valid JSON chip
+        }
+
+        const { type, id } = chipData;
+
+        if (type === 'board' && id) {
+            router.push(`/app/boards/${id}`);
+        } else if (type === 'search' && id && activeChatId) {
+            router.push(`/app/chats/${activeChatId}?search=${id}`);
+        } else if (type === 'image') {
+            // For image chips, we need to find the URL from the message content
+            // The URL is stored in the attachment, not in the chip itself
+            // This will be handled separately via image attachments
+        } else if (type === 'media' && id) {
+            // Fetch fresh signed URL and metadata
+            const data = await fetchMediaView(id);
+            if (data) {
+                // Transform to match ContentDrawer's expected item format
+                setDrawerItem({
+                    id: data.id,
+                    platform: data.platform || 'unknown',
+                    title: data.title || 'Media',
+                    thumbnail_url: data.thumbnail_url,
+                    video_url: data.url,
+                    view_count: data.view_count,
+                    like_count: data.like_count,
+                    comment_count: data.comment_count,
+                    share_count: data.share_count,
+                    published_at: data.published_at,
+                    creator: data.creator,
+                    url: data.canonical_url,
+                });
+            }
+        }
+    }, [router, activeChatId, fetchMediaView]);
+
+    // Handle image attachment click (opens lightbox)
+    const handleImageClick = useCallback((url: string) => {
+        setLightboxUrl(url);
+    }, []);
+
     // Linear grouping of messages
     const renderedItems = useMemo(() => {
         const items: Array<{ type: 'message' | 'thinking'; msg?: ChatMessage; tools?: ToolCallInfo[]; id: string }> = [];
@@ -365,181 +424,202 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
 
 
     return (
-        <ChatContainerRoot className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-4 py-4">
-            <ChatContainerContent className="gap-4">
-                {renderedItems.map((item) => {
-                    if (item.type === 'thinking' && item.tools) {
-                        const tools = item.tools;
-                        const hasActiveTools = tools.some(t => !t.hasResult);
+        <>
+            <ChatContainerRoot className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-4 py-4">
+                <ChatContainerContent className="gap-4">
+                    {renderedItems.map((item) => {
+                        if (item.type === 'thinking' && item.tools) {
+                            const tools = item.tools;
+                            const hasActiveTools = tools.some(t => !t.hasResult);
 
-                        return (
-                            <Message key={item.id} className="justify-start">
-                                <div className="w-full max-w-[95%] mb-2">
-                                    <Collapsible defaultOpen={hasActiveTools}>
-                                        <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
-                                            <span>Thinking</span>
-                                            <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
-                                        </CollapsibleTrigger>
-                                        <CollapsibleContent className="mt-2">
-                                            <ToolList tools={tools} />
-                                        </CollapsibleContent>
-                                    </Collapsible>
-                                </div>
-                            </Message>
-                        );
-                    }
+                            return (
+                                <Message key={item.id} className="justify-start">
+                                    <div className="w-full max-w-[95%] mb-2">
+                                        <Collapsible defaultOpen={hasActiveTools}>
+                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
+                                                <span>Thinking</span>
+                                                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
+                                            </CollapsibleTrigger>
+                                            <CollapsibleContent className="mt-2">
+                                                <ToolList tools={tools} />
+                                            </CollapsibleContent>
+                                        </Collapsible>
+                                    </div>
+                                </Message>
+                            );
+                        }
 
-                    if (item.type === 'message' && item.msg) {
-                        const msg = item.msg;
-                        // Empty AI message skip
-                        if (msg.type === 'ai' && typeof msg.content === 'string' && !msg.content.trim()) return null;
+                        if (item.type === 'message' && item.msg) {
+                            const msg = item.msg;
+                            // Empty AI message skip
+                            if (msg.type === 'ai' && typeof msg.content === 'string' && !msg.content.trim()) return null;
 
-                        return (
-                            <Message key={item.id} className={msg.type === 'human' ? 'justify-end' : 'justify-start'}>
-                                <MessageContent
-                                    markdown={msg.type === 'ai'}
-                                    className={
-                                        msg.type === 'human'
-                                            ? 'glass max-w-[85%] text-foreground whitespace-pre-wrap shadow-lg border-primary/20 bg-primary/10'
-                                            : 'bg-transparent max-w-[95%] text-foreground p-0'
-                                    }
-                                >
-                                    {msg.type === 'human' ? (
-                                        (() => {
-                                            const segments = parseMessageSegments(buildHumanContent(msg.content));
-                                            const groups: { type: 'text' | 'chip-group'; value?: string; items?: string[] }[] = [];
+                            return (
+                                <Message key={item.id} className={msg.type === 'human' ? 'justify-end' : 'justify-start'}>
+                                    <MessageContent
+                                        markdown={msg.type === 'ai'}
+                                        className={
+                                            msg.type === 'human'
+                                                ? 'glass max-w-[85%] text-foreground whitespace-pre-wrap shadow-lg border-primary/20 bg-primary/10'
+                                                : 'bg-transparent max-w-[95%] text-foreground p-0'
+                                        }
+                                    >
+                                        {msg.type === 'human' ? (
+                                            (() => {
+                                                const segments = parseMessageSegments(buildHumanContent(msg.content));
+                                                const groups: { type: 'text' | 'chip-group'; value?: string; items?: string[] }[] = [];
 
-                                            let currentGroup: string[] = [];
+                                                let currentGroup: string[] = [];
 
-                                            segments.forEach((seg) => {
-                                                if (seg.type === 'chip') {
-                                                    currentGroup.push(seg.value);
-                                                } else {
-                                                    if (currentGroup.length > 0) {
-                                                        groups.push({ type: 'chip-group', items: [...currentGroup] });
-                                                        currentGroup = [];
+                                                segments.forEach((seg) => {
+                                                    if (seg.type === 'chip') {
+                                                        currentGroup.push(seg.value);
+                                                    } else {
+                                                        if (currentGroup.length > 0) {
+                                                            groups.push({ type: 'chip-group', items: [...currentGroup] });
+                                                            currentGroup = [];
+                                                        }
+                                                        groups.push({ type: 'text', value: seg.value });
                                                     }
-                                                    groups.push({ type: 'text', value: seg.value });
+                                                });
+
+                                                if (currentGroup.length > 0) {
+                                                    groups.push({ type: 'chip-group', items: [...currentGroup] });
                                                 }
-                                            });
 
-                                            if (currentGroup.length > 0) {
-                                                groups.push({ type: 'chip-group', items: [...currentGroup] });
-                                            }
+                                                const imageAttachments = extractImageAttachments(msg.content);
+                                                if (imageAttachments.length && !groups.some((g) => g.type === 'chip-group')) {
+                                                    groups.unshift({ type: 'chip-group', items: [] });
+                                                }
 
-                                            const imageAttachments = extractImageAttachments(msg.content);
-                                            if (imageAttachments.length && !groups.some((g) => g.type === 'chip-group')) {
-                                                groups.unshift({ type: 'chip-group', items: [] });
-                                            }
-
-                                            let attachmentsInserted = false;
-                                            return groups.map((group, groupIndex) => {
-                                                if (group.type === 'chip-group' && group.items) {
-                                                    const attachmentItems = !attachmentsInserted ? imageAttachments : [];
-                                                    attachmentsInserted = attachmentsInserted || attachmentItems.length > 0;
-                                                    return (
-                                                        <div
-                                                            key={`${msg.id}-group-${groupIndex}`}
-                                                            className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 max-w-full align-bottom mb-1"
-                                                        >
-                                                            {group.items.map((chipValue, chipIndex) => {
-                                                                const chipMeta = parseChipLabel(chipValue);
-                                                                if (chipMeta.icon === "image") {
-                                                                    return null;
-                                                                }
-                                                                return (
-                                                                    <span
-                                                                        key={`${msg.id}-chip-${groupIndex}-${chipIndex}`}
-                                                                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10"
+                                                let attachmentsInserted = false;
+                                                return groups.map((group, groupIndex) => {
+                                                    if (group.type === 'chip-group' && group.items) {
+                                                        const attachmentItems = !attachmentsInserted ? imageAttachments : [];
+                                                        attachmentsInserted = attachmentsInserted || attachmentItems.length > 0;
+                                                        return (
+                                                            <div
+                                                                key={`${msg.id}-group-${groupIndex}`}
+                                                                className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 max-w-full align-bottom mb-1"
+                                                            >
+                                                                {group.items.map((chipValue, chipIndex) => {
+                                                                    const chipMeta = parseChipLabel(chipValue);
+                                                                    if (chipMeta.icon === "image") {
+                                                                        return null;
+                                                                    }
+                                                                    return (
+                                                                        <button
+                                                                            type="button"
+                                                                            key={`${msg.id}-chip-${groupIndex}-${chipIndex}`}
+                                                                            onClick={() => handleChipClick(chipValue)}
+                                                                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
+                                                                        >
+                                                                            {chipMeta.icon === "board" && (
+                                                                                <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                            )}
+                                                                            {chipMeta.icon === "search" && (
+                                                                                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                            )}
+                                                                            {chipMeta.icon === "image" && (
+                                                                                <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                            )}
+                                                                            {chipMeta.Icon && (
+                                                                                <chipMeta.Icon className="text-[12px]" />
+                                                                            )}
+                                                                            <span className="truncate" title={chipMeta.text}>
+                                                                                {truncateLabel(chipMeta.text)}
+                                                                            </span>
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                                {attachmentItems.map((attachment, attachmentIndex) => (
+                                                                    <button
+                                                                        type="button"
+                                                                        key={`${msg.id}-image-${groupIndex}-${attachmentIndex}`}
+                                                                        onClick={() => attachment.url && handleImageClick(attachment.url)}
+                                                                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
                                                                     >
-                                                                        {chipMeta.icon === "board" && (
-                                                                            <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                        )}
-                                                                        {chipMeta.icon === "search" && (
-                                                                            <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                        )}
-                                                                        {chipMeta.icon === "image" && (
-                                                                            <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                        )}
-                                                                        {chipMeta.Icon && (
-                                                                            <chipMeta.Icon className="text-[12px]" />
-                                                                        )}
-                                                                        <span className="truncate" title={chipMeta.text}>
-                                                                            {truncateLabel(chipMeta.text)}
+                                                                        <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                        <span className="truncate" title={attachment.label}>
+                                                                            {truncateLabel(attachment.label)}
                                                                         </span>
-                                                                        </span>
-                                                                );
-                                                            })}
-                                                            {attachmentItems.map((attachment, attachmentIndex) => (
-                                                                <span
-                                                                    key={`${msg.id}-image-${groupIndex}-${attachmentIndex}`}
-                                                                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10"
-                                                                >
-                                                                    <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                    <span className="truncate" title={attachment.label}>
-                                                                        {truncateLabel(attachment.label)}
-                                                                    </span>
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    );
-                                                } else {
-                                                    return (
-                                                        <span key={`${msg.id}-text-${groupIndex}`} className="block">
-                                                            {group.value}
-                                                        </span>
-                                                    );
-                                                }
-                                            });
-                                        })()
-                                    ) : (
-                                        extractPlainText(msg.content)
-                                    )}
-                                </MessageContent>
-                            </Message>
-                        );
-                    }
-                    return null;
-                })}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        );
+                                                    } else {
+                                                        return (
+                                                            <span key={`${msg.id}-text-${groupIndex}`} className="block">
+                                                                {group.value}
+                                                            </span>
+                                                        );
+                                                    }
+                                                });
+                                            })()
+                                        ) : (
+                                            extractPlainText(msg.content)
+                                        )}
+                                    </MessageContent>
+                                </Message>
+                            );
+                        }
+                        return null;
+                    })}
 
-                {/* Streaming Tools */}
-                {isStreaming && streamingTools && streamingTools.length > 0 && (
-                    <Message key="streaming-tools" className="justify-start">
-                        <div className="w-full max-w-[95%] mb-2">
-                            <Collapsible defaultOpen={true}>
-                                <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
-                                    <span>Thinking</span>
-                                    <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
-                                </CollapsibleTrigger>
-                                <CollapsibleContent className="mt-2">
-                                    <ToolList tools={streamingTools} />
-                                </CollapsibleContent>
-                            </Collapsible>
-                        </div>
-                    </Message>
-                )}
+                    {/* Streaming Tools */}
+                    {isStreaming && streamingTools && streamingTools.length > 0 && (
+                        <Message key="streaming-tools" className="justify-start">
+                            <div className="w-full max-w-[95%] mb-2">
+                                <Collapsible defaultOpen={true}>
+                                    <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
+                                        <span>Thinking</span>
+                                        <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
+                                    </CollapsibleTrigger>
+                                    <CollapsibleContent className="mt-2">
+                                        <ToolList tools={streamingTools} />
+                                    </CollapsibleContent>
+                                </Collapsible>
+                            </div>
+                        </Message>
+                    )}
 
-                {/* Streaming AI message */}
-                {isStreaming && streamingContent && (
-                    <Message className="justify-start">
-                        <MessageContent
-                            markdown={true}
-                            className="bg-transparent max-w-[95%] text-foreground p-0"
-                        >
-                            {streamingContent}
-                        </MessageContent>
-                    </Message>
-                )}
-                {isStreaming && !streamingContent && (
-                    <Message className="justify-start">
-                        <div className="text-foreground p-2">
-                            <Loader variant="typing" size="sm" className="text-muted-foreground" />
-                        </div>
-                    </Message>
-                )}
+                    {/* Streaming AI message */}
+                    {isStreaming && streamingContent && (
+                        <Message className="justify-start">
+                            <MessageContent
+                                markdown={true}
+                                className="bg-transparent max-w-[95%] text-foreground p-0"
+                            >
+                                {streamingContent}
+                            </MessageContent>
+                        </Message>
+                    )}
+                    {isStreaming && !streamingContent && (
+                        <Message className="justify-start">
+                            <div className="text-foreground p-2">
+                                <Loader variant="typing" size="sm" className="text-muted-foreground" />
+                            </div>
+                        </Message>
+                    )}
 
-                <ChatContainerScrollAnchor />
-            </ChatContainerContent>
-        </ChatContainerRoot>
+                    <ChatContainerScrollAnchor />
+                </ChatContainerContent>
+            </ChatContainerRoot>
+
+            {/* Image Lightbox */}
+            <ImageLightbox
+                isOpen={!!lightboxUrl}
+                onClose={() => setLightboxUrl(null)}
+                imageUrl={lightboxUrl}
+            />
+
+            {/* Media Content Drawer */}
+            <ContentDrawer
+                isOpen={!!drawerItem}
+                onClose={() => setDrawerItem(null)}
+                item={drawerItem}
+                analysisDisabled={false}
+            />
+        </>
     );
 }

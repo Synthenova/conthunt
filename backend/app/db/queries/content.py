@@ -6,7 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.decorators import log_query_timing
-
+from app.core.logging import logger
 from app.services.cdn_signer import generate_signed_url
 
 
@@ -149,4 +149,83 @@ async def get_media_asset_by_id(
         "content_item_id": row[5],
         "video_url": video_url,
     }
+
+
+@log_query_timing
+async def get_media_asset_with_content(
+    conn: AsyncConnection,
+    media_asset_id: UUID,
+) -> dict | None:
+    """
+    Get a media asset by ID with full content item metadata.
+    Used for the /view endpoint to populate ContentDrawer.
+    """
+    print(f"[get_media_asset_with_content] Querying for media_asset_id={media_asset_id}")
+    result = await conn.execute(
+        text("""
+            SELECT 
+                ma.id,
+                ma.asset_type,
+                ma.gcs_uri,
+                ma.source_url,
+                ma.status,
+                ci.title,
+                ci.platform,
+                ci.creator_handle,
+                ci.canonical_url,
+                ci.published_at,
+                ci.metrics,
+                cover.source_url as cover_url,
+                cover.gcs_uri as cover_gcs_uri
+            FROM media_assets ma
+            JOIN content_items ci ON ma.content_item_id = ci.id
+            LEFT JOIN media_assets cover 
+                ON cover.content_item_id = ci.id 
+                AND cover.asset_type IN ('cover', 'thumbnail', 'image')
+                AND cover.id != ma.id
+            WHERE ma.id = :media_asset_id
+            LIMIT 1
+        """),
+        {"media_asset_id": media_asset_id}
+    )
+    row = result.fetchone()
+    logger.info(f"[get_media_asset_with_content] Row result: {row}")
+    if not row:
+        return None
+    
+    # Generate signed URLs
+    video_url = None
+    if row[2]:  # gcs_uri
+        video_url = generate_signed_url(row[2])
+    else:
+        video_url = row[3]  # source_url
+    
+    thumbnail_url = None
+    if row[12]:  # cover_gcs_uri
+        thumbnail_url = generate_signed_url(row[12])
+    elif row[11]:  # cover_url
+        thumbnail_url = row[11]
+    
+    # Parse metrics
+    metrics = row[10] or {}
+    
+    return {
+        "id": str(row[0]),
+        "asset_type": row[1],
+        "url": video_url,
+        "gcs_uri": row[2],
+        "source_url": row[3],
+        "status": row[4],
+        "title": row[5],
+        "platform": row[6],
+        "creator": row[7],
+        "canonical_url": row[8],
+        "published_at": row[9].isoformat() if row[9] else None,
+        "thumbnail_url": thumbnail_url,
+        "view_count": int(metrics.get("views", 0) or metrics.get("play_count", 0) or 0),
+        "like_count": int(metrics.get("likes", 0) or metrics.get("digg_count", 0) or 0),
+        "comment_count": int(metrics.get("comments", 0) or 0),
+        "share_count": int(metrics.get("shares", 0) or 0),
+    }
+
 

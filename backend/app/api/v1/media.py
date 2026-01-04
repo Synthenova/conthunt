@@ -15,7 +15,7 @@ from app.schemas import SignedUrlResponse
 router = APIRouter()
 
 
-@router.get("/media/{asset_id}/signed-url", response_model=SignedUrlResponse)
+@router.get("/{asset_id}/signed-url", response_model=SignedUrlResponse)
 async def get_signed_url(
     asset_id: UUID,
     user: dict = Depends(get_current_user),
@@ -66,7 +66,64 @@ async def get_signed_url(
         raise HTTPException(status_code=500, detail="Failed to generate signed URL")
 
 
-@router.get("/media/{asset_id}/content")
+from app.schemas import MediaViewResponse
+
+
+@router.get("/{asset_id}/view", response_model=MediaViewResponse)
+async def get_media_view(
+    asset_id: UUID,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Get full media asset metadata with signed URL for ContentDrawer/Lightbox.
+    Returns all data needed to display the media in a viewer.
+    """
+    print("DEIIIII")
+    firebase_uid = user.get("uid")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+    
+    logger.info(f"[MEDIA_VIEW] Starting request for asset_id={asset_id}")
+    
+    async with get_db_connection() as conn:
+        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
+        logger.info(f"[MEDIA_VIEW] User UUID: {user_uuid}")
+        
+        await set_rls_user(conn, user_uuid)
+        logger.info(f"[MEDIA_VIEW] RLS user set, fetching asset...")
+        
+        # Get full metadata (query includes RLS join through searches)
+        asset = await queries.get_media_asset_with_content(conn, asset_id)
+        logger.info(f"[MEDIA_VIEW] Query result: {asset}")
+    
+    if not asset:
+        logger.warning(f"[MEDIA_VIEW] Asset not found for asset_id={asset_id}")
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    if not asset.get("url"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Asset not available. Status: {asset.get('status')}"
+        )
+    
+    return MediaViewResponse(
+        id=asset["id"],
+        asset_type=asset["asset_type"],
+        url=asset["url"],
+        title=asset.get("title"),
+        platform=asset.get("platform"),
+        creator=asset.get("creator"),
+        thumbnail_url=asset.get("thumbnail_url"),
+        view_count=asset.get("view_count", 0),
+        like_count=asset.get("like_count", 0),
+        comment_count=asset.get("comment_count", 0),
+        share_count=asset.get("share_count", 0),
+        published_at=asset.get("published_at"),
+        canonical_url=asset.get("canonical_url"),
+    )
+
+
+@router.get("/{asset_id}/content")
 async def get_media_content(
     asset_id: UUID,
     user: dict = Depends(get_current_user),

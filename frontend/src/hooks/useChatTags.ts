@@ -84,5 +84,29 @@ export function useChatTags(chatId: string | null) {
         },
     });
 
-    return { tagsQuery, reorder };
+    const deleteTag = useMutation({
+        mutationFn: async (tagId: string) => {
+            if (!chatId) throw new Error('No chat id');
+            return fetchWithAuth(`${BACKEND_URL}/v1/chats/${chatId}/tags/${tagId}`, {
+                method: 'DELETE',
+            });
+        },
+        onMutate: async (tagId) => {
+            await queryClient.cancelQueries({ queryKey: ['chat-tags', chatId] });
+            const prev = queryClient.getQueryData<ChatTag[]>(['chat-tags', chatId]) || [];
+            const optimistic = prev.filter((t) => t.id !== tagId);
+            queryClient.setQueryData(['chat-tags', chatId], optimistic);
+            return { prev };
+        },
+        onError: (_err, _vars, ctx) => {
+            if (ctx?.prev) {
+                queryClient.setQueryData(['chat-tags', chatId], ctx.prev);
+            }
+        },
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ['chat-tags', chatId] });
+        },
+    });
+
+    return { tagsQuery, reorder, deleteTag };
 }
