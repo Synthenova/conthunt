@@ -48,10 +48,10 @@ const SidebarLogo = () => (
         <Image
             src="/images/logo-title-white.png"
             alt="Conthunt"
-            width={80}
-            height={22}
+            width={120}
+            height={33}
             priority
-            className="w-20 h-auto object-contain"
+            className="w-32 h-auto object-contain"
         />
     </div>
 );
