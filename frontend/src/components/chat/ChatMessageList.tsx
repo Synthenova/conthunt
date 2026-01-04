@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useChatStore, type ToolCallInfo, type ChatMessage } from '@/lib/chatStore';
 import { useChatMessages } from '@/hooks/useChat';
 import { useMediaView, type MediaViewData } from '@/hooks/useMediaView';
+import { findMediaInResults, scrollToAndHighlight } from '@/hooks/useScrollToMedia';
 import {
     ChatContainerRoot,
     ChatContainerContent,
@@ -265,6 +266,11 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
         isStreaming,
         streamingContent,
         streamingTools,
+        canvasResultsMap,
+        canvasActiveSearchId,
+        setCanvasActiveSearchId,
+        canvasBoardItems,
+        currentCanvasPage,
     } = useChatStore();
 
     const { isLoading, isFetching } = useChatMessages(activeChatId);
@@ -297,27 +303,126 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
             // The URL is stored in the attachment, not in the chip itself
             // This will be handled separately via image attachments
         } else if (type === 'media' && id) {
-            // Fetch fresh signed URL and metadata
-            const data = await fetchMediaView(id);
-            if (data) {
-                // Transform to match ContentDrawer's expected item format
-                setDrawerItem({
-                    id: data.id,
-                    platform: data.platform || 'unknown',
-                    title: data.title || 'Media',
-                    thumbnail_url: data.thumbnail_url,
-                    video_url: data.url,
-                    view_count: data.view_count,
-                    like_count: data.like_count,
-                    comment_count: data.comment_count,
-                    share_count: data.share_count,
-                    published_at: data.published_at,
-                    creator: data.creator,
-                    url: data.canonical_url,
+            console.log('[MediaChip] Clicked media chip with id:', id);
+            console.log('[MediaChip] currentCanvasPage:', currentCanvasPage);
+
+            const openContentDrawer = async (mediaId: string) => {
+                console.log('[MediaChip] Opening ContentDrawer for id:', mediaId);
+                try {
+                    const data = await fetchMediaView(mediaId);
+                    console.log('[MediaChip] fetchMediaView result:', data ? 'found' : 'null');
+                    if (data) {
+                        setDrawerItem({
+                            id: data.id,
+                            platform: data.platform || 'unknown',
+                            title: data.title || 'Media',
+                            thumbnail_url: data.thumbnail_url,
+                            video_url: data.url,
+                            view_count: data.view_count,
+                            like_count: data.like_count,
+                            comment_count: data.comment_count,
+                            share_count: data.share_count,
+                            published_at: data.published_at,
+                            creator: data.creator,
+                            url: data.canonical_url,
+                            assets: [
+                                { id: data.id, asset_type: data.asset_type }
+                            ],
+                        });
+                        console.log('[MediaChip] Drawer item set');
+                    }
+                } catch (error) {
+                    console.error('[MediaChip] Error opening content drawer:', error);
+                }
+            };
+
+            // Only attempt scroll if we're on a board or chat page
+            if (currentCanvasPage === 'chat') {
+                // On chat page - search through keyword tabs
+                const match = findMediaInResults(id, canvasResultsMap);
+                console.log('[MediaChip] findMediaInResults result:', match);
+
+                if (match) {
+                    console.log('[MediaChip] Found in tab:', match.searchId);
+                    // Switch tab if needed
+                    if (match.searchId !== canvasActiveSearchId) {
+                        console.log('[MediaChip] Switching tab from', canvasActiveSearchId, 'to', match.searchId);
+                        setCanvasActiveSearchId(match.searchId);
+                        // Wait for DOM update after tab switch, then scroll with retry
+                        // We poll for the element because virtualization/rendering might take a moment
+                        requestAnimationFrame(() => {
+                            let attempts = 0;
+                            const maxAttempts = 20; // Try for ~2 seconds
+                            const interval = setInterval(() => {
+                                attempts++;
+                                console.log(`[MediaChip] Scroll attempt ${attempts}/${maxAttempts}`);
+
+                                const scrollResult = scrollToAndHighlight(id);
+                                if (scrollResult) {
+                                    console.log('[MediaChip] Scroll successful');
+                                    clearInterval(interval);
+                                    return;
+                                }
+
+                                if (attempts >= maxAttempts) {
+                                    console.log('[MediaChip] Scroll timed out, falling back to ContentDrawer');
+                                    clearInterval(interval);
+                                    openContentDrawer(id);
+                                }
+                            }, 100);
+                        });
+                        return;
+                    } else {
+                        // Same tab, try to scroll immediately
+                        const scrollResult = scrollToAndHighlight(id);
+                        console.log('[MediaChip] scrollToAndHighlight same tab result:', scrollResult);
+                        if (scrollResult) return;
+
+                        // If immediate scroll fails (e.g. virtualized out of view), 
+                        // we can't easily scroll to it without virtualization hook access.
+                        // So we fallback to drawer.
+                        // BUT, maybe we should retry just in case it's a render race?
+                        // Let's retry briefly (500ms) before giving up, to be safe.
+                        let attempts = 0;
+                        const maxAttempts = 5;
+                        const interval = setInterval(() => {
+                            attempts++;
+                            const retryResult = scrollToAndHighlight(id);
+                            if (retryResult) {
+                                clearInterval(interval);
+                                return;
+                            }
+                            if (attempts >= maxAttempts) {
+                                console.log('[MediaChip] Same-tab scroll failed after retries, opening drawer');
+                                clearInterval(interval);
+                                openContentDrawer(id);
+                            }
+                        }, 100);
+                    }
+                } else {
+                    // If no match found in current results, open content drawer
+                    await openContentDrawer(id);
+                }
+            } else if (currentCanvasPage === 'board') {
+                // On board page - look in canvasBoardItems
+                const boardMatch = canvasBoardItems.find((item) => {
+                    const videoAsset = item.assets?.find((a: any) => a.asset_type === 'video');
+                    return videoAsset?.id === id;
                 });
+                console.log('[MediaChip] Board item match:', boardMatch?.id);
+
+                if (boardMatch) {
+                    const scrollResult = scrollToAndHighlight(id);
+                    console.log('[MediaChip] scrollToAndHighlight board result:', scrollResult);
+                    if (scrollResult) return;
+                }
             }
+
+            // Not on board/chat page, video not found, or scroll failed → open ContentDrawer
+            console.log('[MediaChip] Video not found on page or scroll failed, opening ContentDrawer');
+            await openContentDrawer(id);
         }
-    }, [router, activeChatId, fetchMediaView]);
+    }, [router, activeChatId, fetchMediaView, canvasResultsMap, canvasActiveSearchId, setCanvasActiveSearchId, canvasBoardItems, currentCanvasPage]);
 
     // Handle image attachment click (opens lightbox)
     const handleImageClick = useCallback((url: string) => {

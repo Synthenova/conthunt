@@ -29,6 +29,7 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
     const hoverStartRef = useRef<number | null>(null);
 
     const PlatformIcon = getPlatformIcon(platform);
+    const videoAssetId = item.assets?.find((a: any) => a.asset_type === 'video')?.id;
 
     const handleSelect = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -131,6 +132,8 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
 
     return (
         <div
+            data-media-id={item.id}
+            data-media-asset-id={videoAssetId}
             className="relative group/select"
             draggable
             onDragStart={handleDragStart}

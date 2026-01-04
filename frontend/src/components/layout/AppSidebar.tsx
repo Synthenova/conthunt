@@ -14,12 +14,13 @@ import {
     ChevronRight,
     ChevronLeft,
     LayoutPanelTop,
-    Pencil
+    Pencil,
+    Trash
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSearch } from "@/hooks/useSearch";
 import { useBoards } from "@/hooks/useBoards";
-import { useChatList, useRenameChat } from "@/hooks/useChat";
+import { useChatList, useRenameChat, useDeleteChat } from "@/hooks/useChat";
 import { useChatStore } from "@/lib/chatStore";
 import { StaggerContainer, StaggerItem, AnimatePresence } from "@/components/ui/animations";
 import { useUser } from "@/hooks/useUser";
@@ -89,12 +90,14 @@ export function AppSidebar({
     const [editingChatId, setEditingChatId] = useState<string | null>(null);
     const [editingTitle, setEditingTitle] = useState('');
     const editInputRef = useRef<HTMLInputElement | null>(null);
+    const [hoveredChatId, setHoveredChatId] = useState<string | null>(null);
 
     const { openSidebar, setActiveChatId } = useChatStore();
     const { history, isLoadingHistory } = useSearch();
     const { boards, isLoadingBoards } = useBoards();
     const { data: allChats = [], isLoading: isLoadingChats } = useChatList(undefined, { setStore: false });
     const renameChat = useRenameChat();
+    const deleteChat = useDeleteChat();
     const { user, profile } = useUser();
 
     // Reset mobile state on path change
@@ -252,6 +255,8 @@ export function AppSidebar({
                         options?.onSelect?.();
                     }
                 }}
+                onMouseEnter={() => setHoveredChatId(chat.id)}
+                onMouseLeave={() => setHoveredChatId((prev) => (prev === chat.id ? null : prev))}
                 className={cn(
                     "w-full flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all text-left group relative overflow-hidden",
                     isEditing
@@ -259,7 +264,7 @@ export function AppSidebar({
                         : "cursor-pointer"
                 )}
             >
-                <div className="relative z-10 flex items-center gap-2 min-w-0 flex-1">
+                <div className="relative z-10 flex items-center gap-1.5 min-w-0 flex-1 pr-0">
                     {options?.showIcon && (
                         <MessageSquare
                             size={16}
@@ -290,26 +295,58 @@ export function AppSidebar({
                     ) : (
                         <span
                             className={cn(
-                                "text-sm truncate font-medium transition-colors",
+                                "text-sm font-medium transition-colors block w-full overflow-hidden",
                                 isActiveChat ? "text-white" : "text-gray-400 group-hover:text-gray-200"
                             )}
+                            style={{
+                                maxWidth: hoveredChatId === chat.id ? "calc(100% - 35px)" : "100%",
+                                maskImage: hoveredChatId === chat.id
+                                    ? "linear-gradient(to right, #fff 97%, transparent)"
+                                    : "linear-gradient(to right, #fff 99%, transparent)",
+                                WebkitMaskImage: hoveredChatId === chat.id
+                                    ? "linear-gradient(to right, #fff 97%, transparent)"
+                                    : "linear-gradient(to right, #fff 99%, transparent)",
+                                transition: "max-width 0.15s ease, mask-image 0.15s ease, -webkit-mask-image 0.15s ease",
+                            }}
+                            title={chat.title || "New Chat"}
                         >
-                            {chat.title || "New Chat"}
+                            <span className="whitespace-nowrap block">
+                                {chat.title || "New Chat"}
+                            </span>
                         </span>
                     )}
                 </div>
                 {!isEditing && (
-                    <button
-                        type="button"
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            startChatEdit(chat.id, chat.title);
-                        }}
-                        className="relative z-10 ml-2 text-gray-400 hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
-                        aria-label="Rename chat"
-                    >
-                        <Pencil size={14} />
-                    </button>
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 z-20 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                            type="button"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                startChatEdit(chat.id, chat.title);
+                            }}
+                            className="text-gray-400 hover:text-gray-200"
+                            aria-label="Rename chat"
+                        >
+                            <Pencil size={14} />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                deleteChat.mutate(chat.id, {
+                                    onSuccess: () => {
+                                        if (isActiveChat) {
+                                            router.push('/app');
+                                        }
+                                    },
+                                });
+                            }}
+                            className="text-gray-400 hover:text-red-300"
+                            aria-label="Delete chat"
+                        >
+                            <Trash size={14} />
+                        </button>
+                    </div>
                 )}
                 {isActiveChat && !isEditing && (
                     <motion.div
@@ -490,7 +527,6 @@ export function AppSidebar({
                                 alt="Expand"
                                 width={24}
                                 height={24}
-                                className="opacity-60"
                             />
                         </div>
                         <div className="absolute inset-0 flex items-center justify-center transition-all duration-300 opacity-0 scale-75 group-hover/sidebar:opacity-100 group-hover/sidebar:scale-100 text-gray-400">

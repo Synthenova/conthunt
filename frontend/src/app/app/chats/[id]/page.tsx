@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useChatStore, ChatMessage } from "@/lib/chatStore";
-import { useChatMessages, useSendMessage, useRenameChat } from "@/hooks/useChat";
+import { useChatMessages, useSendMessage, useRenameChat, useDeleteChat } from "@/hooks/useChat";
 import { useBoards } from "@/hooks/useBoards";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { SelectionBar } from "@/components/boards/SelectionBar";
@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { FolderOpen, Search, Loader2, Pencil, Check, X } from "lucide-react";
+import { FolderOpen, Search, Loader2, Pencil, Check, X, Trash } from "lucide-react";
 import { FlatMediaItem, transformToMediaItem } from "@/lib/transformers";
 import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { BoardFilterBar } from "@/components/boards/BoardFilterBar";
@@ -24,16 +24,19 @@ import { SearchIcon, SearchIconHandle } from "@/components/ui/search";
 import { useChatTags } from "@/hooks/useChatTags";
 import { useLoadMore } from "@/hooks/useLoadMore";
 import { transformSearchResults } from "@/lib/transformers";
+import { ChatCanvasContext } from "@/lib/chatCanvasContext";
 
 export default function ChatPage() {
+    const router = useRouter();
     const params = useParams();
     const searchParams = useSearchParams();
     const chatId = params.id as string;
     const searchIdFromUrl = searchParams.get('search');
 
-    const { setActiveChatId, messages, openSidebar, canvasSearchIds, chats } = useChatStore();
+    const { setActiveChatId, messages, openSidebar, canvasSearchIds, chats, setCanvasResultsMap, setCanvasActiveSearchId, setCurrentCanvasPage, canvasActiveSearchId } = useChatStore();
     const { isLoading: isLoadingMessages } = useChatMessages(chatId);
     const { sendMessage } = useSendMessage();
+    const deleteChat = useDeleteChat();
     const { getBoard, getBoardItems } = useBoards();
     const abortControllerRef = useRef<AbortController | null>(null);
     const searchIconRef = useRef<SearchIconHandle>(null);
@@ -88,7 +91,9 @@ export default function ChatPage() {
     const [editingTitle, setEditingTitle] = useState('');
 
     const [activeBoardTab, setActiveBoardTab] = useState<string | null>(null);
-    const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
+    // Use global store as source of truth for activeSearchId to prevent sync loops
+    const activeSearchId = canvasActiveSearchId;
+    const setActiveSearchId = setCanvasActiveSearchId;
     const [searchTabs, setSearchTabs] = useState<Array<{ id: string; label: string; sort_order?: number | null }>>([]);
 
     // State to hold results from multiple search streams
@@ -113,14 +118,21 @@ export default function ChatPage() {
     useEffect(() => {
         setActiveChatId(chatId);
         openSidebar();
-    }, [chatId, setActiveChatId, openSidebar]);
+        setCurrentCanvasPage('chat');
+        // Reset active search when entering a new chat
+        setCanvasActiveSearchId(null);
+        return () => {
+            setCurrentCanvasPage(null);
+            setCanvasActiveSearchId(null);
+        };
+    }, [chatId, setActiveChatId, openSidebar, setCurrentCanvasPage, setCanvasActiveSearchId]);
 
     // Auto-select search tab when navigating from search chip
     useEffect(() => {
-        if (searchIdFromUrl && searchTabs.some(tab => tab.id === searchIdFromUrl)) {
+        if (searchIdFromUrl) {
             setActiveSearchId(searchIdFromUrl);
         }
-    }, [searchIdFromUrl, searchTabs]);
+    }, [searchIdFromUrl]);
 
     useEffect(() => {
         if (isEditingTitle) {
@@ -333,6 +345,14 @@ export default function ChatPage() {
         setAllResults(merged);
     }, [resultsMap]);
 
+    // Sync resultsMap to store for media chip scroll-to-video
+    useEffect(() => {
+        setCanvasResultsMap(resultsMap);
+    }, [resultsMap, setCanvasResultsMap]);
+
+    // Removed sync effects for activeSearchId as we now use the store directly
+
+
 
     const itemsById = useMemo(() => {
         const map: Record<string, FlatMediaItem> = {};
@@ -397,250 +417,280 @@ export default function ChatPage() {
         return () => el.removeEventListener("scroll", handleScroll);
     }, []);
 
+    const chatCanvasContextValue = useMemo(() => ({
+        resultsMap,
+        activeSearchId,
+        setActiveSearchId,
+    }), [resultsMap, activeSearchId]);
+
     return (
-        <div className="flex h-full">
-            {/* Render SearchStreamers (Hidden) */}
-            {allSearchIds.map(id => (
-                <SearchStreamer
-                    key={id}
-                    searchId={id}
-                    onResults={handleSearchResults}
-                    onStreamingChange={handleSearchStreamingChange}
-                    onLoadingChange={handleSearchLoadingChange}
-                    onCursorsChange={handleSearchCursorsChange}
-                />
-            ))}
+        <ChatCanvasContext.Provider value={chatCanvasContextValue}>
+            <div className="flex h-full">
+                {/* Render SearchStreamers (Hidden) */}
+                {allSearchIds.map(id => (
+                    <SearchStreamer
+                        key={id}
+                        searchId={id}
+                        onResults={handleSearchResults}
+                        onStreamingChange={handleSearchStreamingChange}
+                        onLoadingChange={handleSearchLoadingChange}
+                        onCursorsChange={handleSearchCursorsChange}
+                    />
+                ))}
 
-            {/* Canvas (left/center) */}
-            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0">
-                <div className="w-full py-4 px-4 space-y-6">
-                    {isInitialLoading ? (
-                        <div className="min-h-[70vh] flex items-center justify-center">
-                            <div className="flex flex-col items-center gap-3 text-center">
-                                <div className="h-12 w-12 rounded-full bg-white/5 flex items-center justify-center text-muted-foreground">
-                                    <Loader2 className="h-6 w-6 animate-spin" />
-                                </div>
-                                <div className="space-y-1">
-                                    <h3 className="text-base font-semibold text-white">Loading chat</h3>
-                                    <p className="text-sm text-muted-foreground">Fetching your conversation history and results.</p>
-                                </div>
-                            </div>
-                        </div>
-                    ) : !hasContent ? (
-                        <div className="min-h-[70vh] flex items-center justify-center">
-                            <div className="flex flex-col items-center gap-3 text-center">
-                                <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center text-muted-foreground">
-                                    <Search className="h-8 w-8" />
-                                </div>
-                                <div className="space-y-1">
-                                    <h3 className="text-lg font-semibold text-white">Canvas</h3>
-                                    <p className="text-sm text-muted-foreground">
-                                        Start a conversation to search for content. Results will appear here as you explore.
-                                    </p>
+                {/* Canvas (left/center) */}
+                <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0">
+                    <div className="w-full py-4 px-4 space-y-6">
+                        {isInitialLoading ? (
+                            <div className="min-h-[70vh] flex items-center justify-center">
+                                <div className="flex flex-col items-center gap-3 text-center">
+                                    <div className="h-12 w-12 rounded-full bg-white/5 flex items-center justify-center text-muted-foreground">
+                                        <Loader2 className="h-6 w-6 animate-spin" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <h3 className="text-base font-semibold text-white">Loading chat</h3>
+                                        <p className="text-sm text-muted-foreground">Fetching your conversation history and results.</p>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    ) : (
-                        <>
-                            {/* Searches Section - Now "Chat Content" */}
-                            {hasSearches && (
-                                <section>
-                                    {/* Sticky Header Wrapper */}
-                                    <motion.div
-                                        initial={{ y: 0 }}
-                                        animate={{ y: showHeader ? 0 : "-120%" }}
-                                        transition={{ duration: 0.3, ease: "easeInOut" }}
-                                        className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md -mx-4 px-4 py-4 mb-6 space-y-6 border-b border-white/5"
-                                    >
-                                        {/* Header Row */}
-                                        <div className="flex flex-col gap-1">
-                                            <div className="flex items-center justify-between">
-                                                <div
-                                                    className="flex items-center gap-3 group cursor-default"
-                                                    onMouseEnter={() => searchIconRef.current?.startAnimation()}
-                                                    onMouseLeave={() => searchIconRef.current?.stopAnimation()}
-                                                >
-                                                    <SearchIcon
-                                                        ref={searchIconRef}
-                                                        size={20}
-                                                        className="text-muted-foreground group-hover:text-white transition-colors"
-                                                    />
-                                                    <div className="flex items-center gap-2">
-                                                        {isEditingTitle ? (
-                                                            <>
-                                                                <input
-                                                                    ref={editTitleRef}
-                                                                    value={editingTitle}
-                                                                    onChange={(event) => setEditingTitle(event.target.value)}
-                                                                    onKeyDown={(event) => {
-                                                                        if (event.key === 'Enter') {
-                                                                            event.preventDefault();
+                        ) : !hasContent ? (
+                            <div className="min-h-[70vh] flex items-center justify-center">
+                                <div className="flex flex-col items-center gap-3 text-center">
+                                    <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center text-muted-foreground">
+                                        <Search className="h-8 w-8" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <h3 className="text-lg font-semibold text-white">Canvas</h3>
+                                        <p className="text-sm text-muted-foreground">
+                                            Start a conversation to search for content. Results will appear here as you explore.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                {/* Searches Section - Now "Chat Content" */}
+                                {hasSearches && (
+                                    <section>
+                                        {/* Sticky Header Wrapper */}
+                                        <motion.div
+                                            initial={{ y: 0 }}
+                                            animate={{ y: showHeader ? 0 : "-120%" }}
+                                            transition={{ duration: 0.3, ease: "easeInOut" }}
+                                            className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md -mx-4 px-4 py-4 mb-6 space-y-6 border-b border-white/5"
+                                        >
+                                            {/* Header Row */}
+                                            <div className="flex flex-col gap-1">
+                                                <div className="flex items-center justify-between">
+                                                    <div
+                                                        className="flex items-center gap-3 group cursor-default"
+                                                        onMouseEnter={() => searchIconRef.current?.startAnimation()}
+                                                        onMouseLeave={() => searchIconRef.current?.stopAnimation()}
+                                                    >
+                                                        <SearchIcon
+                                                            ref={searchIconRef}
+                                                            size={20}
+                                                            className="text-muted-foreground group-hover:text-white transition-colors"
+                                                        />
+                                                        <div className="flex items-center gap-2">
+                                                            {isEditingTitle ? (
+                                                                <>
+                                                                    <input
+                                                                        ref={editTitleRef}
+                                                                        value={editingTitle}
+                                                                        onChange={(event) => setEditingTitle(event.target.value)}
+                                                                        onKeyDown={(event) => {
+                                                                            if (event.key === 'Enter') {
+                                                                                event.preventDefault();
+                                                                                commitTitleEdit();
+                                                                            }
+                                                                            if (event.key === 'Escape') {
+                                                                                event.preventDefault();
+                                                                                cancelTitleEdit();
+                                                                            }
+                                                                        }}
+                                                                        onBlur={commitTitleEdit}
+                                                                        size={Math.max(1, editingTitle.length)}
+                                                                        className="bg-transparent text-xl font-medium text-white outline-none border-b border-white/50 border-radius-md"
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        onMouseDown={(e) => {
+                                                                            e.preventDefault();
                                                                             commitTitleEdit();
-                                                                        }
-                                                                        if (event.key === 'Escape') {
-                                                                            event.preventDefault();
+                                                                        }}
+                                                                        className="text-white/60 hover:text-white transition-colors"
+                                                                        aria-label="Save"
+                                                                    >
+                                                                        <Check size={14} />
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onMouseDown={(e) => {
+                                                                            e.preventDefault();
+                                                                            deleteChat.mutate(chatId, {
+                                                                                onSuccess: () => router.push("/app"),
+                                                                            });
+                                                                        }}
+                                                                        className="text-white/60 hover:text-white transition-colors"
+                                                                        aria-label="Delete chat"
+                                                                    >
+                                                                        <Trash size={14} />
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onMouseDown={(e) => {
+                                                                            e.preventDefault();
                                                                             cancelTitleEdit();
-                                                                        }
-                                                                    }}
-                                                                    onBlur={commitTitleEdit}
-                                                                    size={Math.max(1, editingTitle.length)}
-                                                                    className="bg-transparent text-xl font-medium text-white outline-none border-b border-white/50 border-radius-md"
-                                                                />
-                                                                <button
-                                                                    type="button"
-                                                                    onMouseDown={(e) => {
-                                                                        e.preventDefault();
-                                                                        commitTitleEdit();
-                                                                    }}
-                                                                    className="text-white/60 hover:text-white transition-colors"
-                                                                    aria-label="Save"
-                                                                >
-                                                                    <Check size={14} />
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onMouseDown={(e) => {
-                                                                        e.preventDefault();
-                                                                        cancelTitleEdit();
-                                                                    }}
-                                                                    className="text-white/60 hover:text-white transition-colors"
-                                                                    aria-label="Cancel"
-                                                                >
-                                                                    <X size={14} />
-                                                                </button>
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                <h1 className="text-xl font-medium text-white">{activeChatTitle}</h1>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={startTitleEdit}
-                                                                    className="text-white/60 hover:text-white opacity-0 group-hover:opacity-100 transition-all"
-                                                                    aria-label="Rename chat"
-                                                                >
-                                                                    <Pencil size={14} />
-                                                                </button>
-                                                            </>
-                                                        )}
+                                                                        }}
+                                                                        className="text-white/60 hover:text-white transition-colors"
+                                                                        aria-label="Cancel"
+                                                                    >
+                                                                        <X size={14} />
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <h1 className="text-xl font-medium text-white">{activeChatTitle}</h1>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={startTitleEdit}
+                                                                        className="text-white/60 hover:text-white opacity-0 group-hover:opacity-100 transition-all"
+                                                                        aria-label="Rename chat"
+                                                                    >
+                                                                        <Pencil size={14} />
+                                                                    </button>
+                                                                </>
+                                                            )}
+                                                        </div>
                                                     </div>
+                                                    {activeSearchId && (
+                                                        <div className="text-sm text-muted-foreground">
+                                                            Showing {filteredResults.length} results
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                {activeSearchId && (
-                                                    <div className="text-sm text-muted-foreground">
-                                                        Showing {filteredResults.length} results
-                                                    </div>
-                                                )}
                                             </div>
-                                        </div>
 
-                                        {/* Controls Bar: Tabs + Filters */}
-                                        <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
-                                            {/* Keyword Tabs (Scrollable) */}
-                                            <div className="flex-1 min-w-0 flex justify-start">
-                                                <div
-                                                    ref={tabsScrollRef}
-                                                    className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto scrollbar-hide cursor-grab"
-                                                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                                                    onMouseDown={handleTabsMouseDown}
-                                                    onMouseMove={handleTabsMouseMove}
-                                                    onMouseUp={handleTabsMouseUp}
-                                                    onMouseLeave={handleTabsMouseLeave}
-                                                >
-                                                    {displaySearches.map((search) => (
-                                                        <button
-                                                            key={search.id}
-                                                            type="button"
-                                                            onClick={() => {
-                                                                if (wasDragged.current) return;
-                                                                setActiveSearchId(search.id);
-                                                            }}
-                                                            className={cn(
-                                                                "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0 group/tab",
-                                                                activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
-                                                            )}
-                                                        >
-                                                            {activeSearchId === search.id && (
-                                                                <div className="absolute inset-0 rounded-lg glass-pill" />
-                                                            )}
-                                                            <span className="relative z-10 flex items-center gap-2">
-                                                                {search.label}
-                                                                {streamingSearchIds[search.id] && (
-                                                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                                                                )}
-                                                            </span>
-                                                            {/* X on hover */}
-                                                            <span
-                                                                role="button"
-                                                                tabIndex={0}
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    deleteTag.mutate(search.id);
-                                                                    if (activeSearchId === search.id) {
-                                                                        const remaining = displaySearches.filter(s => s.id !== search.id);
-                                                                        setActiveSearchId(remaining[0]?.id || null);
-                                                                    }
-                                                                }}
-                                                                onKeyDown={(e) => {
-                                                                    if (e.key === 'Enter' || e.key === ' ') {
-                                                                        e.stopPropagation();
-                                                                        deleteTag.mutate(search.id);
-                                                                    }
+                                            {/* Controls Bar: Tabs + Filters */}
+                                            <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
+                                                {/* Keyword Tabs (Scrollable) */}
+                                                <div className="flex-1 min-w-0 flex justify-start">
+                                                    <div
+                                                        ref={tabsScrollRef}
+                                                        className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-fit max-w-full overflow-x-auto scrollbar-hide cursor-grab"
+                                                        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                                                        onMouseDown={handleTabsMouseDown}
+                                                        onMouseMove={handleTabsMouseMove}
+                                                        onMouseUp={handleTabsMouseUp}
+                                                        onMouseLeave={handleTabsMouseLeave}
+                                                    >
+                                                        {displaySearches.map((search) => (
+                                                            <button
+                                                                key={search.id}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    if (wasDragged.current) return;
+                                                                    setActiveSearchId(search.id);
                                                                 }}
                                                                 className={cn(
-                                                                    "absolute right-2 z-20 flex items-center justify-center cursor-pointer transition-opacity",
-                                                                    "opacity-0 group-hover/tab:opacity-100",
-                                                                    activeSearchId === search.id 
-                                                                        ? "text-white/70 hover:text-white" 
-                                                                        : "text-gray-400 hover:text-white"
+                                                                    "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0 group/tab",
+                                                                    activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
                                                                 )}
-                                                                aria-label={`Remove ${search.label}`}
                                                             >
-                                                                <X size={12} />
-                                                            </span>
-                                                        </button>
-                                                    ))}
+                                                                {activeSearchId === search.id && (
+                                                                    <div className="absolute inset-0 rounded-lg glass-pill" />
+                                                                )}
+                                                                <span
+                                                                    className={cn(
+                                                                        "relative z-10 flex items-center gap-2 overflow-hidden",
+                                                                        "group-hover/tab:[mask-image:linear-gradient(to_right,#fff_80%,transparent)]",
+                                                                        "group-hover/tab:[-webkit-mask-image:linear-gradient(to_right,#fff_80%,transparent)]",
+                                                                        "group-focus-within/tab:[mask-image:linear-gradient(to_right,#fff_80%,transparent)]",
+                                                                        "group-focus-within/tab:[-webkit-mask-image:linear-gradient(to_right,#fff_80%,transparent)]",
+                                                                    )}
+                                                                >
+                                                                    <span className="whitespace-nowrap">{search.label}</span>
+                                                                    {streamingSearchIds[search.id] && (
+                                                                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                                                    )}
+                                                                </span>
+                                                                {/* X replaces end of text on hover */}
+                                                                <span
+                                                                    role="button"
+                                                                    tabIndex={0}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        deleteTag.mutate(search.id);
+                                                                        if (activeSearchId === search.id) {
+                                                                            const currentIndex = displaySearches.findIndex(s => s.id === search.id);
+                                                                            const prevSearch = displaySearches[currentIndex - 1];
+                                                                            const nextSearch = displaySearches[currentIndex + 1];
+                                                                            setActiveSearchId(prevSearch?.id || nextSearch?.id || null);
+                                                                        }
+                                                                    }}
+                                                                    onKeyDown={(e) => {
+                                                                        if (e.key === 'Enter' || e.key === ' ') {
+                                                                            e.stopPropagation();
+                                                                            deleteTag.mutate(search.id);
+                                                                        }
+                                                                    }}
+                                                                    className={cn(
+                                                                        "absolute right-2 z-20 hidden group-hover/tab:flex group-focus-within/tab:flex items-center justify-center cursor-pointer",
+                                                                        activeSearchId === search.id
+                                                                            ? "text-white/70 hover:text-white"
+                                                                            : "text-gray-400 hover:text-white"
+                                                                    )}
+                                                                    aria-label={`Remove ${search.label}`}
+                                                                >
+                                                                    <X size={12} />
+                                                                </span>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                {/* Filters */}
+                                                <div className="shrink-0 flex justify-end">
+                                                    <BoardFilterBar
+                                                        sort={clientSort}
+                                                        onSortChange={setClientSort}
+                                                        dateFilter={clientDateFilter}
+                                                        onDateFilterChange={setClientDateFilter}
+                                                        platforms={platforms}
+                                                        selectedPlatforms={selectedPlatforms}
+                                                        onPlatformsChange={setSelectedPlatforms}
+                                                    />
                                                 </div>
                                             </div>
+                                        </motion.div>
 
-                                            {/* Filters */}
-                                            <div className="shrink-0 flex justify-end">
-                                                <BoardFilterBar
-                                                    sort={clientSort}
-                                                    onSortChange={setClientSort}
-                                                    dateFilter={clientDateFilter}
-                                                    onDateFilterChange={setClientDateFilter}
-                                                    platforms={platforms}
-                                                    selectedPlatforms={selectedPlatforms}
-                                                    onPlatformsChange={setSelectedPlatforms}
+                                        {/* Results for Active Search */}
+                                        {activeSearchId && (
+                                            <div className="mt-0">
+                                                <SelectableResultsGrid
+                                                    key={`${activeSearchId}-${clientSort}-${clientDateFilter}-${selectedPlatforms.join(',')}`}
+                                                    results={filteredResults}
+                                                    loading={(!!streamingSearchIds[activeSearchId] || !!loadingSearchIds[activeSearchId]) && (filteredResults.length === 0)}
+                                                    analysisDisabled={false}
+                                                />
+                                                <LoadMoreButton
+                                                    onLoadMore={handleLoadMore}
+                                                    hasMore={hasMoreMap[activeSearchId] ?? false}
+                                                    isLoading={isLoadingMore}
                                                 />
                                             </div>
-                                        </div>
-                                    </motion.div>
-
-                                    {/* Results for Active Search */}
-                                    {activeSearchId && (
-                                        <div className="mt-0">
-                                            <SelectableResultsGrid
-                                                key={`${activeSearchId}-${clientSort}-${clientDateFilter}-${selectedPlatforms.join(',')}`}
-                                                results={filteredResults}
-                                                loading={(!!streamingSearchIds[activeSearchId] || !!loadingSearchIds[activeSearchId]) && (filteredResults.length === 0)}
-                                                analysisDisabled={false}
-                                            />
-                                            <LoadMoreButton
-                                                onLoadMore={handleLoadMore}
-                                                hasMore={hasMoreMap[activeSearchId] ?? false}
-                                                isLoading={isLoadingMore}
-                                            />
-                                        </div>
-                                    )}
-                                </section>
-                            )}
-                        </>
-                    )}
+                                        )}
+                                    </section>
+                                )}
+                            </>
+                        )}
+                    </div>
                 </div>
-            </div>
 
-            {/* Selection Bar */}
-            <SelectionBar itemsById={itemsById} />
-        </div>
+                {/* Selection Bar */}
+                <SelectionBar itemsById={itemsById} />
+            </div>
+        </ChatCanvasContext.Provider>
     );
 }

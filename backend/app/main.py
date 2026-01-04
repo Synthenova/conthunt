@@ -67,6 +67,8 @@ app.add_middleware(
         "https://conthunt-lp-976912795426.us-central1.run.app",
         "https://app.conthunt.app",
         "https://app.conthunt.app/",
+        "https://agent.conthunt.app",
+        "https://agent.conthunt.app/",
     ],
     allow_credentials=True,
     allow_methods=["*"],

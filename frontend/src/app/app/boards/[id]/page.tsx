@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useBoards } from "@/hooks/useBoards";
 import { useSearchStore } from "@/lib/store";
+import { useChatStore } from "@/lib/chatStore";
 import { BoardGlassCard } from "@/components/ui/board-glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -59,6 +60,7 @@ export default function BoardDetailPage() {
         isRefreshingInsights,
     } = useBoards();
     const { selectedItems, clearSelection } = useSearchStore();
+    const { setCanvasBoardItems, setCurrentCanvasPage } = useChatStore();
 
     const { data: board, isLoading: isBoardLoading, error: boardError } = getBoard(boardId);
     const { data: items, isLoading: isItemsLoading } = getBoardItems(boardId);
@@ -78,6 +80,16 @@ export default function BoardDetailPage() {
             return flat;
         });
     }, [items]);
+
+    // Sync board items to store for media chip scroll-to-video
+    useEffect(() => {
+        setCanvasBoardItems(transformedItems);
+        setCurrentCanvasPage('board');
+        return () => {
+            setCanvasBoardItems([]);
+            setCurrentCanvasPage(null);
+        };
+    }, [transformedItems, setCanvasBoardItems, setCurrentCanvasPage]);
 
     const {
         flatResults,
@@ -322,8 +334,8 @@ export default function BoardDetailPage() {
                                     <div className="flex flex-wrap items-center gap-2">
                                         {(isProcessingInsights || isRefreshingInsights) && totalVideos > 0 ? (
                                             <Badge variant="outline" className="border-white/10 text-muted-foreground">
-                                                {isRefreshingInsights && !isProcessingInsights 
-                                                    ? "Starting..." 
+                                                {isRefreshingInsights && !isProcessingInsights
+                                                    ? "Starting..."
                                                     : `Analyzing ${analyzedVideos + failedVideos}/${totalVideos} videos`}
                                             </Badge>
                                         ) : null}
@@ -387,9 +399,9 @@ export default function BoardDetailPage() {
                                     </div>
                                     <div className="space-y-2 max-w-xl">
                                         <h3 className="text-2xl font-semibold text-white">
-                                            {(isProcessingInsights || isRefreshingInsights) 
-                                                ? (totalVideos > 0 && (analyzedVideos + failedVideos) >= totalVideos 
-                                                    ? "Generating insights..." 
+                                            {(isProcessingInsights || isRefreshingInsights)
+                                                ? (totalVideos > 0 && (analyzedVideos + failedVideos) >= totalVideos
+                                                    ? "Generating insights..."
                                                     : "Analyzing videos...")
                                                 : "Get insights when you are ready"}
                                         </h3>
@@ -398,7 +410,7 @@ export default function BoardDetailPage() {
                                                 ? ((analyzedVideos + failedVideos) >= totalVideos
                                                     ? "All videos analyzed. Creating your insights..."
                                                     : `Analyzing ${analyzedVideos + failedVideos}/${totalVideos} videos...`)
-                                                : (isRefreshingInsights 
+                                                : (isRefreshingInsights
                                                     ? "Starting analysis..."
                                                     : "Run insights to surface hooks, angles, and patterns across this board. Results land in 2–3 minutes.")}
                                         </p>

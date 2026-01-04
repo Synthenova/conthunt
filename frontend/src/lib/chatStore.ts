@@ -91,6 +91,20 @@ interface ChatState {
     canvasSearchKeywords: Record<string, string>;
     addCanvasSearchId: (id: string, keyword?: string) => void;
     setCanvasSearchIds: (ids: Set<string>) => void;
+
+    // Canvas results for media chip scroll-to-video
+    canvasResultsMap: Record<string, any[]>;
+    canvasActiveSearchId: string | null;
+    setCanvasResultsMap: (resultsMap: Record<string, any[]>) => void;
+    setCanvasActiveSearchId: (searchId: string | null) => void;
+
+    // Board items for media chip scroll-to-video on board pages
+    canvasBoardItems: any[];
+    setCanvasBoardItems: (items: any[]) => void;
+
+    // Current canvas page type for media chip scroll-to-video
+    currentCanvasPage: 'board' | 'chat' | null;
+    setCurrentCanvasPage: (page: 'board' | 'chat' | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -256,4 +270,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         canvasSearchKeywords: keyword ? { ...state.canvasSearchKeywords, [id]: keyword } : state.canvasSearchKeywords
     })),
     setCanvasSearchIds: (ids) => set({ canvasSearchIds: ids }),
+
+    // Canvas results for media chip scroll-to-video
+    canvasResultsMap: {},
+    canvasActiveSearchId: null,
+    setCanvasResultsMap: (resultsMap) => set({ canvasResultsMap: resultsMap }),
+    setCanvasActiveSearchId: (searchId) => {
+        if (get().canvasActiveSearchId !== searchId) {
+            set({ canvasActiveSearchId: searchId });
+        }
+    },
+
+    // Board items for media chip scroll-to-video on board pages
+    canvasBoardItems: [],
+    setCanvasBoardItems: (items) => set({ canvasBoardItems: items }),
+
+    // Current canvas page type for media chip scroll-to-video
+    currentCanvasPage: null,
+    setCurrentCanvasPage: (page) => set({ currentCanvasPage: page }),
 }));
