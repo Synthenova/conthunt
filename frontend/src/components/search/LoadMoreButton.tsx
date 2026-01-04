@@ -10,13 +10,12 @@ interface LoadMoreButtonProps {
     className?: string;
 }
 
-export function LoadMoreButton({ 
-    onLoadMore, 
-    hasMore, 
+export function LoadMoreButton({
+    onLoadMore,
+    hasMore,
     isLoading,
     className = ""
 }: LoadMoreButtonProps) {
-    console.log("[LoadMoreButton] hasMore:", hasMore, "isLoading:", isLoading);
     if (!hasMore) return null;
 
     return (
