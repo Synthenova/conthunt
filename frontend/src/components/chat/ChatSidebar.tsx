@@ -165,7 +165,7 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
             {/* Sidebar */}
             <aside
                 className={cn(
-                    "flex flex-col bg-background/95 backdrop-blur-lg border-l border-white/10",
+                    "flex flex-col bg-background/95 backdrop-blur-lg border-l border-white/5",
                     "transition-all duration-300 ease-in-out",
                     // Mobile: fixed overlay with full viewport height
                     "fixed inset-y-0 right-0 z-50 w-[90%] max-w-[420px] h-screen",
@@ -193,9 +193,6 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                     <div className="flex h-8 w-3 items-center justify-center rounded-full bg-background border border-border/40 shadow-sm transition-all group-hover:bg-accent group-hover:scale-110">
                         <GripVertical className="h-4 w-4 text-muted-foreground/40 group-hover:text-black" />
                     </div>
-                </div>
-                <div className="absolute left-0 top-0 hidden h-full w-3 lg:block pointer-events-none">
-                    <div className="h-full w-px bg-white/20" />
                 </div>
                 <div className={cn(
                     "flex flex-col h-full w-full max-w-full",

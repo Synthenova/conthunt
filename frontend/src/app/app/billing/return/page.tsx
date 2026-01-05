@@ -15,7 +15,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
-import { Check } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 function BillingReturnContent() {
@@ -23,6 +23,7 @@ function BillingReturnContent() {
     const router = useRouter();
     const [loading, setLoading] = useState<string | null>(null);
     const [role, setRole] = useState<string | null>(null);
+    const [verifying, setVerifying] = useState(false);
 
     const status = searchParams.get("status");
     const subscriptionId = searchParams.get("subscription_id");
@@ -32,25 +33,58 @@ function BillingReturnContent() {
         // Listen for auth changes to get the latest role (claims)
         const unsubscribe = auth.onIdTokenChanged(async (user) => {
             if (user) {
-                // Force refresh token if status just changed to active to ensure claims are up to date?
-                // For now, just get result. If webhook was fast, claim might be updated.
-                // If status is 'active', we might want to force refresh?
-                const forceRefresh = status === "active";
-                const token = await user.getIdTokenResult(forceRefresh);
+                const token = await user.getIdTokenResult();
                 setRole((token.claims.role as string) || "free");
             } else {
                 setRole(null);
             }
         });
         return () => unsubscribe();
-    }, [status]); // Run when status changes too, in case of redirect update
+    }, []);
 
     useEffect(() => {
         if (status === "active") {
-            toast.success("Subscription activated successfully!", {
-                description: `ID: ${subscriptionId}`,
-                duration: 5000,
-            });
+            setVerifying(true);
+            let attempts = 0;
+            let active = true;
+
+            const pollRole = async () => {
+                if (!auth.currentUser) return;
+
+                try {
+                    // Force refresh to get new claims
+                    const token = await auth.currentUser.getIdTokenResult(true);
+                    const currentRole = token.claims.role as string;
+
+                    if ((currentRole === "creator" || currentRole === "pro_research") && active) {
+                        setRole(currentRole);
+                        toast.success("Subscription activated successfully!", {
+                            description: `ID: ${subscriptionId}`,
+                            duration: 5000,
+                        });
+                        setVerifying(false);
+                        return;
+                    }
+
+                    if (attempts < 10 && active) { // Retry for ~20 seconds
+                        attempts++;
+                        setTimeout(pollRole, 2000);
+                    } else if (active) {
+                        // Timeout reached
+                        setVerifying(false);
+                        toast.warning("Payment received, but account update is delayed.", {
+                            description: "Your plan will update automatically in a moment.",
+                            duration: 5000,
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error polling role:", e);
+                }
+            };
+
+            pollRole();
+
+            return () => { active = false; };
         } else if (status === "failed") {
             toast.error("Subscription payment failed.", {
                 description: "Stayed on previous plan. Please try again.",
@@ -104,6 +138,16 @@ function BillingReturnContent() {
     };
 
     const isPlanActive = (planRole: string) => role === planRole;
+
+    if (verifying) {
+        return (
+            <div className="container mx-auto py-20 px-4 text-center flex flex-col items-center justify-center min-h-[50vh]">
+                <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
+                <h2 className="text-2xl font-bold">Verifying Subscription...</h2>
+                <p className="text-muted-foreground mt-2">Please wait while we confirm your payment details.</p>
+            </div>
+        );
+    }
 
     return (
         <div className="container mx-auto py-10 px-4">
