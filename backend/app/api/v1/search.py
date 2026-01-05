@@ -361,6 +361,10 @@ async def load_more_worker(
     r = redis.from_url(settings.REDIS_URL, decode_responses=True)
     stream_key = f"search:{search_id}:more:stream"
     
+    # Clear old stream messages from previous load more requests
+    # This prevents the frontend from seeing stale "done" messages
+    await r.delete(stream_key)
+    
     collected_results: List[PlatformCallResult] = []
     
     try:
