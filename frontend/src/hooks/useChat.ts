@@ -102,13 +102,56 @@ export function useDeleteChat() {
             });
             return chatId;
         },
-        onSuccess: (chatId) => {
+        onMutate: async (chatId) => {
+            await queryClient.cancelQueries({ queryKey: ['chats'] });
+
+            const previous = queryClient.getQueriesData({ queryKey: ['chats'] });
+
+            // Find the chat to be deleted for potential rollback
+            let deletedChat: Chat | undefined;
+            for (const [_, data] of previous) {
+                if (Array.isArray(data)) {
+                    const found = data.find((c: Chat) => c.id === chatId);
+                    if (found) {
+                        deletedChat = found;
+                        break;
+                    }
+                }
+            }
+
+            // Optimistically remove from store
             removeChat(chatId);
             if (activeChatId === chatId) {
                 setActiveChatId(null);
             }
+
+            // Optimistically update React Query cache
+            queryClient.setQueriesData({ queryKey: ['chats'] }, (oldData: any) => {
+                if (!Array.isArray(oldData)) return oldData;
+                return oldData.filter((c: Chat) => c.id !== chatId);
+            });
+
+            return { previous, deletedChat };
+        },
+        onError: (_err, _chatId, context) => {
+            if (context?.previous) {
+                context.previous.forEach(([queryKey, data]) => {
+                    queryClient.setQueryData(queryKey, data);
+                });
+            }
+            if (context?.deletedChat) {
+                // We access the store directly here to "undo", but assuming addChat just appends.
+                // Re-fetching might be cleaner but this restores local state faster.
+                useChatStore.getState().addChat(context.deletedChat);
+            }
+        },
+        onSuccess: (chatId) => {
+            // Store already updated in onMutate
             queryClient.invalidateQueries({ queryKey: ['chats'] });
         },
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ['chats'] });
+        }
     });
 }
 
