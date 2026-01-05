@@ -468,12 +468,26 @@ header {
 
 /* Media Chip Scroll Highlight Animation */
 .media-highlight {
-    animation: media-pulse 2s ease-out;
+    animation: media-pulse 2.5s ease-out !important;
     border-radius: 0.75rem;
+    z-index: 50;
+    position: relative;
 }
 
 @keyframes media-pulse {
-    0%, 100% { box-shadow: none; }
-    25%, 75% { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.6); }
-    50% { box-shadow: 0 0 0 4px hsl(var(--primary) / 0.8), 0 0 20px hsl(var(--primary) / 0.4); }
+    0% {
+        box-shadow: 0 0 0 0px hsl(var(--primary) / 0.6);
+    }
+
+    10% {
+        box-shadow: 0 0 0 4px hsl(var(--primary) / 1), 0 0 20px hsl(var(--primary) / 0.8);
+    }
+
+    50% {
+        box-shadow: 0 0 0 4px hsl(var(--primary) / 0.8), 0 0 20px hsl(var(--primary) / 0.4);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0px hsl(var(--primary) / 0);
+    }
 }

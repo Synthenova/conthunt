@@ -634,7 +634,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                     <div
                                         className={
                                             msg.type === 'human'
-                                                ? 'glass max-w-[85%] text-foreground shadow-lg border-primary/20 bg-primary/10 rounded-xl p-3'
+                                                ? 'glass max-w-[85%] text-foreground shadow-lg border-primary/20 bg-primary/10 rounded-xl pt-3 px-2 pb-2'
                                                 : 'bg-transparent max-w-[95%] text-foreground p-0'
                                         }
                                     >
