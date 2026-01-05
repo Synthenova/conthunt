@@ -30,7 +30,7 @@ export function scrollToAndHighlight(mediaAssetId: string): boolean {
     console.log('[scrollToAndHighlight] Looking for element with data-media-asset-id:', mediaAssetId);
     const element = document.querySelector(`[data-media-asset-id="${mediaAssetId}"]`);
     console.log('[scrollToAndHighlight] Found element:', element);
-    
+
     if (!element) {
         // Also try to find by listing all data-media-asset-id elements
         const allElements = document.querySelectorAll('[data-media-asset-id]');
@@ -45,7 +45,7 @@ export function scrollToAndHighlight(mediaAssetId: string): boolean {
 
     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
     element.classList.add('media-highlight');
-    setTimeout(() => element.classList.remove('media-highlight'), 2000);
+    setTimeout(() => element.classList.remove('media-highlight'), 4000);
     console.log('[scrollToAndHighlight] Scrolled and highlighted');
     return true;
 }

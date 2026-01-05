@@ -155,7 +155,7 @@ export function VirtualizedResultsGrid({ results, analysisDisabled = false, item
 
     return (
         <>
-            <div ref={scrollRef} className="flex-1 min-h-0 w-full overflow-y-auto">
+            <div ref={scrollRef} className="flex-1 min-h-0 w-full overflow-y-auto p-2">
                 <div
                     ref={parentRef}
                     className="w-full"

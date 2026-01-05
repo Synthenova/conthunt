@@ -570,14 +570,23 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                                             </>
                                         )}
                                         {chip.type === 'image' && (
-                                            <>
+                                            <div className="relative h-4 w-4 shrink-0 rounded overflow-hidden">
                                                 {chip.status === 'uploading' ? (
-                                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                                    <div className="absolute inset-0 flex items-center justify-center">
+                                                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                                    </div>
+                                                ) : chip.url ? (
+                                                    <img
+                                                        src={chip.url}
+                                                        alt={chip.fileName}
+                                                        className="h-full w-full object-cover"
+                                                    />
                                                 ) : (
-                                                    <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                                    <div className="absolute inset-0 flex items-center justify-center">
+                                                        <ImagePlus className="h-4 w-4 text-muted-foreground" />
+                                                    </div>
                                                 )}
-                                                <span className="truncate">{truncateText(chip.fileName, CHIP_TITLE_LIMIT)}</span>
-                                            </>
+                                            </div>
                                         )}
                                         {chip.type === 'media' && PlatformIcon && (
                                             <>

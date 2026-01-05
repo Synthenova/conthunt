@@ -107,6 +107,7 @@ export default function ChatPage() {
     // For now, let's keep the state but not use it for rendering.
     const [rawSearchResults, setRawSearchResults] = useState<FlatMediaItem[]>([]);
     const [allResults, setAllResults] = useState<FlatMediaItem[]>([]);
+    const [hoveredTabId, setHoveredTabId] = useState<string | null>(null);
 
     // Find current chat title
     const activeChatTitle = useMemo(() => {
@@ -593,6 +594,14 @@ export default function ChatPage() {
                                                                     if (wasDragged.current) return;
                                                                     setActiveSearchId(search.id);
                                                                 }}
+                                                                onMouseEnter={(e) => {
+                                                                    setHoveredTabId(search.id);
+                                                                    e.currentTarget.style.width = `${e.currentTarget.offsetWidth}px`;
+                                                                }}
+                                                                onMouseLeave={(e) => {
+                                                                    setHoveredTabId(null);
+                                                                    e.currentTarget.style.width = '';
+                                                                }}
                                                                 className={cn(
                                                                     "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0 group/tab",
                                                                     activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
@@ -603,16 +612,22 @@ export default function ChatPage() {
                                                                 )}
                                                                 <span
                                                                     className={cn(
-                                                                        "relative z-10 flex items-center gap-2 overflow-hidden",
-                                                                        "group-hover/tab:[mask-image:linear-gradient(to_right,#fff_80%,transparent)]",
-                                                                        "group-hover/tab:[-webkit-mask-image:linear-gradient(to_right,#fff_80%,transparent)]",
-                                                                        "group-focus-within/tab:[mask-image:linear-gradient(to_right,#fff_80%,transparent)]",
-                                                                        "group-focus-within/tab:[-webkit-mask-image:linear-gradient(to_right,#fff_80%,transparent)]",
+                                                                        "relative z-10 flex items-center gap-2 overflow-hidden transition-all",
                                                                     )}
+                                                                    style={{
+                                                                        maxWidth: hoveredTabId === search.id ? "calc(100% - 5px)" : "100%",
+                                                                        maskImage: hoveredTabId === search.id
+                                                                            ? "linear-gradient(to right, #fff 90%, transparent)"
+                                                                            : "linear-gradient(to right, #fff 100%, transparent)",
+                                                                        WebkitMaskImage: hoveredTabId === search.id
+                                                                            ? "linear-gradient(to right, #fff 90%, transparent)"
+                                                                            : "linear-gradient(to right, #fff 100%, transparent)",
+                                                                        transition: "max-width 0.15s ease, mask-image 0.15s ease, -webkit-mask-image 0.15s ease",
+                                                                    }}
                                                                 >
-                                                                    <span className="whitespace-nowrap">{search.label}</span>
+                                                                    <span className="whitespace-nowrap truncate">{search.label}</span>
                                                                     {streamingSearchIds[search.id] && (
-                                                                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                                                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                                                                     )}
                                                                 </span>
                                                                 {/* X replaces end of text on hover */}
@@ -636,7 +651,8 @@ export default function ChatPage() {
                                                                         }
                                                                     }}
                                                                     className={cn(
-                                                                        "absolute right-2 z-20 hidden group-hover/tab:flex group-focus-within/tab:flex items-center justify-center cursor-pointer",
+                                                                        "absolute right-2 z-20 flex items-center justify-center cursor-pointer opacity-0 transition-opacity",
+                                                                        hoveredTabId === search.id ? "opacity-100" : "opacity-0",
                                                                         activeSearchId === search.id
                                                                             ? "text-white/70 hover:text-white"
                                                                             : "text-gray-400 hover:text-white"

@@ -338,20 +338,27 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
                 }
             })}
 
-            {/* Render Image Attachments (usually at the end of user messages) */}
+            {/* Render Image Attachments as horizontal scrollable row of square boxes */}
             {imageAttachments.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-1">
+                <div className="flex overflow-x-auto scrollbar-none gap-2 mt-2 pb-1">
                     {imageAttachments.map((attachment, idx) => (
                         <button
                             type="button"
                             key={`img-${idx}`}
                             onClick={() => attachment.url && handleImageClick(attachment.url)}
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
+                            className="shrink-0 h-16 w-16 rounded-lg overflow-hidden bg-muted hover:ring-2 hover:ring-primary/50 transition-all cursor-pointer"
                         >
-                            <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span className="truncate" title={attachment.label}>
-                                {truncateLabel(attachment.label)}
-                            </span>
+                            {attachment.url ? (
+                                <img
+                                    src={attachment.url}
+                                    alt={attachment.label}
+                                    className="h-full w-full object-cover"
+                                />
+                            ) : (
+                                <div className="h-full w-full flex items-center justify-center">
+                                    <ImagePlus className="h-6 w-6 text-muted-foreground" />
+                                </div>
+                            )}
                         </button>
                     ))}
                 </div>
