@@ -137,27 +137,16 @@ function truncateText(value: string, limit: number) {
 
 function formatChipFence(chip: ChatChip) {
     if (chip.type === 'media') {
-        return JSON.stringify({
-            type: 'media',
-            id: chip.media_asset_id,
-            title: chip.title,
-            platform: chip.platform,
-            label: chip.label,
-        });
+        // Format: media | id | platform | title
+        return `media | ${chip.media_asset_id} | ${chip.platform} | ${chip.title}`;
     }
     if (chip.type === 'image') {
-        return JSON.stringify({
-            type: 'image',
-            id: chip.id,
-            label: chip.fileName,
-        });
+        // Format: image | id | label
+        return `image | ${chip.id} | ${chip.fileName}`;
     }
 
-    return JSON.stringify({
-        type: chip.type,
-        id: chip.id,
-        label: chip.label,
-    });
+    // Format: type | id | label
+    return `${chip.type} | ${chip.id} | ${chip.label}`;
 }
 
 function formatItemLine(item: SummaryItem) {
@@ -437,7 +426,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
             ? sendChips.map((chip) => `\`\`\`chip ${formatChipFence(chip)}\`\`\``).join(' ')
             : '';
 
-        const fullMessage = [chipFence, messageText].filter(Boolean).join('\n\n');
+        const fullMessage = [chipFence, messageText].filter(Boolean).join('\n');
         const tagPayload: { type: 'board' | 'search' | 'media'; id: string; label?: string }[] = chips
             .filter((chip) => chip.type === 'board' || chip.type === 'search' || chip.type === 'media')
             .map((chip) => ({
@@ -519,186 +508,186 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
             disabled={createChat.isPending || isStreaming}
         >
             <div className="relative px-4 pb-4 pt-2 transition-colors" data-drag-active={isDragActive ? 'true' : 'false'}>
-            {mentionQuery !== null && (
-                <MentionDropdown
-                    boards={boardOptions}
-                    searches={searchOptions}
-                    chats={chatOptions}
-                    isLoadingBoards={isLoadingBoards}
-                    isLoadingSearches={isLoadingHistory}
-                    isLoadingChats={chatListQuery.isLoading}
-                    query={mentionQuery}
-                    onSelect={(type, item) => {
-                        if (type === 'board') {
-                            handleAddContextChip({ type: 'board', id: item.id, label: item.name });
-                        } else if (type === 'search') {
-                            handleAddContextChip({ type: 'search', id: item.id, label: item.query });
-                        } else if (type === 'chat') {
-                            handleAddContextChip({ type: 'chat', id: item.id, label: item.title || 'Chat' });
-                        }
-                    }}
-                />
-            )}
-            <PromptInput
-                value={message}
-                onValueChange={handleMessageChange}
-                onSubmit={handleSend}
-                isLoading={isStreaming}
-                disabled={createChat.isPending}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                className={cn(
-                    "bg-secondary/50 border-white/10",
-                    (isDragOver || isDragActive) && "ring-1 ring-primary/60 border-primary/60"
+                {mentionQuery !== null && (
+                    <MentionDropdown
+                        boards={boardOptions}
+                        searches={searchOptions}
+                        chats={chatOptions}
+                        isLoadingBoards={isLoadingBoards}
+                        isLoadingSearches={isLoadingHistory}
+                        isLoadingChats={chatListQuery.isLoading}
+                        query={mentionQuery}
+                        onSelect={(type, item) => {
+                            if (type === 'board') {
+                                handleAddContextChip({ type: 'board', id: item.id, label: item.name });
+                            } else if (type === 'search') {
+                                handleAddContextChip({ type: 'search', id: item.id, label: item.query });
+                            } else if (type === 'chat') {
+                                handleAddContextChip({ type: 'chat', id: item.id, label: item.title || 'Chat' });
+                            }
+                        }}
+                    />
                 )}
-            >
-                {allChips.length > 0 && (
-                    <div className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 px-2 pt-2">
-                        {allChips.map((chip) => {
-                            const PlatformIcon = chip.type === 'media' ? getPlatformIcon(chip.platform) : null;
-                            return (
-                                <span
-                                    key={`${chip.type}-${chip.id}`}
-                                    className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
-                                >
-                                    {chip.type === 'board' && (
-                                        <>
-                                            <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
-                                            <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
-                                        </>
-                                    )}
-                                    {chip.type === 'chat' && (
-                                        <>
-                                            <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
-                                            <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
-                                        </>
-                                    )}
-                                    {chip.type === 'search' && (
-                                        <>
-                                            <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                                            <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
-                                        </>
-                                    )}
-                                    {chip.type === 'image' && (
-                                        <>
-                                            {chip.status === 'uploading' ? (
-                                                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                                            ) : (
-                                                <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                                            )}
-                                            <span className="truncate">{truncateText(chip.fileName, CHIP_TITLE_LIMIT)}</span>
-                                        </>
-                                    )}
-                                    {chip.type === 'media' && PlatformIcon && (
-                                        <>
-                                            <PlatformIcon className="text-[12px]" />
-                                            <span className="truncate" title={chip.title}>
-                                                {truncateText(chip.title, CHIP_TITLE_LIMIT)}
-                                            </span>
-                                        </>
-                                    )}
-                                    {chip.type === 'image' ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveImageChip(chip.id)}
-                                            className="rounded-full hover:text-foreground"
-                                            aria-label={`Remove ${chip.fileName}`}
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    ) : !chip.locked && (
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveChip(chip)}
-                                            className="rounded-full hover:text-foreground"
-                                            aria-label={`Remove ${chip.label}`}
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    )}
-                                </span>
-                            );
-                        })}
-                    </div>
-                )}
-                <PromptInputTextarea
-                    placeholder="Message agent..."
-                    className="text-sm min-h-[40px] text-foreground"
-                />
-                <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">
-                    <div className="flex items-center gap-2">
-                        <PromptInputAction tooltip="Attach image">
-                            <FileUploadTrigger asChild>
-                                <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-8 w-8 rounded-full"
-                                    disabled={createChat.isPending || isStreaming}
-                                >
-                                    <ImagePlus className="h-4 w-4" />
-                                </Button>
-                            </FileUploadTrigger>
-                        </PromptInputAction>
-                        <DropdownMenu modal={false}>
-                            <DropdownMenuTrigger asChild>
-                                <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-8 gap-1 rounded-full px-2 text-xs text-foreground/80"
-                                    onClick={(event) => event.stopPropagation()}
-                                >
-                                    <span className="max-w-[140px] truncate">{selectedModelLabel}</span>
-                                    <ChevronDown className="h-3.5 w-3.5" />
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start" className="bg-zinc-900 border-white/10 text-white">
-                                <DropdownMenuRadioGroup
-                                    value={selectedModel}
-                                    onValueChange={setSelectedModel}
-                                >
-                                    {MODEL_OPTIONS.map((option) => (
-                                        <DropdownMenuRadioItem
-                                            key={option.value}
-                                            value={option.value}
-                                            className="focus:bg-white/10 focus:text-white"
-                                        >
-                                            {option.label}
-                                        </DropdownMenuRadioItem>
-                                    ))}
-                                </DropdownMenuRadioGroup>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-                    </div>
-                    <div>
-                        {isStreaming ? (
-                            <PromptInputAction tooltip="Stop generating">
-                                <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-8 w-8 rounded-full"
-                                    onClick={handleStop}
-                                >
-                                    <Square className="h-4 w-4 fill-current" />
-                                </Button>
+                <PromptInput
+                    value={message}
+                    onValueChange={handleMessageChange}
+                    onSubmit={handleSend}
+                    isLoading={isStreaming}
+                    disabled={createChat.isPending}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className={cn(
+                        "bg-secondary/50 border-white/10",
+                        (isDragOver || isDragActive) && "ring-1 ring-primary/60 border-primary/60"
+                    )}
+                >
+                    {allChips.length > 0 && (
+                        <div className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 px-2 pt-2">
+                            {allChips.map((chip) => {
+                                const PlatformIcon = chip.type === 'media' ? getPlatformIcon(chip.platform) : null;
+                                return (
+                                    <span
+                                        key={`${chip.type}-${chip.id}`}
+                                        className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
+                                    >
+                                        {chip.type === 'board' && (
+                                            <>
+                                                <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                                <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
+                                            </>
+                                        )}
+                                        {chip.type === 'chat' && (
+                                            <>
+                                                <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                                <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
+                                            </>
+                                        )}
+                                        {chip.type === 'search' && (
+                                            <>
+                                                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                                <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
+                                            </>
+                                        )}
+                                        {chip.type === 'image' && (
+                                            <>
+                                                {chip.status === 'uploading' ? (
+                                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                                ) : (
+                                                    <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                                )}
+                                                <span className="truncate">{truncateText(chip.fileName, CHIP_TITLE_LIMIT)}</span>
+                                            </>
+                                        )}
+                                        {chip.type === 'media' && PlatformIcon && (
+                                            <>
+                                                <PlatformIcon className="text-[12px]" />
+                                                <span className="truncate" title={chip.title}>
+                                                    {truncateText(chip.title, CHIP_TITLE_LIMIT)}
+                                                </span>
+                                            </>
+                                        )}
+                                        {chip.type === 'image' ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveImageChip(chip.id)}
+                                                className="rounded-full hover:text-foreground"
+                                                aria-label={`Remove ${chip.fileName}`}
+                                            >
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                        ) : !chip.locked && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveChip(chip)}
+                                                className="rounded-full hover:text-foreground"
+                                                aria-label={`Remove ${chip.label}`}
+                                            >
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                        )}
+                                    </span>
+                                );
+                            })}
+                        </div>
+                    )}
+                    <PromptInputTextarea
+                        placeholder="Message agent..."
+                        className="text-sm min-h-[40px] text-foreground"
+                    />
+                    <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">
+                        <div className="flex items-center gap-2">
+                            <PromptInputAction tooltip="Attach image">
+                                <FileUploadTrigger asChild>
+                                    <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8 rounded-full"
+                                        disabled={createChat.isPending || isStreaming}
+                                    >
+                                        <ImagePlus className="h-4 w-4" />
+                                    </Button>
+                                </FileUploadTrigger>
                             </PromptInputAction>
-                        ) : (
-                            <PromptInputAction tooltip="Send message">
-                                <Button
-                                    size="icon"
-                                    variant="default"
-                                    className="h-8 w-8 rounded-full bg-foreground text-background hover:bg-foreground/90"
-                                    onClick={handleSend}
-                                    disabled={!message.trim() || createChat.isPending || imageChips.some((chip) => chip.status === 'uploading')}
-                                >
-                                    <ArrowUp className="h-4 w-4" />
-                                </Button>
-                            </PromptInputAction>
-                        )}
-                    </div>
-                </PromptInputActions>
-            </PromptInput>
-        </div>
+                            <DropdownMenu modal={false}>
+                                <DropdownMenuTrigger asChild>
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-8 gap-1 rounded-full px-2 text-xs text-foreground/80"
+                                        onClick={(event) => event.stopPropagation()}
+                                    >
+                                        <span className="max-w-[140px] truncate">{selectedModelLabel}</span>
+                                        <ChevronDown className="h-3.5 w-3.5" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start" className="bg-zinc-900 border-white/10 text-white">
+                                    <DropdownMenuRadioGroup
+                                        value={selectedModel}
+                                        onValueChange={setSelectedModel}
+                                    >
+                                        {MODEL_OPTIONS.map((option) => (
+                                            <DropdownMenuRadioItem
+                                                key={option.value}
+                                                value={option.value}
+                                                className="focus:bg-white/10 focus:text-white"
+                                            >
+                                                {option.label}
+                                            </DropdownMenuRadioItem>
+                                        ))}
+                                    </DropdownMenuRadioGroup>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        </div>
+                        <div>
+                            {isStreaming ? (
+                                <PromptInputAction tooltip="Stop generating">
+                                    <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8 rounded-full"
+                                        onClick={handleStop}
+                                    >
+                                        <Square className="h-4 w-4 fill-current" />
+                                    </Button>
+                                </PromptInputAction>
+                            ) : (
+                                <PromptInputAction tooltip="Send message">
+                                    <Button
+                                        size="icon"
+                                        variant="default"
+                                        className="h-8 w-8 rounded-full bg-foreground text-background hover:bg-foreground/90"
+                                        onClick={handleSend}
+                                        disabled={!message.trim() || createChat.isPending || imageChips.some((chip) => chip.status === 'uploading')}
+                                    >
+                                        <ArrowUp className="h-4 w-4" />
+                                    </Button>
+                                </PromptInputAction>
+                            )}
+                        </div>
+                    </PromptInputActions>
+                </PromptInput>
+            </div>
         </FileUpload>
     );
 }

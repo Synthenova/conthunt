@@ -4,7 +4,7 @@ import { useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useChatStore, type ToolCallInfo, type ChatMessage } from '@/lib/chatStore';
 import { useChatMessages } from '@/hooks/useChat';
-import { useMediaView, type MediaViewData } from '@/hooks/useMediaView';
+import { useMediaView } from '@/hooks/useMediaView';
 import { findMediaInResults, scrollToAndHighlight } from '@/hooks/useScrollToMedia';
 import {
     ChatContainerRoot,
@@ -23,14 +23,13 @@ import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { ContentDrawer } from '@/components/twelvelabs/ContentDrawer';
 import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus } from 'lucide-react';
 
-type MessageSegment = { type: 'text' | 'chip'; value: string };
-
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 
 const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
 const CONTEXT_FENCE_RE = /```context[\s\S]*?```/g;
-const PLATFORM_PREFIX_RE = /^([a-z0-9_]+)::\s*(.+)$/i;
-const CHIP_LABEL_LIMIT = 10;
+const CHIP_LABEL_LIMIT = 20;
+
+type MessageSegment = { type: 'text' | 'chip'; value: string };
 
 function getPlatformIcon(platform: string) {
     const normalized = platform.toLowerCase();
@@ -42,39 +41,88 @@ function getPlatformIcon(platform: string) {
 }
 
 function parseChipLabel(label: string) {
-    if (label.startsWith("{") && label.endsWith("}")) {
+    // New Pipe Format: type | id | [platform |] label
+    const parts = label.split('|').map(s => s.trim());
+
+    // Check if it's potentially JSON (legacy) to be safe, though we try to parse pipe first
+    // Actually, if it starts with { it's likely JSON.
+    if (label.trim().startsWith('{')) {
         try {
             const parsed = JSON.parse(label);
             if (parsed?.type === "media") {
                 const text = parsed.title || parsed.label || "Media";
                 const platform = parsed.platform || "";
                 return {
+                    type: "media",
+                    id: parsed.id,
                     text,
                     Icon: platform ? getPlatformIcon(platform) : undefined,
                 };
             }
             if (parsed?.type === "board") {
-                return { text: parsed.label || parsed.id || "Board", icon: "board" };
+                return { type: "board", id: parsed.id, text: parsed.label || parsed.id || "Board", icon: "board" };
             }
             if (parsed?.type === "search") {
-                return { text: parsed.label || parsed.id || "Search", icon: "search" };
+                return { type: "search", id: parsed.id, text: parsed.label || parsed.id || "Search", icon: "search" };
             }
             if (parsed?.type === "image") {
-                return { text: parsed.label || parsed.fileName || "Image", icon: "image" };
+                return { type: "image", id: parsed.id, text: parsed.label || parsed.fileName || "Image", icon: "image" };
             }
-        } catch (e) {
-            // Fall through to legacy parsing.
-        }
+        } catch { }
     }
 
-    const match = label.match(PLATFORM_PREFIX_RE);
-    if (!match) {
-        return { text: label };
+    const type = parts[0]?.toLowerCase();
+    const id = parts[1];
+
+    if (!type || !id) return { text: label };
+
+    if (type === "media") {
+        const platform = parts[3] ? parts[2] : ""; // Format: media|id|platform|title or media|id|title (if no platform, rare)
+        // Wait, format is media | id | platform | title
+        const title = parts[3] || parts[2] || "Media";
+        const plat = parts[2] || "";
+
+        return {
+            type: "media",
+            id,
+            text: title,
+            Icon: plat ? getPlatformIcon(plat) : undefined,
+            platform: plat
+        };
     }
 
-    const platform = match[1];
-    const text = match[2];
-    return { text, Icon: getPlatformIcon(platform) };
+    if (type === "board") {
+        const title = parts[2] || "Board";
+        return {
+            type: "board",
+            id,
+            text: title,
+            icon: "board"
+        };
+    }
+
+    if (type === "search") {
+        const query = parts[2] || "Search";
+        return {
+            type: "search",
+            id,
+            text: query,
+            icon: "search"
+        };
+    }
+
+    if (type === "image") {
+        const fileName = parts[2] || "Image";
+        return {
+            type: "image",
+            id,
+            text: fileName,
+            icon: "image"
+        };
+    }
+
+    // Fallback
+    return { text: label };
 }
 
 function truncateLabel(value: string) {
@@ -108,18 +156,6 @@ function parseMessageSegments(content: string): MessageSegment[] {
     return segments;
 }
 
-function extractPlainText(content: string | Array<any>) {
-    if (typeof content === 'string') return content;
-    if (!Array.isArray(content)) return '';
-    return content
-        .map((block) => {
-            if (!block || typeof block !== 'object') return '';
-            if (block.type === 'text') return block.text || '';
-            return '';
-        })
-        .join('');
-}
-
 function getImageLabelFromUrl(url?: string) {
     if (!url) return 'Image';
     try {
@@ -145,7 +181,7 @@ function extractImageAttachments(content: string | Array<any>) {
     }, []);
 }
 
-function buildHumanContent(content: string | Array<any>) {
+function buildContentString(content: string | Array<any>) {
     if (typeof content === 'string') return content;
     if (!Array.isArray(content)) return '';
 
@@ -156,20 +192,10 @@ function buildHumanContent(content: string | Array<any>) {
             parts.push(block.text || '');
             return;
         }
-        if (block.type === 'image_url' || block.type === 'image') {
-            return;
-        }
     });
 
     return parts.join('\n');
 }
-
-// Helper to extract tool info from messages
-// Helper to extract tool info from messages
-// ToolCallInfo is imported from chatStore
-
-
-
 
 function getToolDisplayName(name: string): string {
     switch (name) {
@@ -249,15 +275,90 @@ function ToolList({ tools }: { tools: ToolCallInfo[] }) {
     );
 }
 
-// ... 
+function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
+    msg: ChatMessage,
+    handleChipClick: (val: string, type?: string, id?: string) => void,
+    handleImageClick: (url: string) => void
+}) {
+    const isAi = msg.type === 'ai';
+    const contentStr = buildContentString(msg.content);
+    const segments = parseMessageSegments(contentStr);
 
-// In ChatMessageList render loop (History & Streaming):
+    // Extract images (mainly for user messages, but safety check)
+    const imageAttachments = extractImageAttachments(msg.content);
 
-<CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
-    <span>Thinking</span>
-    <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
-</CollapsibleTrigger>
+    return (
+        <div className="flex flex-col -gap-2">
+            {segments.map((segment, index) => {
+                if (segment.type === 'text') {
+                    if (!segment.value.trim()) return null;
+                    return (
+                        <div key={index} className="w-full">
+                            <MessageContent
+                                markdown={isAi}
+                                className={
+                                    !isAi
+                                        ? 'whitespace-pre-wrap' // Human: plain text
+                                        : 'bg-transparent p-0'  // AI: markdown
+                                }
+                            >
+                                {segment.value.trim()}
+                            </MessageContent>
+                        </div>
+                    );
+                } else {
+                    const chipMeta = parseChipLabel(segment.value);
+                    if (chipMeta.icon === "image") return null; // Handled via attachments if needed, or inline
 
+                    return (
+                        <div key={index} className="inline-block">
+                            <button
+                                type="button"
+                                onClick={() => handleChipClick(segment.value, chipMeta.type, chipMeta.id)}
+                                className="inline-flex items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
+                            >
+                                {chipMeta.icon === "board" && (
+                                    <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                )}
+                                {chipMeta.icon === "search" && (
+                                    <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                )}
+                                {chipMeta.icon === "image" && (
+                                    <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                )}
+                                {chipMeta.Icon && (
+                                    <chipMeta.Icon className="text-[12px]" />
+                                )}
+                                <span className="truncate max-w-[200px]" title={chipMeta.text}>
+                                    {truncateLabel(chipMeta.text || '')}
+                                </span>
+                            </button>
+                        </div>
+                    );
+                }
+            })}
+
+            {/* Render Image Attachments (usually at the end of user messages) */}
+            {imageAttachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-1">
+                    {imageAttachments.map((attachment, idx) => (
+                        <button
+                            type="button"
+                            key={`img-${idx}`}
+                            onClick={() => attachment.url && handleImageClick(attachment.url)}
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
+                        >
+                            <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="truncate" title={attachment.label}>
+                                {truncateLabel(attachment.label)}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
 
 export function ChatMessageList({ isContextLoading = false }: { isContextLoading?: boolean }) {
     const {
@@ -276,41 +377,38 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
     const { isLoading, isFetching } = useChatMessages(activeChatId);
 
     const router = useRouter();
-    const { fetchMediaView, isLoading: isLoadingMedia } = useMediaView();
+    const { fetchMediaView } = useMediaView();
 
     // State for interactive chips
     const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
     const [drawerItem, setDrawerItem] = useState<any | null>(null);
 
     // Handle chip clicks based on type
-    const handleChipClick = useCallback(async (chipValue: string) => {
-        // Parse the chip JSON
-        let chipData: any;
-        try {
-            chipData = JSON.parse(chipValue);
-        } catch {
-            return; // Not a valid JSON chip
+    const handleChipClick = useCallback(async (chipValue: string, type?: string, id?: string) => {
+        let targetType = type;
+        let targetId = id;
+
+        if (!targetType || !targetId) {
+            const chipMeta = parseChipLabel(chipValue);
+            if (chipMeta.type && chipMeta.id) {
+                targetType = chipMeta.type;
+                targetId = chipMeta.id;
+            }
         }
 
-        const { type, id } = chipData;
+        if (!targetType || !targetId) return;
 
-        if (type === 'board' && id) {
-            router.push(`/app/boards/${id}`);
-        } else if (type === 'search' && id && activeChatId) {
-            router.push(`/app/chats/${activeChatId}?search=${id}`);
-        } else if (type === 'image') {
-            // For image chips, we need to find the URL from the message content
-            // The URL is stored in the attachment, not in the chip itself
-            // This will be handled separately via image attachments
-        } else if (type === 'media' && id) {
-            console.log('[MediaChip] Clicked media chip with id:', id);
-            console.log('[MediaChip] currentCanvasPage:', currentCanvasPage);
+        if (targetType === 'board') {
+            router.push(`/app/boards/${targetId}`);
+        } else if (targetType === 'search' && activeChatId) {
+            router.push(`/app/chats/${activeChatId}?search=${targetId}`);
+        } else if (targetType === 'media') {
+            console.log('[MediaChip] Clicked media chip with id:', targetId);
 
             const openContentDrawer = async (mediaId: string) => {
                 console.log('[MediaChip] Opening ContentDrawer for id:', mediaId);
                 try {
                     const data = await fetchMediaView(mediaId);
-                    console.log('[MediaChip] fetchMediaView result:', data ? 'found' : 'null');
                     if (data) {
                         setDrawerItem({
                             id: data.id,
@@ -329,7 +427,6 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                 { id: data.id, asset_type: data.asset_type }
                             ],
                         });
-                        console.log('[MediaChip] Drawer item set');
                     }
                 } catch (error) {
                     console.error('[MediaChip] Error opening content drawer:', error);
@@ -338,89 +435,64 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
 
             // Only attempt scroll if we're on a board or chat page
             if (currentCanvasPage === 'chat') {
-                // On chat page - search through keyword tabs
-                const match = findMediaInResults(id, canvasResultsMap);
-                console.log('[MediaChip] findMediaInResults result:', match);
+                const match = findMediaInResults(targetId, canvasResultsMap);
 
                 if (match) {
-                    console.log('[MediaChip] Found in tab:', match.searchId);
-                    // Switch tab if needed
                     if (match.searchId !== canvasActiveSearchId) {
-                        console.log('[MediaChip] Switching tab from', canvasActiveSearchId, 'to', match.searchId);
                         setCanvasActiveSearchId(match.searchId);
-                        // Wait for DOM update after tab switch, then scroll with retry
-                        // We poll for the element because virtualization/rendering might take a moment
                         requestAnimationFrame(() => {
                             let attempts = 0;
-                            const maxAttempts = 20; // Try for ~2 seconds
+                            const maxAttempts = 20;
                             const interval = setInterval(() => {
                                 attempts++;
-                                console.log(`[MediaChip] Scroll attempt ${attempts}/${maxAttempts}`);
-
-                                const scrollResult = scrollToAndHighlight(id);
+                                const scrollResult = scrollToAndHighlight(targetId as string);
                                 if (scrollResult) {
-                                    console.log('[MediaChip] Scroll successful');
                                     clearInterval(interval);
                                     return;
                                 }
-
                                 if (attempts >= maxAttempts) {
-                                    console.log('[MediaChip] Scroll timed out, falling back to ContentDrawer');
                                     clearInterval(interval);
-                                    openContentDrawer(id);
+                                    openContentDrawer(targetId as string);
                                 }
                             }, 100);
                         });
                         return;
                     } else {
-                        // Same tab, try to scroll immediately
-                        const scrollResult = scrollToAndHighlight(id);
-                        console.log('[MediaChip] scrollToAndHighlight same tab result:', scrollResult);
+                        const scrollResult = scrollToAndHighlight(targetId);
                         if (scrollResult) return;
 
-                        // If immediate scroll fails (e.g. virtualized out of view), 
-                        // we can't easily scroll to it without virtualization hook access.
-                        // So we fallback to drawer.
-                        // BUT, maybe we should retry just in case it's a render race?
-                        // Let's retry briefly (500ms) before giving up, to be safe.
                         let attempts = 0;
                         const maxAttempts = 5;
                         const interval = setInterval(() => {
                             attempts++;
-                            const retryResult = scrollToAndHighlight(id);
+                            const retryResult = scrollToAndHighlight(targetId as string);
                             if (retryResult) {
                                 clearInterval(interval);
                                 return;
                             }
                             if (attempts >= maxAttempts) {
-                                console.log('[MediaChip] Same-tab scroll failed after retries, opening drawer');
                                 clearInterval(interval);
-                                openContentDrawer(id);
+                                openContentDrawer(targetId as string);
                             }
                         }, 100);
                     }
                 } else {
-                    // If no match found in current results, open content drawer
-                    await openContentDrawer(id);
+                    await openContentDrawer(targetId);
                 }
             } else if (currentCanvasPage === 'board') {
-                // On board page - look in canvasBoardItems
                 const boardMatch = canvasBoardItems.find((item) => {
                     const videoAsset = item.assets?.find((a: any) => a.asset_type === 'video');
-                    return videoAsset?.id === id;
+                    return videoAsset?.id === targetId;
                 });
-                console.log('[MediaChip] Board item match:', boardMatch?.id);
 
                 if (boardMatch) {
-                    const scrollResult = scrollToAndHighlight(id);
-                    console.log('[MediaChip] scrollToAndHighlight board result:', scrollResult);
+                    const scrollResult = scrollToAndHighlight(targetId);
                     if (scrollResult) return;
                 }
+                await openContentDrawer(targetId);
+            } else {
+                await openContentDrawer(targetId);
             }
-
-            // Not on board/chat page, video not found, or scroll failed → open ContentDrawer
-            console.log('[MediaChip] Video not found on page or scroll failed, opening ContentDrawer');
-            await openContentDrawer(id);
         }
     }, [router, activeChatId, fetchMediaView, canvasResultsMap, canvasActiveSearchId, setCanvasActiveSearchId, canvasBoardItems, currentCanvasPage]);
 
@@ -526,8 +598,6 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
         );
     }
 
-
-
     return (
         <>
             <ChatContainerRoot className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-4 py-4">
@@ -561,110 +631,19 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
 
                             return (
                                 <Message key={item.id} className={msg.type === 'human' ? 'justify-end' : 'justify-start'}>
-                                    <MessageContent
-                                        markdown={msg.type === 'ai'}
+                                    <div
                                         className={
                                             msg.type === 'human'
-                                                ? 'glass max-w-[85%] text-foreground whitespace-pre-wrap shadow-lg border-primary/20 bg-primary/10'
+                                                ? 'glass max-w-[85%] text-foreground shadow-lg border-primary/20 bg-primary/10 rounded-xl p-3'
                                                 : 'bg-transparent max-w-[95%] text-foreground p-0'
                                         }
                                     >
-                                        {msg.type === 'human' ? (
-                                            (() => {
-                                                const segments = parseMessageSegments(buildHumanContent(msg.content));
-                                                const groups: { type: 'text' | 'chip-group'; value?: string; items?: string[] }[] = [];
-
-                                                let currentGroup: string[] = [];
-
-                                                segments.forEach((seg) => {
-                                                    if (seg.type === 'chip') {
-                                                        currentGroup.push(seg.value);
-                                                    } else {
-                                                        if (currentGroup.length > 0) {
-                                                            groups.push({ type: 'chip-group', items: [...currentGroup] });
-                                                            currentGroup = [];
-                                                        }
-                                                        groups.push({ type: 'text', value: seg.value });
-                                                    }
-                                                });
-
-                                                if (currentGroup.length > 0) {
-                                                    groups.push({ type: 'chip-group', items: [...currentGroup] });
-                                                }
-
-                                                const imageAttachments = extractImageAttachments(msg.content);
-                                                if (imageAttachments.length && !groups.some((g) => g.type === 'chip-group')) {
-                                                    groups.unshift({ type: 'chip-group', items: [] });
-                                                }
-
-                                                let attachmentsInserted = false;
-                                                return groups.map((group, groupIndex) => {
-                                                    if (group.type === 'chip-group' && group.items) {
-                                                        const attachmentItems = !attachmentsInserted ? imageAttachments : [];
-                                                        attachmentsInserted = attachmentsInserted || attachmentItems.length > 0;
-                                                        return (
-                                                            <div
-                                                                key={`${msg.id}-group-${groupIndex}`}
-                                                                className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 max-w-full align-bottom mb-1"
-                                                            >
-                                                                {group.items.map((chipValue, chipIndex) => {
-                                                                    const chipMeta = parseChipLabel(chipValue);
-                                                                    if (chipMeta.icon === "image") {
-                                                                        return null;
-                                                                    }
-                                                                    return (
-                                                                        <button
-                                                                            type="button"
-                                                                            key={`${msg.id}-chip-${groupIndex}-${chipIndex}`}
-                                                                            onClick={() => handleChipClick(chipValue)}
-                                                                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
-                                                                        >
-                                                                            {chipMeta.icon === "board" && (
-                                                                                <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                            )}
-                                                                            {chipMeta.icon === "search" && (
-                                                                                <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                            )}
-                                                                            {chipMeta.icon === "image" && (
-                                                                                <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                            )}
-                                                                            {chipMeta.Icon && (
-                                                                                <chipMeta.Icon className="text-[12px]" />
-                                                                            )}
-                                                                            <span className="truncate" title={chipMeta.text}>
-                                                                                {truncateLabel(chipMeta.text)}
-                                                                            </span>
-                                                                        </button>
-                                                                    );
-                                                                })}
-                                                                {attachmentItems.map((attachment, attachmentIndex) => (
-                                                                    <button
-                                                                        type="button"
-                                                                        key={`${msg.id}-image-${groupIndex}-${attachmentIndex}`}
-                                                                        onClick={() => attachment.url && handleImageClick(attachment.url)}
-                                                                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
-                                                                    >
-                                                                        <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                        <span className="truncate" title={attachment.label}>
-                                                                            {truncateLabel(attachment.label)}
-                                                                        </span>
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        );
-                                                    } else {
-                                                        return (
-                                                            <span key={`${msg.id}-text-${groupIndex}`} className="block">
-                                                                {group.value}
-                                                            </span>
-                                                        );
-                                                    }
-                                                });
-                                            })()
-                                        ) : (
-                                            extractPlainText(msg.content)
-                                        )}
-                                    </MessageContent>
+                                        <RenderedMessageContent
+                                            msg={msg}
+                                            handleChipClick={handleChipClick}
+                                            handleImageClick={handleImageClick}
+                                        />
+                                    </div>
                                 </Message>
                             );
                         }
@@ -691,12 +670,13 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                     {/* Streaming AI message */}
                     {isStreaming && streamingContent && (
                         <Message className="justify-start">
-                            <MessageContent
-                                markdown={true}
-                                className="bg-transparent max-w-[95%] text-foreground p-0"
-                            >
-                                {streamingContent}
-                            </MessageContent>
+                            <div className="bg-transparent max-w-[95%] text-foreground p-0">
+                                <RenderedMessageContent
+                                    msg={{ id: 'streaming', type: 'ai', content: streamingContent }}
+                                    handleChipClick={handleChipClick}
+                                    handleImageClick={handleImageClick}
+                                />
+                            </div>
                         </Message>
                     )}
                     {isStreaming && !streamingContent && (
@@ -715,7 +695,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
             <ImageLightbox
                 isOpen={!!lightboxUrl}
                 onClose={() => setLightboxUrl(null)}
-                imageUrl={lightboxUrl}
+                imageUrl={lightboxUrl!}
             />
 
             {/* Media Content Drawer */}
