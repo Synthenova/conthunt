@@ -55,6 +55,7 @@ from app.db.queries.twelvelabs import (
     update_twelvelabs_asset_status,
     get_user_twelvelabs_assets,
     get_twelvelabs_id_for_media_asset,
+    resolve_indexed_asset_ids_to_media,
 )
 
 # Analysis queries (Gemini-based)
@@ -141,6 +142,7 @@ __all__ = [
     "upsert_twelvelabs_asset",
     "update_twelvelabs_asset_status",
     "get_user_twelvelabs_assets",
+    "resolve_indexed_asset_ids_to_media",
     "get_video_analysis_by_media_asset",
     "get_video_analyses_by_media_assets",
     "insert_video_analysis",

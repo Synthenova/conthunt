@@ -444,14 +444,32 @@ export function useSendMessage() {
                                         }
                                     }
 
-                                    if (output?.search_ids) {
-                                        const newTags: Array<{ id: string; label?: string }> = [];
-                                        output.search_ids.forEach((s: any) => {
-                                            if (s.search_id) {
-                                                addCanvasSearchId(s.search_id, s.keyword);
-                                                newTags.push({ id: s.search_id, label: s.keyword });
+                                    const newTags: Array<{ id: string; label?: string }> = [];
+
+                                    // Handle new structure (generated_queries with metadata)
+                                    if (output?.generated_queries && Array.isArray(output.generated_queries)) {
+                                        output.generated_queries.forEach((q: any) => {
+                                            if (q.search_id) {
+                                                addCanvasSearchId(q.search_id, q.keyword);
+                                                newTags.push({ id: q.search_id, label: q.keyword });
                                             }
                                         });
+                                    }
+                                    // Handle legacy structure (search_ids as objects) 
+                                    // Note: New structure has search_ids as strings, which we skip here as we need keywords
+                                    else if (output?.search_ids && Array.isArray(output.search_ids)) {
+                                        // Only process if it looks like the old object format
+                                        if (output.search_ids.length > 0 && typeof output.search_ids[0] === 'object') {
+                                            output.search_ids.forEach((s: any) => {
+                                                if (s.search_id) {
+                                                    addCanvasSearchId(s.search_id, s.keyword);
+                                                    newTags.push({ id: s.search_id, label: s.keyword });
+                                                }
+                                            });
+                                        }
+                                    }
+
+                                    if (newTags.length > 0) {
                                         // Optimistically update chat-tags cache so tabs appear during stream
                                         const key = ['chat-tags', targetChatId];
                                         const prev = queryClient.getQueryData<any[]>(key) || [];

@@ -18,11 +18,12 @@ from app.agent.tools import (
     get_board_items,
     get_search_items,
     search,
+    search_my_videos,
     report_step,
     get_chat_searches,
 )
 # Define tools available to the agent
-tools = [report_step, get_video_analysis, get_board_items, get_search_items, search, get_chat_searches]
+tools = [report_step, get_video_analysis, get_board_items, get_search_items, search, search_my_videos, get_chat_searches]
 
 # Base system prompt
 BASE_SYSTEM_PROMPT = """You are a helpful content assistant for the ContHunt platform.
@@ -30,7 +31,8 @@ You help users find, analyze, and manage video content across multiple platforms
 
 Tools available:
 - `report_step(step)`: Report what you're doing to the user. Call before major actions.
-- `search(queries)`: Trigger searches for content. Takes list of {{keyword, platforms}}. Returns search IDs.
+- `search()`: **DISCOVER NEW CONTENT** - Search TikTok, Instagram, YouTube for new videos. Returns search IDs.
+- `search_my_videos(query, board_id?)`: **SEARCH USER'S LIBRARY** - Search within videos the user has already saved to their boards.
 - `get_search_items(search_id)`: Get video results from a completed search.
 - `get_board_items(board_id)`: Get videos from a user's board.
 - `get_video_analysis(media_asset_id)`: Get AI analysis (summary, topics, hashtags) for a video.
@@ -38,12 +40,21 @@ Tools available:
 Guidelines:
 
 **Progress Reporting:**
-- Always call report_step() before calling search, get_search_items, get_board_items, or get_video_analysis.
-- Example: report_step("Searching for ski content and others..") then search(...)
+- Always call report_step() before calling search, search_my_videos, get_search_items, get_board_items, or get_video_analysis.
+- Example: report_step("Searching for ski content..") then search(...)
 
-**Searching for Content:**
-- When user asks to search/find content, generate relevant keywords and call `search()`.
-- If user specifies platforms (e.g., "search TikTok"), use those. Otherwise, search all platforms.
+**TWO TYPES OF SEARCH - CHOOSE WISELY:**
+1. `search()` - Use when user wants to DISCOVER NEW content from external platforms (TikTok, Instagram, YouTube).
+   - User says: "find me ski videos", "search for cooking content", "look for trending fitness videos"
+   - This searches EXTERNAL platforms and returns NEW videos the user hasn't seen.
+
+2. `search_my_videos(query, board_id?)` - Use when user wants to search WITHIN their OWN saved videos.
+   - User says: "search my videos for cooking", "find in my library", "look through my boards for..."
+   - User mentions "my videos", "my content", "videos I saved", "in my boards"
+   - This uses TwelveLabs AI to search visual/audio/transcription of indexed videos.
+   - Optionally filter to a specific board with board_id.
+
+**Searching for New Content (search tool):**
 - The search() tool returns search IDs. You must then call `get_search_items()` to get results.
 - If get_search_items() says "still running", tell the user to wait and try again next turn.
 

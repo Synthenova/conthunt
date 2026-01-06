@@ -5,13 +5,17 @@ user data like boards, videos, and analysis.
 """
 import os
 from uuid import UUID
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Annotated
 import httpx
+from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.prebuilt import InjectedState
 
 from app.core import get_settings
 from app.agent.analysis_inline import run_inline_video_analysis
+from app.agent.model_factory import init_chat_model
 
 settings = get_settings()
 
@@ -36,7 +40,7 @@ async def _get_headers(config: RunnableConfig) -> Dict[str, str]:
 async def report_step(step: str, config: RunnableConfig) -> str:
     """
     Report a thinking step to the user.
-    Call this before each major action to explain what you're about to do.
+    Call this because the user likes to know what you are doing.
     
     Args:
         step: Brief description of current step (e.g., "Analyzing your request", "Searching for content")
@@ -96,26 +100,38 @@ async def get_board_items(
 
 
 @tool
-async def search_videos(
+async def search_my_videos(
     query: str,
     config: RunnableConfig,
     board_id: Optional[str] = None,
     search_options: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Search for specific moments across the user's indexed videos.
+    Search the user's OWN indexed video library for specific moments.
     
-    This searches across visual content, audio, and transcription 
-    to find clips matching your query.
+    USE THIS TOOL when the user wants to search within videos they have ALREADY saved to their boards.
+    This uses TwelveLabs AI to search across visual content, audio, and transcription.
+    
+    DO NOT use this for finding NEW content - use the `search` tool instead for discovering 
+    new videos from TikTok, Instagram, YouTube, etc.
     
     Args:
         query: What to search for (e.g., "someone cooking pasta", "talking about AI").
         board_id: Optional. Limit search to videos in a specific board.
-                  If not provided, searches all user's videos across all boards.
+                  If not provided, searches ALL user's indexed videos across all boards.
         search_options: Types of content to search: ["visual", "audio", "transcription"].
                        Default is all three.
+    
+    Returns:
+        Search results with video clips, timestamps, thumbnails, and relevance ranking.
     """
     try:
+        from app.core import logger
+        from app.db.session import get_db_connection
+        from app.db.queries.twelvelabs import resolve_indexed_asset_ids_to_media
+        
+        logger.info(f"[search_my_videos] INPUT: query={query!r}, board_id={board_id}, search_options={search_options}")
+        
         headers = await _get_headers(config)
         if not headers.get("Authorization"):
             return {"error": "Authentication required. Please provide x-auth-token."}
@@ -131,10 +147,45 @@ async def search_videos(
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+        
+        # Resolve TwelveLabs video_ids to media details
+        raw_clips = result.get("data", [])
+        if not raw_clips:
+            return {"clips": [], "count": 0}
+        
+        # Get unique video_ids (TwelveLabs indexed_asset_ids)
+        video_ids = list(set(clip["video_id"] for clip in raw_clips))
+        
+        # Resolve to media details
+        async with get_db_connection() as conn:
+            id_mapping = await resolve_indexed_asset_ids_to_media(conn, video_ids)
+        
+        # Build clean response
+        clips = []
+        for clip in raw_clips:
+            video_id = clip["video_id"]
+            media_info = id_mapping.get(video_id, {})
+            
+            clips.append({
+                "media_asset_id": media_info.get("media_asset_id"),
+                "title": media_info.get("title"),
+                "platform": media_info.get("platform"),
+                "start": clip.get("start"),
+                "end": clip.get("end"),
+                "confidence": clip.get("confidence"),
+            })
+        
+        logger.info(f"[search_my_videos] OUTPUT: {len(clips)} clips resolved")
+        return {"clips": clips, "count": len(clips)}
+        
     except httpx.HTTPStatusError as e:
+        from app.core import logger
+        logger.error(f"[search_my_videos] HTTP ERROR: {e.response.text}")
         return {"error": f"Search failed: {e.response.text}"}
     except Exception as e:
+        from app.core import logger
+        logger.error(f"[search_my_videos] ERROR: {str(e)}")
         return {"error": f"Search error: {str(e)}"}
 
 
@@ -235,29 +286,24 @@ async def get_chat_searches(
         return {"error": f"Error fetching chat searches: {str(e)}"}
 
 
+class SearchQuery(BaseModel):
+    keyword: str = Field(description="The search keyword")
+
+class SearchKeywords(BaseModel):
+    queries: List[SearchQuery] = Field(description="List of search queries to execute")
+
+
 @tool
 async def search(
-    queries: List[Dict[str, Any]],
+    state: Annotated[dict, InjectedState],
     config: RunnableConfig,
 ) -> Dict[str, Any]:
     """
-    Trigger content searches across platforms. Returns search IDs immediately.
-    Searches run asynchronously - use get_search_items() later to retrieve results.
+    Trigger content searches based on the current conversation context.
     
-    Args:
-        queries: List of search queries. Each query is a dict with:
-            - keyword (str): The search term (e.g., "compressible sofas")
-            - platforms (List[str]): Platform slugs to search. If empty, uses all platforms.
-              Available: tiktok_top, tiktok_keyword, instagram_reels, youtube
-    
-    Returns:
-        Dict with 'search_ids' list and instructions for next steps.
-    
-    Example:
-        search([
-            {"keyword": "compressible sofas", "platforms": []},
-            {"keyword": "vacuum furniture", "platforms": ["tiktok_keyword"]}
-        ])
+    Call this tool when the user expresses a desire to find content, videos, or inspiration.
+    You do NOT need to provide arguments; this tool will analyze the conversation history
+    to generate the best search queries automatically.
     """
     try:
         headers = await _get_headers(config)
@@ -266,31 +312,50 @@ async def search(
 
         configurable = config.get("configurable", {}) if config else {}
         chat_id = configurable.get("chat_id")
-        # Negative counter to ensure top ordering if needed
-        next_sort_order = -1
+        
+        
+        # 1. Initialize Gemini 3 Pro for intent detection
+        llm = init_chat_model("google/gemini-3-pro-preview")
+        structured_llm = llm.with_structured_output(SearchKeywords)
 
+        # 2. Extract messages for context
+        messages = state.get("messages", [])
+        
+        # 3. Generate keywords
+        system_msg = SystemMessage(content="""
+        You are a search expert. Analyze the conversation history and user request to understand their intent.
+        Generate 3 to 5 distinct, high-quality search queries that will help the user find what they are looking for.
+        For each query, provide ONLY the keyword.
+        Focus on finding content related to the user's request.
+        """)
+        
+        # Invoke the model
+        try:
+           # We pass the conversation history + system prompt
+           response = await structured_llm.ainvoke([system_msg] + messages)
+        except Exception as llm_err:
+             return {"error": f"Failed to generate search keywords: {str(llm_err)}"}
+
+        if not response or not response.queries:
+             return {"error": "Could not generate valid search queries."}
+
+        queries = response.queries
         search_ids = []
         errors = []
-        
-        for query in queries:
-            keyword = query.get("keyword", "")
-            platforms = query.get("platforms", [])
+        results_info = []
+
+        import asyncio
+
+        async def _execute_single_search(query_item, sort_order_val):
+            keyword = query_item.keyword
             
             if not keyword:
-                continue
+                return None
+
+            # Always search all available platforms
+            platforms_list = AVAILABLE_PLATFORMS
+            inputs = {platform: {} for platform in platforms_list}
             
-            # If no platforms specified, use all available
-            if not platforms:
-                platforms = AVAILABLE_PLATFORMS
-            
-            # Build inputs dict for each platform
-            inputs = {platform: {} for platform in platforms if platform in AVAILABLE_PLATFORMS}
-            
-            if not inputs:
-                errors.append(f"No valid platforms for '{keyword}'")
-                continue
-            
-            # POST /v1/search
             url = f"{_get_api_base_url()}/search"
             payload = {
                 "query": keyword,
@@ -299,45 +364,66 @@ async def search(
             
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(url, headers=headers, json=payload)
-                    response.raise_for_status()
-                    result = response.json()
-                    search_id = result.get("search_id")
-                    if search_id:
-                        search_ids.append({
-                            "search_id": search_id,
-                            "keyword": keyword,
-                            "platforms": list(inputs.keys())
-                        })
+                    resp = await client.post(url, headers=headers, json=payload)
+                    resp.raise_for_status()
+                    result = resp.json()
+                    s_id = result.get("search_id")
+                    
+                    if s_id:
+                        # Tag it
                         if chat_id:
                             try:
                                 tag_url = f"{_get_api_base_url()}/chats/{chat_id}/tags"
                                 tag_payload = {
                                     "tags": [{
                                         "type": "search",
-                                        "id": search_id,
+                                        "id": s_id,
                                         "label": keyword,
                                         "source": "agent",
-                                        "sort_order": next_sort_order,
+                                        "sort_order": sort_order_val,
                                     }]
                                 }
                                 await client.post(tag_url, headers=headers, json=tag_payload)
-                                next_sort_order -= 1
                             except Exception as tag_err:
-                                errors.append(f"Tagged search but failed to save to chat: {tag_err}")
+                                return {"error": f"Tagged search but failed to save to chat: {tag_err}"}
+                        
+                        return {
+                            "search_id": s_id,
+                            "keyword": keyword,
+                            "platforms": list(inputs.keys())
+                        }
             except Exception as e:
-                errors.append(f"Failed to start search for '{keyword}': {str(e)}")
+                return {"error": f"Failed to start search for '{keyword}': {str(e)}"}
+            return None
+
+        # Execute parallel searches
+        tasks = []
+        # sort_order: -1, -2, -3...
+        for idx, q in enumerate(queries):
+            tasks.append(_execute_single_search(q, -(idx + 1)))
+        
+        results = await asyncio.gather(*tasks)
+
+        for res in results:
+            if not res:
+                continue
+            if "error" in res:
+                errors.append(res["error"])
+            elif "search_id" in res:
+                search_ids.append(res["search_id"])
+                results_info.append(res)
         
         if not search_ids and errors:
             return {"error": "; ".join(errors)}
         
         return {
             "search_ids": search_ids,
-            "message": f"Started {len(search_ids)} search(es). Use get_search_items(search_id) to retrieve results once complete. If results aren't ready yet, inform the user and try again next turn.",
+            "generated_queries": results_info,
+            "message": f"I have started {len(search_ids)} searches for you: {', '.join([q['keyword'] for q in results_info])}. Use get_search_items(search_id) to retrieve results once complete. Please report strictly the started searches to the user.",
             "errors": errors if errors else None
         }
     except Exception as e:
-        return {"error": f"Search error: {str(e)}"}
+        return {"error": f"Search tool error: {str(e)}"}
 
 
 @tool

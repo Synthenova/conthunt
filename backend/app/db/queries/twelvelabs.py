@@ -186,3 +186,42 @@ async def get_twelvelabs_id_for_media_asset(
     )
     row = result.fetchone()
     return row[0] if row else None
+
+
+@log_query_timing
+async def resolve_indexed_asset_ids_to_media(
+    conn: AsyncConnection,
+    indexed_asset_ids: list[str],
+) -> dict[str, dict]:
+    """
+    Resolve a list of TwelveLabs indexed_asset_ids to media asset details.
+    
+    Returns a dict mapping indexed_asset_id -> {media_asset_id, title, platform}.
+    """
+    if not indexed_asset_ids:
+        return {}
+    
+    result = await conn.execute(
+        text("""
+            SELECT 
+                ta.indexed_asset_id,
+                ta.media_asset_id,
+                ci.title,
+                ci.platform
+            FROM twelvelabs_assets ta
+            JOIN media_assets ma ON ta.media_asset_id = ma.id
+            JOIN content_items ci ON ma.content_item_id = ci.id
+            WHERE ta.indexed_asset_id = ANY(:ids)
+        """),
+        {"ids": indexed_asset_ids}
+    )
+    
+    mapping = {}
+    for row in result.fetchall():
+        mapping[row[0]] = {
+            "media_asset_id": str(row[1]),
+            "title": row[2],
+            "platform": row[3],
+        }
+    return mapping
+
