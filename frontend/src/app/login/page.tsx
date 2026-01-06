@@ -1,13 +1,28 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import firebase from "@/lib/firebaseClient";
 import { auth } from "@/lib/firebaseClient";
-import { LoginForm } from "@/components/login-form";
-import { GalleryVerticalEnd } from "lucide-react";
+import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
+import { GrainGradient } from "@paper-design/shaders-react";
+import { Loader2 } from "lucide-react";
 
 export default function LoginPage() {
     const [isLoggingIn, setIsLoggingIn] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+
+    const handleGoogleLogin = async () => {
+        try {
+            setLoading(true);
+            setError("");
+            const provider = new GoogleAuthProvider();
+            await signInWithPopup(auth, provider);
+        } catch (e: any) {
+            console.error("Google login error", e);
+            setError(e.message);
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -102,37 +117,89 @@ export default function LoginPage() {
 
     if (isLoggingIn) {
         return (
-            <div className="flex h-screen items-center justify-center">
-                <h1 className="text-xl font-bold animate-pulse">Logging you in...</h1>
+            <div className="fixed inset-0 flex items-center justify-center bg-black">
+                <GrainGradient
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+                    colors={["#7300ff", "#eba8ff", "#00bfff", "#2b00ff"]}
+                    colorBack="#000000"
+                    softness={0.67}
+                    intensity={0.26}
+                    noise={0.24}
+                    shape="corners"
+                    speed={1}
+                    rotation={128}
+                    offsetX={0.22}
+                    offsetY={-0.04}
+                />
+                <h1 className="relative z-10 text-xl font-bold text-white animate-pulse">Logging you in...</h1>
             </div>
-        )
+        );
     }
 
     return (
-        <div className="grid min-h-svh lg:grid-cols-2">
-            <div className="flex flex-col gap-4 p-6 md:p-10">
-                <div className="flex justify-center gap-2 md:justify-start">
-                    <a href="#" className="flex items-center gap-2 font-medium">
-                        <div className="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md">
-                            <GalleryVerticalEnd className="size-4" />
-                        </div>
-                        ContHunt
-                    </a>
-                </div>
-                <div className="flex flex-1 items-center justify-center">
-                    <div className="w-full max-w-xs">
-                        <LoginForm />
+        <div className="fixed inset-0 flex items-center bg-black">
+            {/* GrainGradient Background */}
+            <GrainGradient
+                style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+                colors={["#7300ff", "#eba8ff", "#00bfff", "#2b00ff"]}
+                colorBack="#000000"
+                softness={0.67}
+                intensity={0.26}
+                noise={0.24}
+                shape="corners"
+                speed={1}
+                rotation={128}
+                offsetX={0.22}
+                offsetY={-0.04}
+            />
+
+            {/* Login Content */}
+            <div className="relative z-10 flex flex-col items-center gap-6 ml-[8%] md:ml-[12%] w-full max-w-sm">
+                {/* Heading */}
+                <h1 className="text-xl md:text-2xl tracking-[0.25em] text-white font-light whitespace-nowrap">
+                    LOG IN TO <span className="font-bold">CONTHUNT</span>
+                </h1>
+
+                {/* Error Message */}
+                {error && (
+                    <div className="w-full p-3 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl text-center">
+                        {error}
                     </div>
-                </div>
-            </div>
-            <div className="bg-black relative hidden lg:block overflow-hidden">
-                <img
-                    src="/images/login_hero.png"
-                    alt="Conthunt Branding"
-                    className="absolute inset-0 h-full w-full object-cover opacity-60 scale-105 animate-pulse duration-[10000ms]"
-                />
-                <div className="absolute inset-0 bg-gradient-to-r from-background via-transparent to-transparent" />
-                <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
+                )}
+
+                {/* Google Sign-in Button */}
+                <button
+                    type="button"
+                    onClick={handleGoogleLogin}
+                    disabled={loading}
+                    className="glass-button w-fit py-4 px-12 text-base font-medium text-white/90 tracking-wide mt-2 hover:text-white transition-colors"
+                >
+                    {loading ? (
+                        <Loader2 className="mr-3 h-5 w-5 animate-spin" />
+                    ) : (
+                        <div className="flex items-center gap-3">
+                            <span>sign in with</span>
+                            <svg className="h-5 w-5" viewBox="0 0 24 24">
+                                <path
+                                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                                    fill="currentColor"
+                                />
+                                <path
+                                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                                    fill="currentColor"
+                                />
+                                <path
+                                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.84z"
+                                    fill="currentColor"
+                                />
+                                <path
+                                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 2.09 3.99 4.56 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                                    fill="currentColor"
+                                />
+                            </svg>
+                        </div>
+                    )}
+                </button>
             </div>
         </div>
     );

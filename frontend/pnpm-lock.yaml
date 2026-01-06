@@ -11,6 +11,9 @@ importers:
       '@microsoft/fetch-event-source':
         specifier: ^2.0.1
         version: 2.0.1
+      '@paper-design/shaders-react':
+        specifier: ^0.0.68
+        version: 0.0.68(@types/react@19.2.7)(react@19.2.1)
       '@radix-ui/react-alert-dialog':
         specifier: ^1.1.15
         version: 1.1.15(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
@@ -828,6 +831,18 @@ packages:
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
     engines: {node: '>=8.0.0'}
+
+  '@paper-design/shaders-react@0.0.68':
+    resolution: {integrity: sha512-RaL/OCfaPVyVcPHJnemRuobfgseq1Pb5d4ktjclCmKprUe5Ac5WsexFuJBHpIfrMdYC/bV2ADJj24+dnthTpig==}
+    peerDependencies:
+      '@types/react': ^18 || ^19
+      react: ^18 || ^19
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+
+  '@paper-design/shaders@0.0.68':
+    resolution: {integrity: sha512-HWDb/mYfIDcwRGYjwTFEoupw4PgdmuoNONJ6TIXBaXWj3zdhS38iNehbAWQxWa1NHtOanOeQkbdG0wvaNKhvEw==}
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -4685,6 +4700,15 @@ snapshots:
 
   '@opentelemetry/api@1.9.0':
     optional: true
+
+  '@paper-design/shaders-react@0.0.68(@types/react@19.2.7)(react@19.2.1)':
+    dependencies:
+      '@paper-design/shaders': 0.0.68
+      react: 19.2.1
+    optionalDependencies:
+      '@types/react': 19.2.7
+
+  '@paper-design/shaders@0.0.68': {}
 
   '@protobufjs/aspromise@1.1.2': {}
 
