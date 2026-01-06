@@ -149,42 +149,46 @@ async def get_video_analysis(
     Use this when the user asks for "analysis" or "summary" of a specific video they found.
     """
     from firebase_admin import auth as firebase_auth
-    from app.services.usage_tracker import usage_tracker
+    from app.services.analysis_service import analysis_service
     
     try:
         headers = await _get_headers(config)
         if not headers.get("Authorization"):
             return {"error": "Authentication required. Please provide x-auth-token."}
 
-        # Decode JWT to get user info
+        # Decode JWT to get user info including db_user_id
         auth_token = config.get("configurable", {}).get("x-auth-token")
-        firebase_uid = None
+        db_user_id = None
         user_role = "free"
         
         if auth_token:
             try:
                 decoded = firebase_auth.verify_id_token(auth_token)
-                firebase_uid = decoded.get("uid")
                 user_role = decoded.get("role", "free")
+                db_user_id_str = decoded.get("db_user_id")
+                if db_user_id_str:
+                    db_user_id = UUID(db_user_id_str)
             except Exception:
-                pass  # Continue without credit tracking if token decode fails
+                pass 
+        
+        # Require db_user_id - users without it need to re-login
+        if not db_user_id:
+            return {"error": "Session expired. Please log out and log back in."}
         
         media_asset_uuid = UUID(media_asset_id)
         
-        # Check and record per-user analysis access
-        if firebase_uid:
-            try:
-                await usage_tracker.check_and_record_analysis_access(
-                    firebase_uid=firebase_uid,
-                    user_role=user_role,
-                    media_asset_id=media_asset_uuid,
-                    context={"source": "agent_tool"}
-                )
-            except Exception as limit_err:
-                return {"error": str(limit_err)}
-        
-        # Run the analysis
-        return await run_inline_video_analysis(media_asset_uuid)
+        # Use centralized service with wait=True for inline execution
+        try:
+            return await analysis_service.trigger_paid_analysis(
+                user_id=db_user_id,
+                user_role=user_role,
+                media_asset_id=media_asset_uuid,
+                wait=True,
+                context_source="agent_tool"
+            )
+        except Exception as limit_err:
+            return {"error": str(limit_err)}
+
     except ValueError:
         return {"error": "Invalid media_asset_id format."}
     except Exception as e:

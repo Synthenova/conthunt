@@ -10,6 +10,20 @@ from app.core import get_settings
 DEFAULT_MODEL_NAME = "google/gemini-3-flash-preview"
 SUPPORTED_PROVIDERS = {"openrouter", "google"}
 
+# Model options - keep in sync with frontend/src/components/chat/chat-input/constants.ts
+MODEL_OPTIONS = [
+    {"label": "Gemini 3 Flash (Vertex)", "value": "google/gemini-3-flash-preview"},
+    {"label": "Gemini 3 Flash (OpenRouter)", "value": "openrouter/google/gemini-3-flash-preview"},
+    {"label": "Grok 4.1 Fast (xAI)", "value": "openrouter/x-ai/grok-4.1-fast"},
+    {"label": "MiMo-V2-Flash (Xiaomi, free)", "value": "openrouter/xiaomi/mimo-v2-flash:free"},
+    {"label": "GPT-5.2 (OpenAI)", "value": "openrouter/openai/gpt-5.2"},
+    {"label": "GPT-5.1 (OpenAI)", "value": "openrouter/openai/gpt-5.1"},
+    {"label": "DeepSeek V3.2 (DeepSeek)", "value": "openrouter/deepseek/deepseek-v3.2"},
+    {"label": "Mistral Small Creative (Mistral)", "value": "openrouter/mistralai/mistral-small-creative"},
+]
+
+ALLOWED_MODEL_VALUES = frozenset(opt["value"] for opt in MODEL_OPTIONS)
+
 
 def _parse_model_name(model_name: str | None) -> Tuple[str, str]:
     if not model_name:

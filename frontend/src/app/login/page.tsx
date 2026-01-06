@@ -20,12 +20,41 @@ export default function LoginPage() {
                 console.log("AuthStateChanged: User detected. Getting ID Token...");
 
                 try {
-                    const idToken = await user.getIdToken();
+                    let idToken = await user.getIdToken();
 
-                    // Get CSRF token just in case
+                    // 1. Sync with backend (creates user in DB, sets custom claims)
+                    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+                    console.log("Syncing with backend...");
+                    const syncResp = await fetch(`${backendUrl}/v1/auth/sync`, {
+                        method: "POST",
+                        headers: {
+                            "Authorization": `Bearer ${idToken}`,
+                            "Content-Type": "application/json",
+                        },
+                    });
+
+                    if (!syncResp.ok) {
+                        const err = await syncResp.json();
+                        console.error("Backend sync failed:", err);
+                        alert("Failed to sync with backend. Please try again.");
+                        setIsLoggingIn(false);
+                        return;
+                    }
+
+                    const syncData = await syncResp.json();
+                    console.log("Backend sync success:", syncData);
+
+                    // 2. If claims were set, refresh the token to get new claims
+                    if (syncData.needs_token_refresh) {
+                        console.log("Refreshing token to get new claims...");
+                        idToken = await user.getIdToken(true);
+                    }
+
+                    // 3. Get CSRF token for session login
                     const csrfReq = await fetch("/api/csrf");
                     const { csrfToken } = await csrfReq.json();
 
+                    // 4. Create session cookie (Next.js API route)
                     console.log("Sending ID Token to /api/sessionLogin...");
                     const resp = await fetch("/api/sessionLogin", {
                         method: "POST",

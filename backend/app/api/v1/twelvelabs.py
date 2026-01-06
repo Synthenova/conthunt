@@ -15,7 +15,7 @@ from app.services.twelvelabs_client import get_twelvelabs_client
 
 from app.db.session import get_db_connection
 from app.db.queries.twelvelabs import get_user_twelvelabs_assets, get_twelvelabs_id_for_media_asset, get_board_twelvelabs_assets
-from app.db import get_or_create_user, set_rls_user
+from app.db import set_rls_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["video-analysis"])
@@ -42,12 +42,11 @@ async def search_twelvelabs(
 
     search_filter = request.filter or {}
     
-    firebase_uid = _user.get("uid")
-    if not firebase_uid:
+    user_uuid = _user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
     
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         # Priority: media_asset_id > twelvelabs_asset_id > board_id > all user assets

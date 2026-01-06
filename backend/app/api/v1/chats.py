@@ -21,8 +21,8 @@ except Exception:  # pragma: no cover - fallback if psycopg isn't available
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
-from app.db import get_db_connection, set_rls_user, get_or_create_user, queries
-from app.services.user_cache import get_cached_user_uuid
+from app.db import get_db_connection, set_rls_user, queries
+
 from app.storage import async_gcs_client
 from app.services.cdn_signer import generate_signed_url
 from app.agent.runtime import create_agent_graph
@@ -115,12 +115,11 @@ async def upload_chat_image(
     user: dict = Depends(get_current_user),
 ):
     """Upload an image for a chat and return a signed URL."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
 
         exists = await queries.check_chat_exists(conn, chat_id)
@@ -315,8 +314,8 @@ async def create_chat(
     user: dict = Depends(get_current_user),
 ):
     """Create a new chat session."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
     
     # Thread ID is just a UUID - the checkpointer uses it as the key
@@ -324,7 +323,6 @@ async def create_chat(
 
     # Insert into DB
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         chat_id = uuid.uuid4()
@@ -362,12 +360,11 @@ async def list_chats(
     context_id: Optional[uuid.UUID] = None,
 ):
     """List all chats for the current user."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         return await queries.get_user_chats(
             conn,
@@ -384,12 +381,11 @@ async def upsert_tags(
     user: dict = Depends(get_current_user),
 ):
     """Attach tags to a chat (boards/searches/media)."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
 
         exists = await queries.check_chat_exists(conn, chat_id)
@@ -418,12 +414,11 @@ async def list_tags(
     user: dict = Depends(get_current_user),
 ):
     """Fetch tags for a chat."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
 
         exists = await queries.check_chat_exists(conn, chat_id)
@@ -452,12 +447,11 @@ async def update_tag_order(
     user: dict = Depends(get_current_user),
 ):
     """Update sort_order for tags in a chat."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
 
         exists = await queries.check_chat_exists(conn, chat_id)
@@ -477,12 +471,11 @@ async def delete_chat_tag(
     user: dict = Depends(get_current_user),
 ):
     """Soft delete a tag from a chat."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
 
         exists = await queries.check_chat_exists(conn, chat_id)
@@ -505,8 +498,8 @@ async def send_message(
     user: dict = Depends(get_current_user),
 ):
     """Send a message (triggers background stream)."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     # Extract auth token from header
@@ -522,7 +515,6 @@ async def send_message(
     graph = await _get_agent_graph(req_obj)
     
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         thread_id = await queries.get_chat_thread_id(conn, chat_id)
@@ -595,12 +587,11 @@ async def delete_chat(
     user: dict = Depends(get_current_user),
 ):
     """Delete a chat session."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         exists = await queries.check_chat_exists(conn, chat_id)
@@ -620,12 +611,11 @@ async def rename_chat(
     user: dict = Depends(get_current_user),
 ):
     """Rename a chat session."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
 
         chat = await queries.update_chat_title(conn, chat_id, request.title)
@@ -645,12 +635,11 @@ async def stream_chat(
     redis_client: redis.Redis = Depends(get_redis),
 ):
     """SSE endpoint for chat updates."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         exists = await queries.check_chat_exists(conn, chat_id)
@@ -703,12 +692,11 @@ async def get_chat_messages(
     user: dict = Depends(get_current_user),
 ):
     """Get confirmed history from the checkpointer."""
-    user_id = user.get("uid")
-    if not user_id:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
          raise HTTPException(status_code=401, detail="Invalid user")
 
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, user_id)
         await set_rls_user(conn, user_uuid)
         
         thread_id = await queries.get_chat_thread_id(conn, chat_id)

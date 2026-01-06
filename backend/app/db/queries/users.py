@@ -19,6 +19,24 @@ async def get_user_role(conn: AsyncConnection, user_id: UUID) -> str:
 
 
 @log_query_timing
+async def get_user_by_uuid(conn: AsyncConnection, user_id: UUID) -> dict | None:
+    """Get user details by internal UUID."""
+    result = await conn.execute(
+        text("SELECT id, firebase_uid, email, role FROM users WHERE id = :user_id"),
+        {"user_id": user_id}
+    )
+    row = result.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "firebase_uid": row[1],
+        "email": row[2],
+        "role": row[3],
+    }
+
+
+@log_query_timing
 async def update_user_role(
     conn: AsyncConnection, 
     firebase_uid: str, 

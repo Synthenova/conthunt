@@ -8,7 +8,7 @@ import httpx
 
 from app.auth import get_current_user
 from app.core import logger
-from app.db import get_db_connection, get_or_create_user, set_rls_user, queries
+from app.db import get_db_connection, set_rls_user, queries
 from app.services.cdn_signer import generate_signed_url
 from app.schemas import SignedUrlResponse
 
@@ -26,13 +26,12 @@ async def get_signed_url(
     Verifies the user has access to the asset through RLS-protected tables
     (asset -> content_item -> search_result -> search).
     """
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     async with get_db_connection() as conn:
         # Get or create user
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         
         # Set RLS context
         await set_rls_user(conn, user_uuid)
@@ -79,14 +78,13 @@ async def get_media_view(
     Returns all data needed to display the media in a viewer.
     """
     print("DEIIIII")
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     logger.info(f"[MEDIA_VIEW] Starting request for asset_id={asset_id}")
     
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         logger.info(f"[MEDIA_VIEW] User UUID: {user_uuid}")
         
         await set_rls_user(conn, user_uuid)
@@ -132,12 +130,11 @@ async def get_media_content(
     Redirect to the GCS signed URL for a media asset.
     Used for persistent access to media (e.g., in history/boards).
     """
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     async with get_db_connection() as conn:
-        user_uuid, _ = await get_or_create_user(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         asset = await queries.get_media_asset_with_access_check(conn, asset_id)
     

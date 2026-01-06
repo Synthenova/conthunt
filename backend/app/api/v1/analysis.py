@@ -232,17 +232,12 @@ async def analyze_video(
     Also triggers 12Labs indexing in the background.
     
     Credit is charged per-user on first access, regardless of global cache state.
+    Note: Requires db_user_id in JWT. Users without it will get 401.
     """
-    from app.services.usage_tracker import usage_tracker
+    from app.services.analysis_service import analysis_service
     
-    # Check and record per-user analysis access (handles limits, access tracking, usage recording)
-    await usage_tracker.check_and_record_analysis_access(
-        firebase_uid=_user["uid"],
-        user_role=_user["role"],
-        media_asset_id=media_asset_id,
-        context={"source": "api"}
-    )
-
+    user_id = _user["db_user_id"]
+    
     # Check if this is a YouTube video (TwelveLabs can't handle YouTube URLs directly)
     async with get_db_connection() as conn:
         media_asset = await get_media_asset_by_id(conn, media_asset_id)
@@ -258,8 +253,15 @@ async def analyze_video(
             payload={"media_asset_id": str(media_asset_id)}
         )
     
-    # Run non-blocking Gemini analysis (via Cloud Tasks)
-    return await run_gemini_analysis(media_asset_id, background_tasks=background_tasks, use_cloud_tasks=True)
+    # Use centralized service to enforce credit consumption
+    return await analysis_service.trigger_paid_analysis(
+        user_id=user_id,
+        user_role=_user["role"],
+        media_asset_id=media_asset_id,
+        wait=False,
+        background_tasks=background_tasks,
+        context_source="api_endpoint"
+    )
 
 
 @router.get(
@@ -276,21 +278,16 @@ async def get_video_analysis(
     Does NOT trigger new analysis or charge credits.
     Returns 404 if user hasn't accessed this analysis before.
     """
-    from app.services.usage_tracker import usage_tracker
     from app.db.queries.analysis import has_user_accessed_analysis
     from app.db import set_rls_user
     
+    user_id = _user["db_user_id"]
+    
     async with get_db_connection() as conn:
-        # Get internal user_id
-        internal_user_id = await usage_tracker.get_internal_user_id(conn, _user["uid"])
-        if not internal_user_id:
-            raise HTTPException(status_code=403, detail="User account not fully established")
-        
-        # Set RLS context
-        await set_rls_user(conn, internal_user_id)
+        await set_rls_user(conn, user_id)
         
         # Check if user has accessed this analysis
-        user_accessed = await has_user_accessed_analysis(conn, internal_user_id, media_asset_id)
+        user_accessed = await has_user_accessed_analysis(conn, user_id, media_asset_id)
         if not user_accessed:
             raise HTTPException(status_code=404, detail="Analysis not found for this user")
         

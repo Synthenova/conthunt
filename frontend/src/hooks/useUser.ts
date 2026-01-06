@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { auth } from "@/lib/firebaseClient";
-import { BACKEND_URL } from '@/lib/api';
+import { BACKEND_URL, authFetch } from '@/lib/api';
 import { useEffect, useState } from "react";
 
 export interface UserUsage {
@@ -23,13 +23,7 @@ async function fetchMe(): Promise<UserProfile | null> {
     const user = auth.currentUser;
     if (!user) return null;
 
-    const token = await user.getIdToken();
-    const res = await fetch(`${BACKEND_URL}/v1/user/me`, {
-        headers: {
-            "Authorization": `Bearer ${token}`,
-            "Content-Type": "application/json",
-        },
-    });
+    const res = await authFetch(`${BACKEND_URL}/v1/user/me`);
 
     if (!res.ok) {
         throw new Error("Failed to fetch user profile");

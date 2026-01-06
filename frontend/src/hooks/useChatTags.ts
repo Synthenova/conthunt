@@ -1,25 +1,10 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { auth } from '@/lib/firebaseClient';
-import { BACKEND_URL } from '@/lib/api';
-
-async function getAuthToken(): Promise<string> {
-    const user = auth.currentUser;
-    if (!user) throw new Error('User not authenticated');
-    return user.getIdToken();
-}
+import { BACKEND_URL, authFetch } from '@/lib/api';
 
 async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise<T> {
-    const token = await getAuthToken();
-    const res = await fetch(url, {
-        ...options,
-        headers: {
-            ...options.headers,
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-        },
-    });
+    const res = await authFetch(url, options);
     if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(error.detail || 'API request failed');

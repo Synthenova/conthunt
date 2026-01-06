@@ -3,6 +3,7 @@ import hmac
 import hashlib
 from fastapi import APIRouter, Header, HTTPException, Request
 import base64
+from sqlalchemy import text
 
 from app.core import get_settings, logger
 from app.db import get_db_connection, queries
@@ -202,8 +203,19 @@ async def dodo_subscription_webhook(request: Request):
             if new_role:
                 try:
                     from firebase_admin import auth
-                    auth.set_custom_user_claims(firebase_uid, {"role": new_role})
-                    logger.info(f"Synced Firebase claims for {firebase_uid}")
+                    # Get db_user_id to include in claims
+                    user_result = await conn.execute(
+                        text("SELECT id FROM users WHERE firebase_uid = :uid"),
+                        {"uid": firebase_uid}
+                    )
+                    user_row = user_result.fetchone()
+                    db_user_id = str(user_row[0]) if user_row else None
+                    
+                    auth.set_custom_user_claims(firebase_uid, {
+                        "role": new_role,
+                        "db_user_id": db_user_id
+                    })
+                    logger.info(f"Synced Firebase claims for {firebase_uid}: role={new_role}, db_user_id={db_user_id}")
                 except Exception as e:
                     logger.error(f"Failed to sync Firebase claims: {e}")
         else:

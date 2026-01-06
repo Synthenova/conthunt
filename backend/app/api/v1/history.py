@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.auth import get_current_user
 from app.core import logger
-from app.db import get_db_connection, get_or_create_user, set_rls_user, queries
+from app.db import get_db_connection, set_rls_user, queries
 from app.schemas import (
     SearchHistoryItem,
     SearchHistoryResponse,
@@ -44,14 +44,13 @@ async def list_searches(
     
     Results are automatically filtered by RLS based on user_id.
     """
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     async with get_db_connection() as conn:
         # Get cached user UUID
-        from app.services.user_cache import get_cached_user_uuid
-        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
+        
         
         # Set RLS context
         await set_rls_user(conn, user_uuid)
@@ -88,8 +87,8 @@ async def get_search_detail(
     req_start = time.time()
     logger.info(f"get_search_detail: request for search_id={search_id}")
     
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     logger.info(f"get_search_detail: start request processing")
@@ -97,9 +96,7 @@ async def get_search_detail(
     async with get_db_connection() as conn:
         t0 = time.time()
         # Get cached user UUID (avoids DB hit if cached)
-        from app.services.user_cache import get_cached_user_uuid
-        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
-        logger.info(f"get_search_detail: get_cached_user_uuid took {(time.time()-t0)*1000:.2f}ms")
+        
         
         t0 = time.time()
         # Set RLS context
@@ -186,13 +183,12 @@ async def get_search_items_summary(
     user: dict = Depends(get_current_user),
 ):
     """Get search items summary for agent - minimal text data + media_asset_id only."""
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
 
     async with get_db_connection() as conn:
-        from app.services.user_cache import get_cached_user_uuid
-        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
+        
         await set_rls_user(conn, user_uuid)
 
         search = await queries.get_search_by_id(conn, search_id)

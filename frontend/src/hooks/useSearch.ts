@@ -3,7 +3,7 @@ import { useSearchStore } from "@/lib/store";
 import { auth } from "@/lib/firebaseClient";
 import { useState, useMemo } from "react";
 
-import { BACKEND_URL } from '@/lib/api';
+import { BACKEND_URL, authFetch } from '@/lib/api';
 
 // Define response types
 export interface SearchResponse {
@@ -11,17 +11,7 @@ export interface SearchResponse {
 }
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {
-    const user = auth.currentUser;
-    if (!user) throw new Error("User not authenticated");
-
-    const token = await user.getIdToken();
-    const headers = {
-        ...options.headers,
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-    };
-
-    const res = await fetch(url, { ...options, headers });
+    const res = await authFetch(url, options);
     if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(error.detail || "API request failed");

@@ -1,23 +1,12 @@
 import { useMutation, useQuery, useQueryClient, UseQueryOptions } from "@tanstack/react-query";
-import { auth } from "@/lib/firebaseClient";
 import { Board, BoardItem, BoardInsights, CreateBoardRequest } from "@/lib/types/boards";
 
-import { BACKEND_URL } from '@/lib/api';
+import { BACKEND_URL, authFetch } from '@/lib/api';
 
 const API_BASE = `${BACKEND_URL}/v1`;
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {
-    const user = auth.currentUser;
-    if (!user) throw new Error("User not authenticated");
-
-    const token = await user.getIdToken();
-    const headers = {
-        ...options.headers,
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-    };
-
-    const res = await fetch(url, { ...options, headers });
+    const res = await authFetch(url, options);
     if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(error.detail || "API request failed");

@@ -41,17 +41,29 @@ def _format_analysis_entry(media_asset_id: UUID, analysis: dict) -> str:
 
 
 async def _ensure_video_analyses(
+    user_id: UUID,
     media_asset_ids: list[UUID],
 ) -> list[dict]:
     """
     Ensure all video analyses exist and wait for them to complete.
     Triggers Gemini analysis for missing videos, then polls until all done (max 5 min).
     
-    Failed analyses are treated as "done" - insights will proceed with whatever succeeded.
-    Returns the final list of analysis rows.
+    CRITICAL: Now charges credits for each missing video analysis via AnalysisService.
+    If user runs out of credits, those specific videos will fail to analyze.
     """
+    from app.db.queries.users import get_user_by_uuid
+    from app.services.analysis_service import analysis_service
+
+    # 1. Fetch User details for credit tracking
     async with get_db_connection() as conn:
+        user = await get_user_by_uuid(conn, user_id)
         analyses = await queries.get_video_analyses_by_media_assets(conn, media_asset_ids)
+
+    if not user:
+        logger.error(f"[INSIGHTS] User {user_id} not found, cannot trigger analyses")
+        return analyses 
+
+    role = user["role"]
 
     analyses_by_id = {row["media_asset_id"]: row for row in analyses}
     
@@ -59,16 +71,26 @@ async def _ensure_video_analyses(
     missing_ids = [mid for mid in media_asset_ids if mid not in analyses_by_id]
 
     if missing_ids:
-        logger.info(f"[INSIGHTS] Triggering {len(missing_ids)} missing video analyses")
-        tasks = [
-            run_gemini_analysis(
-                media_asset_id=mid,
-                background_tasks=None,
-                use_cloud_tasks=True,
-            )
-            for mid in missing_ids
-        ]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"[INSIGHTS] Triggering {len(missing_ids)} missing video analyses (Paid)")
+        tasks = []
+        for mid in missing_ids:
+            try:
+                # Trigger paid analysis - failures (e.g. limit exceeded) are logged but don't stop the batch
+                tasks.append(
+                    analysis_service.trigger_paid_analysis(
+                        user_id=user_id,          # Pass UUID directly
+                        user_role=role,
+                        media_asset_id=mid,
+                        wait=False,
+                        background_tasks=None, # Already in bg task
+                        context_source="board_insights"
+                    )
+                )
+            except Exception as e:
+                logger.error(f"[INSIGHTS] Failed to trigger analysis for {mid}: {e}")
+        
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     # Poll until all analyses are done (completed/failed) or timeout
     # Max 5 min (30 attempts x 10s)
@@ -156,7 +178,7 @@ async def execute_board_insights(
         return
 
     media_asset_ids = [row["media_asset_id"] for row in media_assets]
-    analyses = await _ensure_video_analyses(media_asset_ids)
+    analyses = await _ensure_video_analyses(user_id, media_asset_ids) # Pass user_id for credit check
 
     completed_analyses = [
         row for row in analyses

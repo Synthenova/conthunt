@@ -17,8 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
-from app.db import get_db_connection, get_or_create_user, set_rls_user, queries
-from app.services.user_cache import get_cached_user_uuid
+from app.db import get_db_connection, set_rls_user, queries
+
 from app.platforms import (
     PLATFORM_ADAPTERS,
     get_adapter,
@@ -558,8 +558,8 @@ async def create_search(
     Returns search_id immediately, runs search in background.
     Frontend should connect to /search/{id}/stream for results.
     """
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     # Validate platforms
@@ -573,14 +573,13 @@ async def create_search(
     # Check Usage Limits
     from app.services.usage_tracker import usage_tracker
     await usage_tracker.check_limit(
-        firebase_uid=firebase_uid, 
+        user_id=user_uuid, 
         role=user.get("role", "free"), 
         feature="search_query"
     )
 
     # Get user UUID and create search entry
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         search_id = await queries.insert_search(
@@ -596,7 +595,7 @@ async def create_search(
     # Record Usage (safe background log)
     background_tasks.add_task(
         usage_tracker.record_usage,
-        firebase_uid=firebase_uid,
+        user_id=user_uuid,
         feature="search_query",
         quantity=1,
         context={"search_id": str(search_id), "platforms": list(request.inputs.keys())}
@@ -627,13 +626,12 @@ async def stream_search(
     If search is already completed, returns JSON with results from DB.
     If search is running, streams from Redis.
     """
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     # Verify user owns this search and get status
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         search = await queries.get_search_by_id(conn, search_id)
         
@@ -708,12 +706,11 @@ async def load_more(
     Returns search_id immediately, runs load_more in background.
     Frontend should connect to /search/{id}/more/stream for results.
     """
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         
         # Get search with cursors
@@ -745,7 +742,7 @@ async def load_more(
     # Check Usage Limits
     from app.services.usage_tracker import usage_tracker
     await usage_tracker.check_limit(
-        firebase_uid=firebase_uid, 
+        user_id=user_uuid, 
         role=user.get("role", "free"), 
         feature="search_query"
     )
@@ -753,7 +750,7 @@ async def load_more(
     # Record Usage
     background_tasks.add_task(
         usage_tracker.record_usage,
-        firebase_uid=firebase_uid,
+        user_id=user_uuid,
         feature="search_query",
         quantity=1,
         context={"search_id": str(search_id), "platforms": list(platform_cursors.keys()), "action": "load_more"}
@@ -782,13 +779,12 @@ async def stream_load_more(
     SSE endpoint to stream load_more results from Redis.
     Same pattern as /search/{id}/stream but uses different stream key.
     """
-    firebase_uid = user.get("uid")
-    if not firebase_uid:
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     # Verify user owns this search
     async with get_db_connection() as conn:
-        user_uuid = await get_cached_user_uuid(conn, firebase_uid)
         await set_rls_user(conn, user_uuid)
         search = await queries.get_search_by_id(conn, search_id)
         

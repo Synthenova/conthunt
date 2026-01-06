@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { auth } from '@/lib/firebaseClient';
 import { useChatStore, Chat, ChatMessage } from '@/lib/chatStore';
-import { BACKEND_URL } from '@/lib/api';
+import { BACKEND_URL, authFetch } from '@/lib/api';
 
 async function waitForAuth() {
     return new Promise<typeof auth.currentUser>((resolve) => {
@@ -16,6 +16,7 @@ async function waitForAuth() {
     });
 }
 
+// getAuthToken is still needed for SSE/streaming which doesn't go through authFetch
 async function getAuthToken(): Promise<string> {
     const user = auth.currentUser || await waitForAuth();
     if (!user) throw new Error('User not authenticated');
@@ -23,15 +24,7 @@ async function getAuthToken(): Promise<string> {
 }
 
 async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise<T> {
-    const token = await getAuthToken();
-    const res = await fetch(url, {
-        ...options,
-        headers: {
-            ...options.headers,
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-        },
-    });
+    const res = await authFetch(url, options);
     if (!res.ok) {
         const error = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(error.detail || 'API request failed');
