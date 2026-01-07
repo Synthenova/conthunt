@@ -65,7 +65,7 @@ export function ChatHeader({
             initial={{ y: 0 }}
             animate={{ y: showHeader ? 0 : "-120%" }}
             transition={{ duration: 0.3, ease: "easeInOut" }}
-            className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md px-4 py-4 mb-6 space-y-6 border-b border-white/5"
+            className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md px-4 py-4 mb-6 space-y-6 border-b border-white/5 w-full overflow-x-hidden"
         >
             {/* Header Row */}
             <ChatTitle
@@ -81,7 +81,7 @@ export function ChatHeader({
             />
 
             {/* Controls Bar: Tabs + Filters */}
-            <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 flex-wrap">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 flex-wrap min-w-0 w-full">
                 <ChatTabs
                     displaySearches={displaySearches}
                     activeSearchId={activeSearchId}
@@ -91,7 +91,7 @@ export function ChatHeader({
                 />
 
                 {/* Filters */}
-                <div className="shrink-0 flex justify-end">
+                <div className="flex justify-end min-w-0">
                     <BoardFilterBar
                         sort={clientSort}
                         onSortChange={setClientSort}

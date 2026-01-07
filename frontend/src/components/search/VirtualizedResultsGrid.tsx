@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useMemo, useCallback, useEffect, useState } from "react";
+import { useRef, useMemo, useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { useVirtualizer, Virtualizer } from "@tanstack/react-virtual";
 import { motion } from "framer-motion";
 import { SelectableMediaCard } from "./SelectableMediaCard";
@@ -19,6 +19,22 @@ function useResponsiveColumns(
     } = {}
 ) {
     const [columns, setColumns] = useState(4);
+
+    useLayoutEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        const width = el.getBoundingClientRect().width;
+        if (!width) return;
+        const nextCols = getResponsiveColumns(width);
+        opts.onResizeTick?.(width);
+        setColumns((prev) => {
+            if (prev !== nextCols) {
+                opts.onColumnsChange?.(prev, nextCols, width);
+                return nextCols;
+            }
+            return prev;
+        });
+    }, [containerRef, opts]);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -61,16 +77,13 @@ export function VirtualizedResultsGrid({
     results,
     analysisDisabled = false,
     itemsById,
-    scrollRef: externalScrollRef,
+    scrollRef,
 }: {
     results: any[];
     analysisDisabled?: boolean;
     itemsById: Record<string, any>;
-    scrollRef?: React.RefObject<HTMLDivElement | null>;
+    scrollRef: React.RefObject<HTMLDivElement | null>;
 }) {
-    // ✅ make our OWN scroll container (or use external ref)
-    const internalScrollRef = useRef<HTMLDivElement>(null);
-    const scrollRef = externalScrollRef ?? internalScrollRef;
     const parentRef = useRef<HTMLDivElement>(null);
 
     const [selectedItem, setSelectedItem] = useState<any | null>(null);
@@ -110,7 +123,8 @@ export function VirtualizedResultsGrid({
             markResizing("resize-tick");
             scheduleMeasure("resize-tick");
         },
-        onColumnsChange: () => {
+        onColumnsChange: (prev, next, width) => {
+            console.log("[VirtualizedResultsGrid] cols", prev, "->", next, "width", Math.round(width));
             markResizing("columns-change");
             scheduleMeasure("columns-change");
         },
@@ -161,66 +175,60 @@ export function VirtualizedResultsGrid({
 
     return (
         <>
-            <div ref={scrollRef} className="flex-1 min-h-0 w-full overflow-y-auto p-2">
-                <div
-                    ref={parentRef}
-                    className="w-full"
-                    style={{
-                        height: `${virtualizer.getTotalSize()}px`,
-                        position: "relative",
-                    }}
-                >
-                    {virtualRows.map((virtualRow) => {
-                        const rowItems = rows[virtualRow.index];
+            <div
+                ref={parentRef}
+                className="w-full"
+                style={{
+                    height: `${virtualizer.getTotalSize()}px`,
+                    position: "relative",
+                }}
+            >
+                {virtualRows.map((virtualRow) => {
+                    const rowItems = rows[virtualRow.index];
 
-                        return (
+                    return (
+                        <div
+                            key={virtualRow.key}
+                            style={{
+                                position: "absolute",
+                                top: 0,
+                                left: 0,
+                                width: "100%",
+                                height: `${virtualRow.size - GAP}px`,
+                                transform: `translateY(${virtualRow.start}px)`,
+                                // ✅ Smooth ONLY during resize (keep scrolling snappy)
+                                transition: isResizing ? "transform 160ms ease" : "none",
+                                willChange: "transform",
+                            }}
+                        >
                             <div
-                                key={virtualRow.key}
+                                className="grid gap-4"
                                 style={{
-                                    position: "absolute",
-                                    top: 0,
-                                    left: 0,
-                                    width: "100%",
-                                    height: `${virtualRow.size - GAP}px`,
-                                    transform: `translateY(${virtualRow.start}px)`,
-                                    // ✅ Smooth ONLY during resize (keep scrolling snappy)
-                                    transition: isResizing ? "transform 160ms ease" : "none",
-                                    willChange: "transform",
+                                    gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                                    height: "100%",
                                 }}
                             >
-                                <div
-                                    className="grid gap-4"
-                                    style={{
-                                        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-                                        height: "100%",
-                                    }}
-                                >
                                     {rowItems.map((item: any, colIndex: number) => (
                                         <motion.div
                                             key={item.id || `${virtualRow.index}-${colIndex}`}
-                                            layoutId={`grid-item-${item.id}`}
-                                            initial={false}
-                                            transition={{
-                                                type: "spring",
-                                                stiffness: 350,
-                                                damping: 25,
-                                                mass: 1
-                                            }}
+                                            layout={false}
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            transition={{ duration: 0.18, ease: "easeOut" }}
                                             style={{ height: "100%" }}
                                         >
                                             <SelectableMediaCard
                                                 item={item}
                                                 platform={item.platform || "unknown"}
                                                 itemsById={itemsById}
-                                                onOpen={handleOpen}
-                                            />
-                                        </motion.div>
-                                    ))}
-                                </div>
+                                            onOpen={handleOpen}
+                                        />
+                                    </motion.div>
+                                ))}
                             </div>
-                        );
-                    })}
-                </div>
+                        </div>
+                    );
+                })}
             </div>
 
             <ContentDrawer
