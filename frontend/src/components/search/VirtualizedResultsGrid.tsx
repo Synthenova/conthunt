@@ -5,6 +5,7 @@ import { useVirtualizer, Virtualizer } from "@tanstack/react-virtual";
 import { motion } from "framer-motion";
 import { SelectableMediaCard } from "./SelectableMediaCard";
 import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
+import { getResponsiveColumns } from "./gridUtils";
 
 const GAP = 16;
 const CARD_ASPECT = 9 / 16;
@@ -31,13 +32,7 @@ function useResponsiveColumns(
 
             if (rafId) cancelAnimationFrame(rafId);
             rafId = requestAnimationFrame(() => {
-                // Breakpoints based on container width
-                let nextCols = 1;
-                if (width >= 1800) nextCols = 6;
-                else if (width >= 1500) nextCols = 5;
-                else if (width >= 1200) nextCols = 4;
-                else if (width >= 900) nextCols = 3;
-                else if (width >= 600) nextCols = 2;
+                const nextCols = getResponsiveColumns(width);
 
                 opts.onResizeTick?.(width);
 

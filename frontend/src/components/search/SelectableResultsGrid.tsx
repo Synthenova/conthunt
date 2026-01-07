@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useEffect, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VirtualizedResultsGrid } from "./VirtualizedResultsGrid";
+import { getResponsiveColumns } from "./gridUtils";
 
 interface SelectableResultsGridProps {
     results: any[];
@@ -12,6 +13,30 @@ interface SelectableResultsGridProps {
 }
 
 export function SelectableResultsGrid({ results, loading, analysisDisabled = false, scrollRef }: SelectableResultsGridProps) {
+    const skeletonRef = useRef<HTMLDivElement>(null);
+    const [skeletonColumns, setSkeletonColumns] = useState(4);
+
+    useEffect(() => {
+        const el = skeletonRef.current;
+        if (!el) return;
+
+        let rafId: number | null = null;
+        const observer = new ResizeObserver((entries) => {
+            const width = entries[0]?.contentRect?.width ?? 0;
+            if (!width) return;
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(() => {
+                setSkeletonColumns(getResponsiveColumns(width));
+            });
+        });
+
+        observer.observe(el);
+        return () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            observer.disconnect();
+        };
+    }, []);
+
     const itemsById = useMemo(() => {
         const map: Record<string, any> = {};
         results.forEach((item) => {
@@ -23,9 +48,14 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
     }, [results]);
 
     if (loading) {
+        const skeletonCount = Math.max(8, skeletonColumns * 2);
         return (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 min-[1800px]:grid-cols-6 gap-4 p-2">
-                {[...Array(10)].map((_, i) => (
+            <div
+                ref={skeletonRef}
+                className="grid gap-4 p-2 w-full"
+                style={{ gridTemplateColumns: `repeat(${skeletonColumns}, minmax(0, 1fr))` }}
+            >
+                {[...Array(skeletonCount)].map((_, i) => (
                     <div key={i} className="aspect-[9/16] rounded-xl overflow-hidden">
                         <Skeleton className="h-full w-full" />
                     </div>

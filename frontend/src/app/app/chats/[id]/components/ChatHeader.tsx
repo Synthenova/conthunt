@@ -65,7 +65,7 @@ export function ChatHeader({
             initial={{ y: 0 }}
             animate={{ y: showHeader ? 0 : "-120%" }}
             transition={{ duration: 0.3, ease: "easeInOut" }}
-            className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md -mx-4 px-4 py-4 mb-6 space-y-6 border-b border-white/5"
+            className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md px-4 py-4 mb-6 space-y-6 border-b border-white/5"
         >
             {/* Header Row */}
             <ChatTitle
@@ -81,7 +81,7 @@ export function ChatHeader({
             />
 
             {/* Controls Bar: Tabs + Filters */}
-            <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 flex-wrap">
                 <ChatTabs
                     displaySearches={displaySearches}
                     activeSearchId={activeSearchId}
