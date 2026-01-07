@@ -2,7 +2,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Search, Loader2, MessageSquare, Pencil } from 'lucide-react';
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { useRenameChat } from "@/hooks/useChat";
 
 interface SidebarRecentsModalProps {
@@ -64,6 +65,9 @@ export const SidebarRecentsModal = ({
     return (
         <Dialog open={isOpen} onOpenChange={onOpenChange}>
             <DialogContent className="bg-[#1C1C1C] border border-white/5 text-gray-200 max-w-lg p-0 gap-0 overflow-hidden shadow-2xl rounded-2xl">
+                <VisuallyHidden>
+                    <DialogTitle>Recent Chats</DialogTitle>
+                </VisuallyHidden>
                 <div className="p-4 border-b border-white/5 flex items-center gap-3">
                     <Search size={16} className="text-gray-500" />
                     <input

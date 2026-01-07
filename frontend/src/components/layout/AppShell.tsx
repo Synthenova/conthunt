@@ -36,7 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }, []);
 
     const availableIfExpanded = viewportWidth - LEFT_EXPANDED - (isChatOpen ? MIN_CHAT_WIDTH : 0);
-    const forcedCollapsed = availableIfExpanded < MIN_CENTER_WIDTH;
+    const forcedCollapsed = true; // Always overlay when expanded
 
     useEffect(() => {
         if (!forcedCollapsed) {
@@ -45,8 +45,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }, [forcedCollapsed]);
 
     const isCollapsed = userCollapsed || (forcedCollapsed && !userOverrideOpen);
-    const overlayLeft = forcedCollapsed && !isCollapsed;
-    const leftWidthForCalc = overlayLeft ? 0 : (isCollapsed ? LEFT_COLLAPSED : LEFT_EXPANDED);
+
+    // Calculate available width for chat sidebar (simplified since main sidebar is fixed width)
+    // The spacer is 80px (w-20). The sidebar overlays but main area starts after 80px.
+    const leftWidthForCalc = LEFT_COLLAPSED;
 
     const rawChatMax = Math.max(0, viewportWidth - leftWidthForCalc - MIN_CENTER_WIDTH);
     const chatMaxWidth = rawChatMax >= MIN_CHAT_WIDTH
@@ -56,10 +58,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
         <div className="flex h-screen w-full overflow-hidden bg-[#000000]">
             <NavigationReset />
+            {/* Spacer to reserve width for the collapsed sidebar (80px matches w-20) */}
+            <div className="w-20 shrink-0 hidden md:block" />
             <AppSidebar
                 collapsed={isCollapsed}
                 forcedCollapsed={forcedCollapsed}
-                overlay={overlayLeft}
+                overlay={true}
                 onCollapsedChange={(next) => {
                     if (!next && forcedCollapsed) {
                         setUserOverrideOpen(true);
@@ -70,7 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     setUserCollapsed(next);
                 }}
             />
-            {overlayLeft && (
+            {!isCollapsed && (
                 <button
                     type="button"
                     className="fixed inset-0 z-40 hidden lg:block bg-black/50"
