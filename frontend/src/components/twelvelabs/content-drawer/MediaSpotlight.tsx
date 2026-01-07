@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Play, Volume2, VolumeX, X } from "lucide-react";
 import { useYouTubePlayer } from "@/lib/youtube";
@@ -34,11 +33,9 @@ export function MediaSpotlight({
     const videoRef = useRef<HTMLVideoElement>(null);
     const timeSyncRef = useRef<number | null>(null);
     const lastIsPlayingRef = useRef<boolean>(false);
+    const hasAppliedResumeRef = useRef(false);
     const { mediaMuted, setMediaMuted } = useSearchStore();
     const isYouTube = item?.platform === "youtube" || item?.platform === "youtube_search";
-    const creatorName = item?.creator_name || item?.creator || item?.author || item?.channel_title || "Unknown";
-    const creatorHandle = item?.creator_handle || item?.username || item?.author_handle || item?.channel || item?.profile_name || "";
-    const platformLabel = (item?.platform || "").replace(/_/g, " ").toUpperCase();
     const link = item?.url || item?.link || item?.web_url || item?.canonical_url;
     const videoSource = item?.video_url || item?.media_url || item?.url;
     const youtubeId = useMemo(() => {
@@ -62,10 +59,7 @@ export function MediaSpotlight({
         preload: true,
         muted: mediaMuted,
         onReady: () => {
-            console.log("[MediaSpotlight] YouTube onReady", { youtubeId: youtubeId?.slice(0, 11), resumeTime });
-            if (resumeTime > 0) {
-                youtube.seekTo(resumeTime);
-            }
+            console.log("[MediaSpotlight] YouTube onReady", { youtubeId: youtubeId?.slice(0, 11) });
             const dur = youtube.getDuration();
             if (dur && dur > 0) {
                 setDurationSeconds(dur);
@@ -85,49 +79,64 @@ export function MediaSpotlight({
     } = youtube;
 
     useEffect(() => {
-        console.log("[MediaSpotlight] Drawer open state change", {
-            isOpen,
-            title: item?.title,
-            platform: item?.platform,
-        });
-
         if (isOpen) {
             setIsPlaying(true);
+            hasAppliedResumeRef.current = false;
         } else {
             setIsPlaying(false);
+            hasAppliedResumeRef.current = false;
+            setCurrentTime(0);
+            if (videoRef.current) {
+                videoRef.current.pause();
+                videoRef.current.currentTime = 0;
+            }
+            if (isYouTube && youtubeId) {
+                pause();
+                seekTo(0);
+            }
         }
         setIsFullscreen(false);
-    }, [isOpen, item]);
+    }, [isOpen, item?.id, isYouTube, youtubeId, pause, seekTo]);
 
     useEffect(() => {
-        if (!isPlaying) return;
-        if (resumeTime <= 0) return;
-        if (!videoRef.current) return;
-
+        if (isYouTube || !videoRef.current) return;
         const video = videoRef.current;
-        const safeTime = Math.max(0, resumeTime);
-        const seek = () => {
-            if (!Number.isNaN(video.duration) && video.duration > 0) {
-                video.currentTime = Math.min(safeTime, video.duration);
-            } else {
-                video.currentTime = safeTime;
+
+        if (isPlaying) {
+            if (!hasAppliedResumeRef.current && resumeTime > 0) {
+                const safeTime = Math.max(0, resumeTime);
+                const applySeek = () => {
+                    if (!Number.isNaN(video.duration) && video.duration > 0) {
+                        video.currentTime = Math.min(safeTime, video.duration);
+                    } else {
+                        video.currentTime = safeTime;
+                    }
+                    setCurrentTime(video.currentTime);
+                    hasAppliedResumeRef.current = true;
+                };
+
+                if (video.readyState >= 1) {
+                    applySeek();
+                } else {
+                    const onLoaded = () => {
+                        applySeek();
+                        video.removeEventListener("loadedmetadata", onLoaded);
+                    };
+                    video.addEventListener("loadedmetadata", onLoaded);
+                }
             }
             video.play().catch(() => { });
-            setCurrentTime(video.currentTime);
-        };
-
-        console.log("[MediaSpotlight] Seeking HTML5 video", { resumeTime, safeTime, duration: video.duration });
-
-        if (video.readyState >= 1) {
-            seek();
         } else {
-            const onLoaded = () => {
-                seek();
-                video.removeEventListener("loadedmetadata", onLoaded);
-            };
-            video.addEventListener("loadedmetadata", onLoaded);
+            video.pause();
         }
-    }, [isPlaying, resumeTime]);
+    }, [isPlaying, resumeTime, isYouTube]);
+
+    // Sync mute state for HTML5 video
+    useEffect(() => {
+        if (videoRef.current) {
+            videoRef.current.muted = mediaMuted;
+        }
+    }, [mediaMuted]);
 
     useEffect(() => {
         if (!isYouTube || !youtubeId) return;
@@ -154,20 +163,17 @@ export function MediaSpotlight({
                 return;
             }
             play();
-            if (resumeTime > 0 && isReady) {
+            if (resumeTime > 0 && isReady && !hasAppliedResumeRef.current) {
                 seekTo(resumeTime);
+                hasAppliedResumeRef.current = true;
             }
-            if (!mediaMuted) {
-                unmute();
-            }
+            // unmute(); // Handled by useYouTubePlayer hook via muted prop
             const dur = getDuration();
             if (dur && dur > 0) {
                 setDurationSeconds(dur);
             }
         } else {
             pause();
-            seekTo(0);
-            setCurrentTime(0);
         }
     }, [isYouTube, youtubeId, isPlaying, resumeTime, isPrimed, isReady, play, pause, seekTo, unmute, mediaMuted, getDuration]);
 
@@ -321,62 +327,60 @@ export function MediaSpotlight({
                     toggleFullscreen();
                 }}
             >
-                {!isPlaying ? (
+                {isYouTube && youtubeId ? (
+                    <div
+                        ref={containerRef}
+                        className="absolute inset-0 w-full h-full pointer-events-none"
+                    />
+                ) : videoSource ? (
+                    <video
+                        ref={videoRef}
+                        src={videoSource}
+                        className="absolute inset-0 w-full h-full object-contain bg-black pointer-events-none"
+                        muted={mediaMuted}
+                        playsInline
+                        preload="metadata"
+                        onPlay={() => console.log("[MediaSpotlight] HTML5 video playing", { src: videoSource })}
+                        onTimeUpdate={() => {
+                            if (videoRef.current) {
+                                setCurrentTime(videoRef.current.currentTime);
+                                if (!durationSeconds && videoRef.current.duration) {
+                                    setDurationSeconds(videoRef.current.duration);
+                                }
+                            }
+                        }}
+                        onLoadedMetadata={() => {
+                            if (videoRef.current && videoRef.current.duration) {
+                                setDurationSeconds(videoRef.current.duration);
+                            }
+                        }}
+                        onError={(error) => console.error("[MediaSpotlight] HTML5 video error", error)}
+                    >
+                        Your browser does not support the video tag.
+                    </video>
+                ) : null}
+
+                {!isPlaying && currentTime <= 0.01 && (
                     <>
                         <img
                             src={item.thumbnail_url || item.thumbnail}
                             alt={item.title}
-                            className="w-full h-full object-cover"
+                            className="absolute inset-0 w-full h-full object-cover"
                         />
                         <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <Button
                                 size="icon"
                                 variant="ghost"
                                 className="h-16 w-16 rounded-full bg-white/20 hover:bg-white/30 text-white backdrop-blur-sm"
-                                onClick={() => setIsPlaying(true)}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsPlaying(true);
+                                }}
                             >
                                 <Play className="h-8 w-8 fill-current" />
                             </Button>
                         </div>
-                        {/* <div className="absolute top-4 left-4 pointer-events-none">
-                            <Badge variant="secondary" className="bg-yellow-100 text-yellow-900 border-none">
-                                AI Overlay
-                            </Badge>
-                        </div> */}
                     </>
-                ) : (
-                    (() => {
-                        if (isYouTube && youtubeId) {
-                            return <div ref={containerRef} className="w-full h-full" />;
-                        }
-
-                        return (
-                            <video
-                                ref={videoRef}
-                                src={videoSource}
-                                className="w-full h-full object-contain bg-black"
-                                autoPlay
-                                playsInline
-                                onPlay={() => console.log("[MediaSpotlight] HTML5 video playing", { src: videoSource })}
-                                onTimeUpdate={() => {
-                                    if (videoRef.current) {
-                                        setCurrentTime(videoRef.current.currentTime);
-                                        if (!durationSeconds && videoRef.current.duration) {
-                                            setDurationSeconds(videoRef.current.duration);
-                                        }
-                                    }
-                                }}
-                                onLoadedMetadata={() => {
-                                    if (videoRef.current && videoRef.current.duration) {
-                                        setDurationSeconds(videoRef.current.duration);
-                                    }
-                                }}
-                                onError={(error) => console.error("[MediaSpotlight] HTML5 video error", error)}
-                            >
-                                Your browser does not support the video tag.
-                            </video>
-                        );
-                    })()
                 )}
 
                 {/* Mute toggle */}
@@ -395,18 +399,12 @@ export function MediaSpotlight({
                     </Button>
                 </div>
 
-                {/* Bottom overlay with timeline + creator info */}
+                {/* Bottom overlay with timeline + playback time */}
                 <div className="absolute inset-x-0 bottom-0 z-10 p-3 pt-4 bg-gradient-to-t from-black/70 via-black/40 to-transparent">
-                    <div className="flex items-center gap-2 text-white mb-2">
-                        <div className="flex flex-col leading-tight">
-                            <span className="text-sm font-semibold">{creatorName}</span>
-                            {creatorHandle && <span className="text-xs text-white/80">{creatorHandle}</span>}
-                        </div>
-                        {platformLabel && (
-                            <span className="ml-auto text-[10px] px-2 py-1 rounded-full bg-white/15 uppercase tracking-wide">
-                                {platformLabel}
-                            </span>
-                        )}
+                    <div className="flex items-center justify-end text-white mb-2">
+                        <span className="text-xs font-medium font-mono text-white/90 drop-shadow-md">
+                            {formatTime(currentTime)} / {formatTime(durationSeconds || 0)}
+                        </span>
                     </div>
                     {durationSeconds && (
                         <div
@@ -464,4 +462,11 @@ export function MediaSpotlight({
             </div>
         </div>
     );
+}
+
+function formatTime(seconds: number): string {
+    if (!seconds || isNaN(seconds)) return "00:00";
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
