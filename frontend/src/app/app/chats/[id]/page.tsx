@@ -203,25 +203,102 @@ export default function ChatPage() {
     // Scroll detection
     const resultsScrollRef = useRef<HTMLDivElement>(null);
     const [showHeader, setShowHeader] = useState(true);
+    const showHeaderRef = useRef(showHeader);
     const lastScrollY = useRef(0);
+    const scrollDirection = useRef<"up" | "down" | null>(null);
+    const scrollDelta = useRef(0);
+    const DEBUG_HEADER_SCROLL = true;
+    const HIDE_THRESHOLD_PX = 40;
+    const SHOW_THRESHOLD_PX = 24;
+
+    useEffect(() => {
+        showHeaderRef.current = showHeader;
+    }, [showHeader]);
 
     useEffect(() => {
         const el = resultsScrollRef.current;
-        if (!el) return;
+        if (!el) {
+            if (DEBUG_HEADER_SCROLL) {
+                console.log("[ChatHeaderScroll] No scroll element yet.");
+            }
+            return;
+        }
+
+        if (DEBUG_HEADER_SCROLL) {
+            console.log("[ChatHeaderScroll] Attach", {
+                scrollTop: el.scrollTop,
+                clientHeight: el.clientHeight,
+                scrollHeight: el.scrollHeight,
+                hideThreshold: HIDE_THRESHOLD_PX,
+                showThreshold: SHOW_THRESHOLD_PX,
+            });
+        }
 
         const handleScroll = () => {
             const currentY = el.scrollTop;
-            if (currentY < lastScrollY.current || currentY < 50) {
-                setShowHeader(true);
-            } else if (currentY > lastScrollY.current && currentY > 50) {
-                setShowHeader(false);
+            const delta = currentY - lastScrollY.current;
+
+            if (delta !== 0) {
+                const nextDirection = delta > 0 ? "down" : "up";
+                if (scrollDirection.current !== nextDirection) {
+                    scrollDirection.current = nextDirection;
+                    scrollDelta.current = 0;
+                }
+
+                scrollDelta.current += Math.abs(delta);
+
+                const shouldHide =
+                    nextDirection === "down" &&
+                    currentY > HIDE_THRESHOLD_PX &&
+                    scrollDelta.current >= HIDE_THRESHOLD_PX;
+
+                const shouldShow =
+                    nextDirection === "up" &&
+                    scrollDelta.current >= SHOW_THRESHOLD_PX;
+
+                if (shouldHide) setShowHeader(false);
+                if (shouldShow) setShowHeader(true);
+
+                if (DEBUG_HEADER_SCROLL) {
+                    console.log("[ChatHeaderScroll] Tick", {
+                        currentY,
+                        delta,
+                        direction: nextDirection,
+                        accumulated: scrollDelta.current,
+                        shouldHide,
+                        shouldShow,
+                        showHeader: showHeaderRef.current,
+                    });
+                }
             }
+
+            if (currentY <= 0) {
+                setShowHeader(true);
+                scrollDelta.current = 0;
+                scrollDirection.current = null;
+                if (DEBUG_HEADER_SCROLL) {
+                    console.log("[ChatHeaderScroll] At top, reset/show");
+                }
+            }
+
             lastScrollY.current = currentY;
         };
 
         el.addEventListener("scroll", handleScroll, { passive: true });
-        return () => el.removeEventListener("scroll", handleScroll);
-    }, []);
+        return () => {
+            el.removeEventListener("scroll", handleScroll);
+            if (DEBUG_HEADER_SCROLL) {
+                console.log("[ChatHeaderScroll] Detach");
+            }
+        };
+    }, [activeSearchId, DEBUG_HEADER_SCROLL, HIDE_THRESHOLD_PX, SHOW_THRESHOLD_PX]);
+
+    useEffect(() => {
+        setShowHeader(true);
+        lastScrollY.current = 0;
+        scrollDelta.current = 0;
+        scrollDirection.current = null;
+    }, [activeSearchId]);
 
     const chatCanvasContextValue = useMemo(() => ({
         resultsMap,

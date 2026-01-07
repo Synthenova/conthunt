@@ -38,11 +38,15 @@ export function ChatResults({
                 loading={loading}
                 analysisDisabled={false}
                 scrollRef={resultsScrollRef}
-            />
-            <LoadMoreButton
-                onLoadMore={onLoadMore}
-                hasMore={hasMore}
-                isLoading={isLoadingMore}
+                footer={
+                    filteredResults.length > 0 && hasMore ? (
+                        <LoadMoreButton
+                            onLoadMore={onLoadMore}
+                            hasMore={hasMore}
+                            isLoading={isLoadingMore}
+                        />
+                    ) : null
+                }
             />
         </div>
     );

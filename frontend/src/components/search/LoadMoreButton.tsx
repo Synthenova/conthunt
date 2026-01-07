@@ -21,11 +21,10 @@ export function LoadMoreButton({
     return (
         <div className={`flex justify-center py-8 ${className}`}>
             <Button
-                variant="outline"
                 size="lg"
                 onClick={onLoadMore}
                 disabled={isLoading}
-                className="gap-2 rounded-full px-8 border-white/10 hover:bg-white/5"
+                className="gap-2 glass-button-white px-8"
             >
                 {isLoading ? (
                     <>

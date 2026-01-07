@@ -62,45 +62,53 @@ export function ChatHeader({
 }: ChatHeaderProps) {
     return (
         <motion.div
-            initial={{ y: 0 }}
-            animate={{ y: showHeader ? 0 : "-120%" }}
-            transition={{ duration: 0.3, ease: "easeInOut" }}
-            className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md px-4 py-4 mb-6 space-y-6 border-b border-white/5 w-full overflow-x-hidden"
+            initial={false}
+            animate={{
+                height: showHeader ? "auto" : 0,
+                opacity: showHeader ? 1 : 0,
+                y: showHeader ? 0 : -16,
+                marginBottom: showHeader ? 24 : 0,
+            }}
+            transition={{ duration: 0.25, ease: "easeInOut" }}
+            style={{ pointerEvents: showHeader ? "auto" : "none" }}
+            className="w-full overflow-hidden"
         >
-            {/* Header Row */}
-            <ChatTitle
-                activeChatTitle={activeChatTitle}
-                isEditingTitle={isEditingTitle}
-                editingTitle={editingTitle}
-                setEditingTitle={setEditingTitle}
-                startTitleEdit={startTitleEdit}
-                cancelTitleEdit={cancelTitleEdit}
-                commitTitleEdit={commitTitleEdit}
-                onDeleteChat={onDeleteChat}
-                resultCount={resultCount}
-            />
-
-            {/* Controls Bar: Tabs + Filters */}
-            <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 flex-wrap min-w-0 w-full">
-                <ChatTabs
-                    displaySearches={displaySearches}
-                    activeSearchId={activeSearchId}
-                    setActiveSearchId={setActiveSearchId}
-                    handleTabDelete={handleTabDelete}
-                    streamingSearchIds={streamingSearchIds}
+            <div className="bg-zinc-950/80 backdrop-blur-md px-4 py-4 space-y-6 border-b border-white/5 w-full">
+                {/* Header Row */}
+                <ChatTitle
+                    activeChatTitle={activeChatTitle}
+                    isEditingTitle={isEditingTitle}
+                    editingTitle={editingTitle}
+                    setEditingTitle={setEditingTitle}
+                    startTitleEdit={startTitleEdit}
+                    cancelTitleEdit={cancelTitleEdit}
+                    commitTitleEdit={commitTitleEdit}
+                    onDeleteChat={onDeleteChat}
+                    resultCount={resultCount}
                 />
 
-                {/* Filters */}
-                <div className="flex justify-end min-w-0">
-                    <BoardFilterBar
-                        sort={clientSort}
-                        onSortChange={setClientSort}
-                        dateFilter={clientDateFilter}
-                        onDateFilterChange={setClientDateFilter}
-                        platforms={platforms}
-                        selectedPlatforms={selectedPlatforms}
-                        onPlatformsChange={setSelectedPlatforms}
+                {/* Controls Bar: Tabs + Filters */}
+                <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 flex-wrap min-w-0 w-full">
+                    <ChatTabs
+                        displaySearches={displaySearches}
+                        activeSearchId={activeSearchId}
+                        setActiveSearchId={setActiveSearchId}
+                        handleTabDelete={handleTabDelete}
+                        streamingSearchIds={streamingSearchIds}
                     />
+
+                    {/* Filters */}
+                    <div className="flex justify-end min-w-0">
+                        <BoardFilterBar
+                            sort={clientSort}
+                            onSortChange={setClientSort}
+                            dateFilter={clientDateFilter}
+                            onDateFilterChange={setClientDateFilter}
+                            platforms={platforms}
+                            selectedPlatforms={selectedPlatforms}
+                            onPlatformsChange={setSelectedPlatforms}
+                        />
+                    </div>
                 </div>
             </div>
         </motion.div>

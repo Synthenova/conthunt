@@ -10,9 +10,10 @@ interface SelectableResultsGridProps {
     loading: boolean;
     analysisDisabled?: boolean;
     scrollRef?: React.RefObject<HTMLDivElement | null>;
+    footer?: ReactNode;
 }
 
-export function SelectableResultsGrid({ results, loading, analysisDisabled = false, scrollRef }: SelectableResultsGridProps) {
+export function SelectableResultsGrid({ results, loading, analysisDisabled = false, scrollRef, footer }: SelectableResultsGridProps) {
     const internalScrollRef = useRef<HTMLDivElement>(null);
     const resolvedScrollRef = scrollRef ?? internalScrollRef;
     const [skeletonColumns, setSkeletonColumns] = useState(4);
@@ -101,6 +102,7 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
     return (
         <div ref={resolvedScrollRef} className="flex-1 min-h-0 w-full overflow-y-auto p-2">
             {content}
+            {footer ? <div className="w-full">{footer}</div> : null}
         </div>
     );
 }
