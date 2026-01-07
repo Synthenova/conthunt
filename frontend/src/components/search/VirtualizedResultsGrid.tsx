@@ -6,6 +6,8 @@ import { motion } from "framer-motion";
 import { SelectableMediaCard } from "./SelectableMediaCard";
 import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
 import { getResponsiveColumns } from "./gridUtils";
+import { useChatStore } from "@/lib/chatStore";
+import { scrollToAndHighlight } from "@/hooks/useScrollToMedia";
 
 const GAP = 16;
 const CARD_ASPECT = 9 / 16;
@@ -165,6 +167,68 @@ export function VirtualizedResultsGrid({
         virtualizer.measure();
     }, [columns, rows.length]); // intentionally no width
 
+    // Register scroll handler to store
+    const { setCanvasScrollToItem } = useChatStore();
+
+    useEffect(() => {
+        const handleScrollToItem = async (itemId: string): Promise<boolean> => {
+            console.log('[VirtualizedResultsGrid] handleScrollToItem called for:', itemId);
+
+            // 1. Find the item index in the flat results array
+            const index = results.findIndex((item) => {
+                // Check item ID
+                if (item.id === itemId) return true;
+                // Check media asset ID
+                const videoAsset = item.assets?.find((a: any) => a.asset_type === 'video');
+                if (videoAsset?.id === itemId) return true;
+                return false;
+            });
+
+            if (index === -1) {
+                console.log('[VirtualizedResultsGrid] Item not found in results:', itemId);
+                return false;
+            }
+
+            // 2. Calculate row index
+            const rowIndex = Math.floor(index / columns);
+            console.log('[VirtualizedResultsGrid] Found item at index:', index, 'rowIndex:', rowIndex);
+
+            // 3. Scroll to that row
+            virtualizer.scrollToIndex(rowIndex, { align: 'center', behavior: 'smooth' });
+
+            // 4. Wait for render and then try to highlight DOM element
+            // We need to wait enough time for the virtualizer to render the new rows
+            // and for React to commit the DOM changes.
+            return new Promise((resolve) => {
+                // Initial short delay to allow scroll start
+                setTimeout(() => {
+                    // Check periodically if element appeared
+                    let attempts = 0;
+                    const maxAttempts = 10;
+
+                    const checkInterval = setInterval(() => {
+                        attempts++;
+                        const success = scrollToAndHighlight(itemId);
+                        if (success) {
+                            clearInterval(checkInterval);
+                            resolve(true);
+                        } else if (attempts >= maxAttempts) {
+                            clearInterval(checkInterval);
+                            console.log('[VirtualizedResultsGrid] Failed to find DOM element after scrolling');
+                            resolve(false);
+                        }
+                    }, 50);
+                }, 100);
+            });
+        };
+
+        setCanvasScrollToItem(handleScrollToItem);
+
+        return () => {
+            setCanvasScrollToItem(null);
+        };
+    }, [results, columns, virtualizer, setCanvasScrollToItem]);
+
     const virtualRows = virtualizer.getVirtualItems();
 
     // stable onOpen callback (pairs well with React.memo children)
@@ -208,19 +272,19 @@ export function VirtualizedResultsGrid({
                                     height: "100%",
                                 }}
                             >
-                                    {rowItems.map((item: any, colIndex: number) => (
-                                        <motion.div
-                                            key={item.id || `${virtualRow.index}-${colIndex}`}
-                                            layout={false}
-                                            initial={{ opacity: 0 }}
-                                            animate={{ opacity: 1 }}
-                                            transition={{ duration: 0.18, ease: "easeOut" }}
-                                            style={{ height: "100%" }}
-                                        >
-                                            <SelectableMediaCard
-                                                item={item}
-                                                platform={item.platform || "unknown"}
-                                                itemsById={itemsById}
+                                {rowItems.map((item: any, colIndex: number) => (
+                                    <motion.div
+                                        key={item.id || `${virtualRow.index}-${colIndex}`}
+                                        layout={false}
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        transition={{ duration: 0.18, ease: "easeOut" }}
+                                        style={{ height: "100%" }}
+                                    >
+                                        <SelectableMediaCard
+                                            item={item}
+                                            platform={item.platform || "unknown"}
+                                            itemsById={itemsById}
                                             onOpen={handleOpen}
                                         />
                                     </motion.div>

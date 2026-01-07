@@ -445,43 +445,36 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                 const match = findMediaInResults(targetId, canvasResultsMap);
 
                 if (match) {
+                    // Helper to wait for the scroll function to be registered (handles re-renders/tab switches)
+                    const attemptScroll = async (): Promise<boolean> => {
+                        let attempts = 0;
+                        const maxAttempts = 20; // 2 seconds max wait
+
+                        while (attempts < maxAttempts) {
+                            const storeFn = useChatStore.getState().canvasScrollToItem;
+                            if (storeFn) {
+                                return await storeFn(targetId);
+                            }
+                            await new Promise(r => setTimeout(r, 100));
+                            attempts++;
+                        }
+                        return false;
+                    };
+
                     if (match.searchId !== canvasActiveSearchId) {
                         setCanvasActiveSearchId(match.searchId);
-                        requestAnimationFrame(() => {
-                            let attempts = 0;
-                            const maxAttempts = 20;
-                            const interval = setInterval(() => {
-                                attempts++;
-                                const scrollResult = scrollToAndHighlight(targetId as string);
-                                if (scrollResult) {
-                                    clearInterval(interval);
-                                    return;
-                                }
-                                if (attempts >= maxAttempts) {
-                                    clearInterval(interval);
-                                    openContentDrawer(targetId as string);
-                                }
-                            }, 100);
-                        });
-                        return;
+                        // Give a tiny buffer for state update to propagate before polling
+                        setTimeout(async () => {
+                            const success = await attemptScroll();
+                            if (!success) {
+                                openContentDrawer(targetId);
+                            }
+                        }, 50);
                     } else {
-                        const scrollResult = scrollToAndHighlight(targetId);
-                        if (scrollResult) return;
-
-                        let attempts = 0;
-                        const maxAttempts = 5;
-                        const interval = setInterval(() => {
-                            attempts++;
-                            const retryResult = scrollToAndHighlight(targetId as string);
-                            if (retryResult) {
-                                clearInterval(interval);
-                                return;
-                            }
-                            if (attempts >= maxAttempts) {
-                                clearInterval(interval);
-                                openContentDrawer(targetId as string);
-                            }
-                        }, 100);
+                        const success = await attemptScroll();
+                        if (!success) {
+                            openContentDrawer(targetId);
+                        }
                     }
                 } else {
                     await openContentDrawer(targetId);

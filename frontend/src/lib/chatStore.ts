@@ -105,6 +105,10 @@ interface ChatState {
     // Current canvas page type for media chip scroll-to-video
     currentCanvasPage: 'board' | 'chat' | null;
     setCurrentCanvasPage: (page: 'board' | 'chat' | null) => void;
+
+    // Scroll to item function registered by VirtualizedResultsGrid
+    canvasScrollToItem: ((itemId: string) => Promise<boolean>) | null;
+    setCanvasScrollToItem: (fn: ((itemId: string) => Promise<boolean>) | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -288,4 +292,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Current canvas page type for media chip scroll-to-video
     currentCanvasPage: null,
     setCurrentCanvasPage: (page) => set({ currentCanvasPage: page }),
+
+    // Scroll to item function
+    canvasScrollToItem: null,
+    setCanvasScrollToItem: (fn) => set({ canvasScrollToItem: fn }),
 }));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useEffect, useRef, useState } from "react";
+import { useMemo, useEffect, useRef, useState, ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VirtualizedResultsGrid } from "./VirtualizedResultsGrid";
 import { getResponsiveColumns } from "./gridUtils";
@@ -60,7 +60,7 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
         return map;
     }, [results]);
 
-    let content: JSX.Element;
+    let content: ReactNode;
     if (loading) {
         const skeletonCount = Math.max(8, skeletonColumns * 2);
         content = (
