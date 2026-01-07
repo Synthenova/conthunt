@@ -62,9 +62,20 @@ function useResponsiveColumns(
     return columns;
 }
 
-export function VirtualizedResultsGrid({ results, analysisDisabled = false, itemsById }: any) {
-    // ✅ make our OWN scroll container
-    const scrollRef = useRef<HTMLDivElement>(null);
+export function VirtualizedResultsGrid({
+    results,
+    analysisDisabled = false,
+    itemsById,
+    scrollRef: externalScrollRef,
+}: {
+    results: any[];
+    analysisDisabled?: boolean;
+    itemsById: Record<string, any>;
+    scrollRef?: React.RefObject<HTMLDivElement | null>;
+}) {
+    // ✅ make our OWN scroll container (or use external ref)
+    const internalScrollRef = useRef<HTMLDivElement>(null);
+    const scrollRef = externalScrollRef ?? internalScrollRef;
     const parentRef = useRef<HTMLDivElement>(null);
 
     const [selectedItem, setSelectedItem] = useState<any | null>(null);

@@ -389,12 +389,12 @@ export default function ChatPage() {
     } = useClientResultSort(activeResults, { resultsAreFlat: true });
 
     // Scroll detection for sticky header
-    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const resultsScrollRef = useRef<HTMLDivElement>(null);
     const [showHeader, setShowHeader] = useState(true);
     const lastScrollY = useRef(0);
 
     useEffect(() => {
-        const el = scrollContainerRef.current;
+        const el = resultsScrollRef.current;
         if (!el) return;
 
         const handleScroll = () => {
@@ -427,21 +427,25 @@ export default function ChatPage() {
     return (
         <ChatCanvasContext.Provider value={chatCanvasContextValue}>
             <div className="flex h-full">
-                {/* Render SearchStreamers (Hidden) */}
-                {allSearchIds.map(id => (
+                {/* Render SearchStreamer only for active search (optimized: single SSE connection) */}
+                {/* When switching tabs, useSearchStream checks status:
+                    - If "completed" → fetches from DB
+                    - If "running" → connects to SSE stream
+                    Results for other searches remain cached in resultsMap */}
+                {activeSearchId && (
                     <SearchStreamer
-                        key={id}
-                        searchId={id}
+                        key={activeSearchId}
+                        searchId={activeSearchId}
                         onResults={handleSearchResults}
                         onStreamingChange={handleSearchStreamingChange}
                         onLoadingChange={handleSearchLoadingChange}
                         onCursorsChange={handleSearchCursorsChange}
                     />
-                ))}
+                )}
 
                 {/* Canvas (left/center) */}
-                <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0">
-                    <div className="w-full py-4 px-4 space-y-6">
+                <div className="flex-1 min-h-0 flex flex-col">
+                    <div className="w-full py-4 px-4 space-y-6 flex-1 min-h-0 flex flex-col">
                         {isInitialLoading ? (
                             <div className="min-h-[70vh] flex items-center justify-center">
                                 <div className="flex flex-col items-center gap-3 text-center">
@@ -472,7 +476,7 @@ export default function ChatPage() {
                             <>
                                 {/* Searches Section - Now "Chat Content" */}
                                 {hasSearches && (
-                                    <section>
+                                    <section className="flex flex-col min-h-0">
                                         {/* Sticky Header Wrapper */}
                                         <motion.div
                                             initial={{ y: 0 }}
@@ -626,7 +630,8 @@ export default function ChatPage() {
                                                                     }}
                                                                 >
                                                                     <span className="whitespace-nowrap truncate">{search.label}</span>
-                                                                    {streamingSearchIds[search.id] && (
+                                                                    {/* Only show loader for active search (we only track streaming for active) */}
+                                                                    {search.id === activeSearchId && streamingSearchIds[search.id] && (
                                                                         <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                                                                     )}
                                                                 </span>
@@ -683,12 +688,13 @@ export default function ChatPage() {
 
                                         {/* Results for Active Search */}
                                         {activeSearchId && (
-                                            <div className="mt-0">
+                                            <div className="mt-0 flex-1 min-h-0 flex flex-col">
                                                 <SelectableResultsGrid
                                                     key={`${activeSearchId}-${clientSort}-${clientDateFilter}-${selectedPlatforms.join(',')}`}
                                                     results={filteredResults}
                                                     loading={(!!streamingSearchIds[activeSearchId] || !!loadingSearchIds[activeSearchId]) && (filteredResults.length === 0)}
                                                     analysisDisabled={false}
+                                                    scrollRef={resultsScrollRef}
                                                 />
                                                 <LoadMoreButton
                                                     onLoadMore={handleLoadMore}

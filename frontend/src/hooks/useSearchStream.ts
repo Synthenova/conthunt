@@ -40,7 +40,7 @@ export function useSearchStream(searchId?: string | null) {
                     const merged = { ...prev, ...newCursors };
                     return Object.keys(merged).length > 0 ? merged : prev;
                 });
-                
+
                 if (data?.status === "completed") {
                     queryClient.setQueryData(["search", id], data);
                 }
@@ -60,6 +60,25 @@ export function useSearchStream(searchId?: string | null) {
     };
 
     const loadSearch = useCallback(async (abortController: AbortController, id: string) => {
+        // Check react-query cache first - skip fetch for completed searches we've already loaded
+        const cachedSearch = queryClient.getQueryData<any>(["search", id]);
+        if (cachedSearch?.status === "completed" && cachedSearch.results) {
+            setSearch(cachedSearch);
+            setPlatformCalls(cachedSearch.platform_calls || []);
+            setResults(cachedSearch.results);
+            // Extract cursors from cached platform_calls
+            const cachedCursors: Record<string, any> = {};
+            for (const call of (cachedSearch.platform_calls || [])) {
+                if (call.next_cursor && !call.platform?.toLowerCase().includes('instagram')) {
+                    cachedCursors[call.platform] = call.next_cursor;
+                }
+            }
+            setCursors(cachedCursors);
+            setIsStreaming(false);
+            setIsLoading(false);
+            return; // Skip network request!
+        }
+
         // Wait for auth to initialize first
         await waitForAuth();
 

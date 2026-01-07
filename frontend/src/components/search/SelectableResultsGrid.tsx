@@ -8,9 +8,10 @@ interface SelectableResultsGridProps {
     results: any[];
     loading: boolean;
     analysisDisabled?: boolean;
+    scrollRef?: React.RefObject<HTMLDivElement | null>;
 }
 
-export function SelectableResultsGrid({ results, loading, analysisDisabled = false }: SelectableResultsGridProps) {
+export function SelectableResultsGrid({ results, loading, analysisDisabled = false, scrollRef }: SelectableResultsGridProps) {
     const itemsById = useMemo(() => {
         const map: Record<string, any> = {};
         results.forEach((item) => {
@@ -52,6 +53,7 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
             results={results}
             analysisDisabled={analysisDisabled}
             itemsById={itemsById}
+            scrollRef={scrollRef}
         />
     );
 }

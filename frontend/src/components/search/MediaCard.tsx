@@ -26,6 +26,8 @@ export function MediaCard({
     onHoverTimeChange,
     onHoverStateChange,
 }: MediaCardProps) {
+    const cardRef = useRef<HTMLDivElement>(null);
+    const [isVisible, setIsVisible] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isCaptionExpanded, setIsCaptionExpanded] = useState(false);
     const { mediaMuted, setMediaMuted } = useSearchStore();
@@ -35,6 +37,26 @@ export function MediaCard({
     const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
     const [currentTime, setCurrentTime] = useState(0);
     const youtubeTimeIntervalRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        const el = cardRef.current;
+        if (!el) return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                for (const entry of entries) {
+                    setIsVisible(entry.isIntersecting);
+                }
+            },
+            {
+                rootMargin: "200px",
+                threshold: 0,
+            }
+        );
+
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, []);
 
     // Platform-specific field mapping
     const title = item.title || item.caption || item.description || "No Title";
@@ -65,7 +87,7 @@ export function MediaCard({
 
     const youtube = useYouTubePlayer({
         videoId: youtubeId,
-        preload: false,
+        preload: true,
         muted: shouldMuteYoutube,
         onReady: () => {
             // Get duration from player
@@ -150,6 +172,30 @@ export function MediaCard({
         }
     }, [isYouTube, youtubeId, youtube, onHoverStateChange, onHoverTimeChange, startYouTubeTimeTracking, stopYouTubeTimeTracking]);
 
+    useEffect(() => {
+        if (!isVisible && isPlaying) {
+            handleHover(false);
+        }
+    }, [isVisible, isPlaying, handleHover]);
+
+    useEffect(() => {
+        const handleVisibility = () => {
+            if (document.hidden) {
+                handleHover(false);
+            }
+        };
+        const handleBlur = () => {
+            handleHover(false);
+        };
+
+        document.addEventListener("visibilitychange", handleVisibility);
+        window.addEventListener("blur", handleBlur);
+        return () => {
+            document.removeEventListener("visibilitychange", handleVisibility);
+            window.removeEventListener("blur", handleBlur);
+        };
+    }, [handleHover]);
+
     // Sync mute for native video
     useEffect(() => {
         if (videoRef.current) {
@@ -205,8 +251,6 @@ export function MediaCard({
         };
     }, [isScrubbing, handleScrub]);
 
-    const cardRef = useRef<HTMLDivElement>(null);
-
     const handleMouseEnter = useCallback(() => {
         handleHover(true);
     }, [handleHover]);
@@ -247,7 +291,7 @@ export function MediaCard({
                         />
 
                         {/* Video Player - Regular video for TikTok/Instagram */}
-                        {videoUrl && !isYouTube && (
+                        {videoUrl && !isYouTube && isVisible && (
                             <video
                                 ref={videoRef}
                                 src={videoUrl}
@@ -258,6 +302,7 @@ export function MediaCard({
                                 muted={mediaMuted}
                                 loop
                                 playsInline
+                                preload="none"
                                 onLoadedMetadata={() => {
                                     if (videoRef.current) {
                                         const dur = videoRef.current.duration;
