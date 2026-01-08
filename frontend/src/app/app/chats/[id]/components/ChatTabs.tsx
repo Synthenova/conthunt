@@ -65,10 +65,10 @@ export function ChatTabs({
     }, [handleTabsMouseUp]);
 
     return (
-        <div className="flex-1 min-w-0 flex justify-start w-full overflow-hidden">
+        <div className="min-w-0 flex justify-start overflow-hidden flex-shrink">
             <div
                 ref={tabsScrollRef}
-                className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center w-full max-w-full overflow-x-auto scrollbar-hide cursor-grab"
+                className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center max-w-full overflow-x-auto scrollbar-hide cursor-grab"
                 style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
                 onMouseDown={handleTabsMouseDown}
                 onMouseMove={handleTabsMouseMove}

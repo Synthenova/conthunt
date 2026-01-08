@@ -120,10 +120,9 @@ export function VirtualizedResultsGrid({
     const columns = useResponsiveColumns(scrollRef, {
         onResizeTick: (w) => {
             widthRef.current = w;
-            // important: we still want to re-measure even if columns didn't change,
-            // but we do NOT want to set React state every tick.
+            // Only trigger resize state, but DON'T re-measure on every tick.
+            // Re-measurement happens only when columns change or resize ends.
             markResizing("resize-tick");
-            scheduleMeasure("resize-tick");
         },
         onColumnsChange: (prev, next, width) => {
             console.log("[VirtualizedResultsGrid] cols", prev, "->", next, "width", Math.round(width));

@@ -88,7 +88,7 @@ export function ChatHeader({
                 />
 
                 {/* Controls Bar: Tabs + Filters */}
-                <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 flex-wrap min-w-0 w-full">
+                <div className="flex items-center justify-between gap-4 min-w-0 w-full">
                     <ChatTabs
                         displaySearches={displaySearches}
                         activeSearchId={activeSearchId}
@@ -98,7 +98,7 @@ export function ChatHeader({
                     />
 
                     {/* Filters */}
-                    <div className="flex justify-end min-w-0">
+                    <div className="flex-shrink-0">
                         <BoardFilterBar
                             sort={clientSort}
                             onSortChange={setClientSort}
