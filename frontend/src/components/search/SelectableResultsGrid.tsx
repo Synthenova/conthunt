@@ -28,12 +28,17 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
             if (!width) return;
             if (rafId) cancelAnimationFrame(rafId);
             rafId = requestAnimationFrame(() => {
-                const nextCols = getResponsiveColumns(width);
-                if (lastSkeletonColsRef.current !== nextCols) {
-                    lastSkeletonColsRef.current = nextCols;
-                    console.log("[SelectableResultsGrid] skeleton cols", nextCols, "width", Math.round(width));
-                }
-                setSkeletonColumns(nextCols);
+                // Use queueMicrotask to defer state update and avoid flushSync conflicts
+                queueMicrotask(() => {
+                    setSkeletonColumns((prev) => {
+                        const nextCols = getResponsiveColumns(width, prev);
+                        if (lastSkeletonColsRef.current !== nextCols) {
+                            lastSkeletonColsRef.current = nextCols;
+                            console.log("[SelectableResultsGrid] skeleton cols", nextCols, "width", Math.round(width));
+                        }
+                        return nextCols;
+                    });
+                });
             });
         };
 

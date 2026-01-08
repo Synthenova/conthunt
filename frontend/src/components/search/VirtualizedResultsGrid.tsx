@@ -27,14 +27,17 @@ function useResponsiveColumns(
         if (!el) return;
         const width = el.getBoundingClientRect().width;
         if (!width) return;
-        const nextCols = getResponsiveColumns(width);
-        opts.onResizeTick?.(width);
-        setColumns((prev) => {
-            if (prev !== nextCols) {
-                opts.onColumnsChange?.(prev, nextCols, width);
-                return nextCols;
-            }
-            return prev;
+        // Use queueMicrotask to defer state update and avoid flushSync conflicts
+        queueMicrotask(() => {
+            setColumns((prev) => {
+                const nextCols = getResponsiveColumns(width, prev);
+                opts.onResizeTick?.(width);
+                if (prev !== nextCols) {
+                    opts.onColumnsChange?.(prev, nextCols, width);
+                    return nextCols;
+                }
+                return prev;
+            });
         });
     }, [containerRef, opts]);
 
@@ -50,16 +53,17 @@ function useResponsiveColumns(
 
             if (rafId) cancelAnimationFrame(rafId);
             rafId = requestAnimationFrame(() => {
-                const nextCols = getResponsiveColumns(width);
-
-                opts.onResizeTick?.(width);
-
-                setColumns((prev) => {
-                    if (prev !== nextCols) {
-                        opts.onColumnsChange?.(prev, nextCols, width);
-                        return nextCols;
-                    }
-                    return prev;
+                // Use queueMicrotask to defer state update and avoid flushSync conflicts
+                queueMicrotask(() => {
+                    setColumns((prev) => {
+                        const nextCols = getResponsiveColumns(width, prev);
+                        opts.onResizeTick?.(width);
+                        if (prev !== nextCols) {
+                            opts.onColumnsChange?.(prev, nextCols, width);
+                            return nextCols;
+                        }
+                        return prev;
+                    });
                 });
             });
         });
