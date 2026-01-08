@@ -39,7 +39,9 @@ export function transformToMediaItem(backendResult: any): FlatMediaItem {
     // Usually we want the signed URL or the source URL. 
     // For now we use source_url as primary.
     const videoAsset = assets.find((a: any) => a.asset_type === 'video');
-    const imageAsset = assets.find((a: any) => a.asset_type === 'cover' || a.asset_type === 'thumbnail' || a.asset_type === 'image' || a.mime_type?.startsWith('image'));
+    // Prefer static cover over animated thumbnail (TikTok's dynamic_cover is a GIF)
+    const imageAsset = assets.find((a: any) => a.asset_type === 'cover')
+        || assets.find((a: any) => a.asset_type === 'thumbnail' || a.asset_type === 'image' || a.mime_type?.startsWith('image'));
 
     const videoUrl = videoAsset?.source_url || videoAsset?.gcs_uri;
     let thumbnailUrl = imageAsset?.source_url || imageAsset?.gcs_uri;
