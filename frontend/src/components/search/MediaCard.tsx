@@ -302,7 +302,7 @@ export function MediaCard({
                                 muted={mediaMuted}
                                 loop
                                 playsInline
-                                preload="none"
+                                preload="metadata"
                                 onLoadedMetadata={() => {
                                     if (videoRef.current) {
                                         const dur = videoRef.current.duration;
