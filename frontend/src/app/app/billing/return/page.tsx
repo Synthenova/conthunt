@@ -49,12 +49,26 @@ function BillingReturnContent() {
             let active = true;
 
             const pollRole = async () => {
-                if (!auth.currentUser) return;
+                // Wait for auth to initialize
+                if (!auth || !auth.currentUser) {
+                    console.log(`[BillingReturn] Waiting for auth... (attempt ${attempts})`);
+                    if (active && attempts < 30) {
+                        attempts++;
+                        setTimeout(pollRole, 500);
+                    } else if (active) {
+                        console.log("[BillingReturn] Auth wait timed out");
+                        setVerifying(false);
+                        toast.error("Authentication failed. Please log in.");
+                    }
+                    return;
+                }
 
                 try {
+                    console.log("[BillingReturn] Polling for role update (force refreshing token)...");
                     // Force refresh to get new claims
                     const token = await auth.currentUser.getIdTokenResult(true);
                     const currentRole = token.claims.role as string;
+                    console.log(`[BillingReturn] Current role: ${currentRole}`);
 
                     if ((currentRole === "creator" || currentRole === "pro_research") && active) {
                         setRole(currentRole);
@@ -63,10 +77,11 @@ function BillingReturnContent() {
                             duration: 5000,
                         });
                         setVerifying(false);
+                        // Optional: redirect or close?
                         return;
                     }
 
-                    if (attempts < 10 && active) { // Retry for ~20 seconds
+                    if (attempts < 20 && active) { // Retry for ~40 seconds total (increased for safety)
                         attempts++;
                         setTimeout(pollRole, 2000);
                     } else if (active) {
@@ -79,6 +94,11 @@ function BillingReturnContent() {
                     }
                 } catch (e) {
                     console.error("Error polling role:", e);
+                    // Retry on error too?
+                    if (attempts < 20 && active) {
+                        attempts++;
+                        setTimeout(pollRole, 2000);
+                    }
                 }
             };
 

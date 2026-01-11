@@ -79,40 +79,20 @@ async def dodo_subscription_webhook(request: Request):
         logger.error(f"Webhook verification failed: {e}")
         raise HTTPException(status_code=401, detail="Invalid signature")
 
-    # Handle Event object (Pydantic model or dict)
-    if hasattr(event, "model_dump"):
-         event_data_dict = event.model_dump()
-    elif hasattr(event, "to_dict"):
-         event_data_dict = event.to_dict()
-    elif isinstance(event, dict):
-         event_data_dict = event
-    else:
-         # Fallback for object with attributes
-         event_data_dict = {}
-         if hasattr(event, "type"):
-             event_data_dict["type"] = event.type
-         if hasattr(event, "data"):
-             event_data_dict["data"] = event.data
+    # 1) Event type
+    event_type = event.type
 
-    # Ensure data is a dict (if model_dump was used, it should be)
-    # If not, try to convert data object to dict
-    # Ensure data is a dict (if model_dump was used, it should be)
-    # If not, try to convert data object to dict
-    resource_data = event_data_dict.get("data", {})
-    if hasattr(resource_data, "model_dump"):
-        resource_data = resource_data.model_dump()
-    elif hasattr(resource_data, "to_dict"):
-        resource_data = resource_data.to_dict()
-         
-    event_type = event_data_dict.get("type")
+    # 2) Event payload
+    # event.data is typically a Pydantic model -> convert once if you want a dict
+    data = event.data.model_dump() if hasattr(event.data, "model_dump") else event.data
     
     logger.info(f"Dodo webhook: {event_type} (ID: {webhook_id})")
     
     # Extract user_id from metadata (we pass this during checkout)
-    metadata = resource_data.get("metadata") or {}
-    customer = resource_data.get("customer") or {}
+    metadata = data.get("metadata") or {}
+    customer = data.get("customer") or {}
     customer_metadata = customer.get("metadata") or {}
-    customer_id = customer.get("customer_id") or resource_data.get("customer_id")
+    customer_id = customer.get("customer_id") or data.get("customer_id")
     
     user_id_str = metadata.get("user_id") or customer_metadata.get("user_id")
     
@@ -126,10 +106,10 @@ async def dodo_subscription_webhook(request: Request):
         logger.error(f"Webhook {webhook_id}: Invalid user_id format: {user_id_str}")
         return {"status": "ignored", "reason": "invalid_user_id"}
     
-    subscription_id = resource_data.get("subscription_id") or resource_data.get("id")
-    product_id = resource_data.get("product_id")
-    status = resource_data.get("status")
-    current_period_start = parse_iso_datetime(resource_data.get("current_period_start"))
+    subscription_id = data.get("subscription_id") or data.get("id")
+    product_id = data.get("product_id")
+    status = data.get("status")
+    current_period_start = parse_iso_datetime(data.get("current_period_start"))
     
     # Map product to role
     settings = get_settings()

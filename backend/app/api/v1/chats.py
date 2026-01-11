@@ -186,23 +186,9 @@ async def stream_generator_to_redis(
 
             elif ev_type == "on_chat_model_stream":
                 # Only forward assistant model streams, not tool-internal LLM runs.
-                if parent_run_id in tool_run_ids:
-                    logger.debug(
-                        "[CHAT] Skipping nested model stream from tool run_id=%s parent_run_id=%s name=%s node=%s",
-                        run_id,
-                        parent_run_id,
-                        ev.get("name"),
-                        langgraph_node,
-                    )
+                if parent_run_id in tool_run_ids:                    
                     continue
-                if langgraph_node and langgraph_node != "agent":
-                    logger.debug(
-                        "[CHAT] Skipping model stream for non-agent node run_id=%s parent_run_id=%s name=%s node=%s",
-                        run_id,
-                        parent_run_id,
-                        ev.get("name"),
-                        langgraph_node,
-                    )
+                if langgraph_node and langgraph_node != "agent":                    
                     continue
                 chunk = data.get("chunk")
                 if chunk:
