@@ -14,6 +14,7 @@ steps:
       - 'build'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/conthunt-frontend/app'
       - '--builder=gcr.io/buildpacks/builder:google-22'
+      - '--trust-builder'
       - '--path=frontend/'
       - '--publish'
       - '--env=NEXT_PUBLIC_FIREBASE_API_KEY'
