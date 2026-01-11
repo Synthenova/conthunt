@@ -26,7 +26,7 @@ steps:
       - '--region=us-central1'
       - '--platform=managed'
       - '--allow-unauthenticated'
-      - '--service-account=976912795426-compute@developer.gserviceaccount.com'
+
       # --set-secrets maps Secret Manager keys to Environment Variables in the container
       # Format: ENV_VAR=SECRET_NAME:VERSION
       - '--set-secrets=DATABASE_URL=DATABASE_URL:latest'
