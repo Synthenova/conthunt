@@ -65,6 +65,8 @@ from app.db.queries.analysis import (
     insert_video_analysis,
     create_pending_analysis,
     update_analysis_status,
+    has_user_accessed_analysis,
+    record_user_analysis_access,
 )
 
 # Insights queries
@@ -87,9 +89,12 @@ from app.db.queries.content import (
 # User queries
 from app.db.queries.users import (
     get_user_role,
+    get_user_by_uuid,
+    get_user_with_billing,
+    get_user_id_by_firebase,
     update_user_role,
-    update_user_role,
-    update_user_dodo_subscription,
+    update_user_subscription,
+    clear_user_subscription,
 )
 
 # Chat queries
@@ -160,8 +165,12 @@ __all__ = [
     "get_media_asset_with_content",
     # Users
     "get_user_role",
+    "get_user_by_uuid",
+    "get_user_with_billing",
+    "get_user_id_by_firebase",
     "update_user_role",
-    "update_user_dodo_subscription",
+    "update_user_subscription",
+    "clear_user_subscription",
     # Chats
     "create_chat",
     "get_user_chats",

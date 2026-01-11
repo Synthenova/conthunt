@@ -1,19 +1,22 @@
+"""Analysis service with credit enforcement."""
 from uuid import UUID
 from typing import Dict, Any, Optional
 
 from fastapi import BackgroundTasks
+from sqlalchemy import text
 
 from app.core import logger
 from app.db.session import get_db_connection
-from app.services.usage_tracker import usage_tracker
+from app.db.queries.analysis import has_user_accessed_analysis, record_user_analysis_access
+from app.db import set_rls_user
+from app.services.credit_tracker import credit_tracker
 from app.api.v1.analysis import run_gemini_analysis
 from app.agent.analysis_inline import run_inline_video_analysis
+
 
 class AnalysisService:
     """
     Centralized service for video analysis with credit enforcement.
-    Ensures all analysis paths (API, Agent, Board Insights) go through
-    the same credit consumption logic.
     """
 
     async def trigger_paid_analysis(
@@ -28,44 +31,55 @@ class AnalysisService:
         """
         Trigger a paid video analysis.
         
-        Args:
-            user_id: The internal DB UUID of the requesting user.
-            user_role: The user's role (for limit checking).
-            media_asset_id: The video media asset to analyze.
-            wait: If True, runs inline and waits for result (for Agent).
-                  If False, spawns background task and returns immediately (for API).
-            background_tasks: Optional FastAPI BackgroundTasks (for API/async).
-            context_source: Source identifier for usage tracking logs.
-            
-        Returns:
-            Dict containing analysis response (status, analysis, etc.)
-            
-        Raises:
-            HTTPException (403): If usage limit exceeded.
+        Checks if user already accessed this analysis (free re-access).
+        If not, checks credit limits and charges.
         """
-        # 1. Check Limits & Charge Credit (using UUID directly)
-        await usage_tracker.check_and_record_analysis_access(
-            user_id=user_id,
-            user_role=user_role,
-            media_asset_id=media_asset_id,
-            context={"source": context_source}
-        )
+        # Get user's period_start for credit tracking
+        async with get_db_connection() as conn:
+            result = await conn.execute(
+                text("SELECT current_period_start FROM users WHERE id = :id"),
+                {"id": user_id}
+            )
+            row = result.fetchone()
+            period_start = row[0] if row else None
+            
+            # Check if already accessed (free re-view)
+            await set_rls_user(conn, user_id)
+            already_accessed = await has_user_accessed_analysis(conn, user_id, media_asset_id)
         
-        # 2. Trigger Analysis (Cached check is handled inside these functions too)
+        if not already_accessed:
+            # First access - check and charge credits
+            await credit_tracker.check(
+                user_id=user_id,
+                role=user_role,
+                feature="video_analysis",
+                current_period_start=period_start,
+                record=True,
+                context={"media_asset_id": str(media_asset_id), "source": context_source}
+            )
+            
+            # Record access for future free re-views
+            async with get_db_connection() as conn:
+                await set_rls_user(conn, user_id)
+                await record_user_analysis_access(conn, user_id, media_asset_id)
+                await conn.commit()
+            
+            logger.info(f"Charged credit for analysis: user={user_id}, asset={media_asset_id}")
+        else:
+            logger.info(f"Free re-access: user={user_id} already analyzed asset={media_asset_id}")
+        
+        # Trigger Analysis
         if wait:
-            # Inline execution (slower, but returns result immediately)
-            # Used by Agent Tools
             logger.info(f"[{context_source}] Running inline analysis for {media_asset_id}")
             return await run_inline_video_analysis(media_asset_id)
         else:
-            # Background execution (returns 'processing' status)
-            # Used by API and Board Insights
             logger.info(f"[{context_source}] Spawning background analysis for {media_asset_id}")
             return await run_gemini_analysis(
                 media_asset_id=media_asset_id,
                 background_tasks=background_tasks,
                 use_cloud_tasks=True
             )
+
 
 # Global instance
 analysis_service = AnalysisService()

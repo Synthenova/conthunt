@@ -570,15 +570,29 @@ async def create_search(
                 detail=f"Unknown platform: {slug}. Available: {list(PLATFORM_ADAPTERS.keys())}"
             )
     
-    # Check Usage Limits
-    from app.services.usage_tracker import usage_tracker
-    await usage_tracker.check_limit(
-        user_id=user_uuid, 
-        role=user.get("role", "free"), 
-        feature="search_query"
+    # Check and charge credits
+    from app.services.credit_tracker import credit_tracker
+    from sqlalchemy import text
+    
+    # Get period_start for credit tracking
+    async with get_db_connection() as conn:
+        result = await conn.execute(
+            text("SELECT current_period_start FROM users WHERE id = :id"),
+            {"id": user_uuid}
+        )
+        row = result.fetchone()
+        period_start = row[0] if row else None
+    
+    await credit_tracker.check(
+        user_id=user_uuid,
+        role=user.get("role", "free"),
+        feature="search_query",
+        current_period_start=period_start,
+        record=True,
+        context={"platforms": list(request.inputs.keys())}
     )
 
-    # Get user UUID and create search entry
+    # Create search entry
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
         
@@ -591,15 +605,6 @@ async def create_search(
             status="running",
         )
         await conn.commit()
-    
-    # Record Usage (safe background log)
-    background_tasks.add_task(
-        usage_tracker.record_usage,
-        user_id=user_uuid,
-        feature="search_query",
-        quantity=1,
-        context={"search_id": str(search_id), "platforms": list(request.inputs.keys())}
-    )
 
     # Spawn background worker
     background_tasks.add_task(
@@ -739,20 +744,24 @@ async def load_more(
                 detail="No more results available (no platforms have pagination cursors)"
             )
     
-    # Check Usage Limits
-    from app.services.usage_tracker import usage_tracker
-    await usage_tracker.check_limit(
-        user_id=user_uuid, 
-        role=user.get("role", "free"), 
-        feature="search_query"
-    )
+    # Check and charge credits
+    from app.services.credit_tracker import credit_tracker
+    from sqlalchemy import text
     
-    # Record Usage
-    background_tasks.add_task(
-        usage_tracker.record_usage,
+    async with get_db_connection() as conn:
+        result = await conn.execute(
+            text("SELECT current_period_start FROM users WHERE id = :id"),
+            {"id": user_uuid}
+        )
+        row = result.fetchone()
+        period_start = row[0] if row else None
+    
+    await credit_tracker.check(
         user_id=user_uuid,
+        role=user.get("role", "free"),
         feature="search_query",
-        quantity=1,
+        current_period_start=period_start,
+        record=True,
         context={"search_id": str(search_id), "platforms": list(platform_cursors.keys()), "action": "load_more"}
     )
     

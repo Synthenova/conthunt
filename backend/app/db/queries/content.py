@@ -113,7 +113,6 @@ async def get_video_media_asset_for_content_item(
     }
 
 
-@log_query_timing
 async def get_media_asset_by_id(
     conn: AsyncConnection,
     media_asset_id: UUID,

@@ -26,8 +26,8 @@ async def get_or_create_user(
     # Upsert user - either get existing or create new
     result = await conn.execute(
         text("""
-            INSERT INTO users (firebase_uid, role)
-            VALUES (:firebase_uid, 'free')
+            INSERT INTO users (firebase_uid, role, current_period_start)
+            VALUES (:firebase_uid, 'free', NOW())
             ON CONFLICT (firebase_uid) 
             DO UPDATE SET firebase_uid = EXCLUDED.firebase_uid
             RETURNING id, role

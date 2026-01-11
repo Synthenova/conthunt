@@ -1,10 +1,22 @@
 """User-related database queries."""
 from uuid import UUID
+from datetime import datetime
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.decorators import log_query_timing
+
+
+@log_query_timing
+async def get_user_id_by_firebase(conn: AsyncConnection, firebase_uid: str) -> UUID | None:
+    """Get internal user ID from Firebase UID. Use this first in webhooks."""
+    result = await conn.execute(
+        text("SELECT id FROM users WHERE firebase_uid = :firebase_uid"),
+        {"firebase_uid": firebase_uid}
+    )
+    row = result.fetchone()
+    return row[0] if row else None
 
 
 @log_query_timing
@@ -22,7 +34,10 @@ async def get_user_role(conn: AsyncConnection, user_id: UUID) -> str:
 async def get_user_by_uuid(conn: AsyncConnection, user_id: UUID) -> dict | None:
     """Get user details by internal UUID."""
     result = await conn.execute(
-        text("SELECT id, firebase_uid, email, role FROM users WHERE id = :user_id"),
+        text("""
+        SELECT id, firebase_uid, email, role, current_period_start 
+        FROM users WHERE id = :user_id
+        """),
         {"user_id": user_id}
     )
     row = result.fetchone()
@@ -33,40 +48,60 @@ async def get_user_by_uuid(conn: AsyncConnection, user_id: UUID) -> dict | None:
         "firebase_uid": row[1],
         "email": row[2],
         "role": row[3],
+        "current_period_start": row[4],
     }
 
 
 @log_query_timing
-async def update_user_role(
-    conn: AsyncConnection, 
-    firebase_uid: str, 
-    new_role: str
-) -> bool:
-    """Update user role by Firebase UID. Returns True if user found."""
+async def get_user_with_billing(conn: AsyncConnection, user_id: UUID) -> dict | None:
+    """Get user with billing info for credit tracking."""
     result = await conn.execute(
-        text("UPDATE users SET role = :role WHERE firebase_uid = :uid"),
-        {"role": new_role, "uid": firebase_uid}
+        text("""
+        SELECT id, firebase_uid, email, role, 
+               dodo_customer_id, dodo_subscription_id, current_period_start
+        FROM users WHERE id = :user_id
+        """),
+        {"user_id": user_id}
+    )
+    row = result.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "firebase_uid": row[1],
+        "email": row[2],
+        "role": row[3],
+        "dodo_customer_id": row[4],
+        "dodo_subscription_id": row[5],
+        "current_period_start": row[6],
+    }
+
+
+@log_query_timing
+async def update_user_role(conn: AsyncConnection, user_id: UUID, new_role: str) -> bool:
+    """Update user role. Returns True if user found."""
+    result = await conn.execute(
+        text("UPDATE users SET role = :role WHERE id = :user_id"),
+        {"role": new_role, "user_id": user_id}
     )
     return result.rowcount > 0
 
 
 @log_query_timing
-async def update_user_dodo_subscription(
+async def update_user_subscription(
     conn: AsyncConnection,
-    firebase_uid: str,
+    user_id: UUID,
     role: str = None,
     customer_id: str = None,
     subscription_id: str = None,
-    product_id: str = None,
-    status: str = None,
+    current_period_start: datetime = None,
 ) -> bool:
     """
-    Update user Dodo subscription details and role.
+    Update user subscription details.
     Only updates fields that are not None.
     """
-    # Construct dynamic update query
     fields = []
-    params = {"uid": firebase_uid}
+    params = {"user_id": user_id}
     
     if role is not None:
         fields.append("role = :role")
@@ -77,23 +112,36 @@ async def update_user_dodo_subscription(
     if subscription_id is not None:
         fields.append("dodo_subscription_id = :subscription_id")
         params["subscription_id"] = subscription_id
-    if product_id is not None:
-        fields.append("dodo_product_id = :product_id")
-        params["product_id"] = product_id
-    if status is not None:
-        fields.append("dodo_status = :status")
-        params["status"] = status
+    if current_period_start is not None:
+        fields.append("current_period_start = :period_start")
+        params["period_start"] = current_period_start
         
     if not fields:
         return False
-        
-    fields.append("dodo_updated_at = now()")
     
     query = f"""
         UPDATE users 
         SET {", ".join(fields)}
-        WHERE firebase_uid = :uid
+        WHERE id = :user_id
     """
     
     result = await conn.execute(text(query), params)
+    await conn.commit()
+    return result.rowcount > 0
+
+
+@log_query_timing
+async def clear_user_subscription(conn: AsyncConnection, user_id: UUID) -> bool:
+    """Clear subscription data when cancelled/expired."""
+    result = await conn.execute(
+        text("""
+        UPDATE users 
+        SET role = 'free',
+            dodo_subscription_id = NULL,
+            current_period_start = NULL
+        WHERE id = :user_id
+        """),
+        {"user_id": user_id}
+    )
+    await conn.commit()
     return result.rowcount > 0
