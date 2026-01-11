@@ -16,12 +16,11 @@ steps:
       - '--builder=gcr.io/buildpacks/builder:google-22'
       - '--path=frontend/'
       - '--publish'
-      # Note the double $$ to prevent shell expansion by Cloud Build, passing it to the builder
-      - '--env=NEXT_PUBLIC_FIREBASE_API_KEY=$$NEXT_PUBLIC_FIREBASE_API_KEY'
-      - '--env=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=$$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN'
+      - '--env=NEXT_PUBLIC_FIREBASE_API_KEY'
+      - '--env=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN'
       - '--env=NEXT_PUBLIC_FIREBASE_PROJECT_ID=$PROJECT_ID'
-      - '--env=NEXT_PUBLIC_FIREBASE_APP_ID=$$NEXT_PUBLIC_FIREBASE_APP_ID'
-      - '--env=NEXT_PUBLIC_BACKEND_URL=$$NEXT_PUBLIC_BACKEND_URL'
+      - '--env=NEXT_PUBLIC_FIREBASE_APP_ID'
+      - '--env=NEXT_PUBLIC_BACKEND_URL'
 
   # ==========================================
   # 2. Deploy Frontend
