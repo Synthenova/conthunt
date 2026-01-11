@@ -74,28 +74,44 @@ async def get_video_analyses_by_media_assets(
 
 
 @log_query_timing
-async def create_pending_analysis(
+async def claim_or_create_analysis(
     conn: AsyncConnection,
     media_asset_id: UUID,
     prompt: str,
-) -> UUID:
-    """Create a pending analysis record (status='queued')."""
+) -> tuple[UUID, str, bool]:
+    """
+    Atomically claim or create an analysis record.
+    
+    Uses INSERT ON CONFLICT to prevent race conditions where multiple
+    requests try to create/process the same analysis simultaneously.
+    
+    Returns:
+        Tuple of (analysis_id, status, was_created)
+        - was_created: True if a new row was inserted, False if existing row was returned/updated.
+    """
     analysis_id = uuid4()
-    await conn.execute(
+    result = await conn.execute(
         text("""
             INSERT INTO video_analyses (
                 id, media_asset_id, prompt, status, analysis_result
             )
             VALUES (:id, :media_asset_id, :prompt, 'queued', :analysis_result)
+            ON CONFLICT (media_asset_id) DO UPDATE
+            SET status = CASE
+                WHEN video_analyses.status = 'failed' THEN 'queued'
+                ELSE video_analyses.status
+            END
+            RETURNING id, status, (xmax = 0) AS was_inserted
         """),
         {
             "id": analysis_id,
             "media_asset_id": media_asset_id,
             "prompt": prompt,
-            "analysis_result": "{}",  # Empty JSON to satisfy NOT NULL
+            "analysis_result": "{}",
         }
     )
-    return analysis_id
+    row = result.fetchone()
+    return (row[0], row[1], row[2])
 
 
 @log_query_timing

@@ -39,22 +39,35 @@ class DodoService:
         """
         settings = get_settings()
         
-        async with get_dodo_client() as client:
-            kwargs = {
-                "product_cart": [{"product_id": product_id, "quantity": 1}],
-                "return_url": return_url or settings.FRONTEND_RETURN_URL,
-                "metadata": {"user_id": str(user_id)},  # Pass internal user_id
-            }
-            
-            if customer_id:
-                kwargs["customer_id"] = customer_id
-            
-            session = await client.checkout_sessions.create(**kwargs)
-            
-            return {
-                "checkout_url": session.url,
-                "session_id": session.session_id,
-            }
+        try:
+            async with get_dodo_client() as client:
+                kwargs = {
+                    "product_cart": [{"product_id": product_id, "quantity": 1}],
+                    "return_url": return_url or settings.FRONTEND_RETURN_URL,
+                    "metadata": {"user_id": str(user_id)},
+                }
+                
+                if customer_id:
+                    kwargs["customer"] = {"customer_id": customer_id}
+                
+                logger.info(f"Creating checkout session: {kwargs}")
+                session = await client.checkout_sessions.create(**kwargs)
+                logger.info(f"Checkout session created. Attributes: {dir(session)}")
+                
+                # Check for possible URL attributes
+                url = getattr(session, 'url', None) or getattr(session, 'checkout_url', None) or getattr(session, 'payment_link', None)
+                
+                if not url:
+                    logger.error(f"Could not find URL in session object: {session}")
+                    raise ValueError("No checkout URL in response")
+
+                return {
+                    "checkout_url": url,
+                    "session_id": session.session_id,
+                }
+        except Exception as e:
+            logger.error(f"Dodo checkout failed: {e}")
+            raise
 
     async def get_subscription(self, subscription_id: str) -> dict | None:
         """Fetch subscription from Dodo API."""

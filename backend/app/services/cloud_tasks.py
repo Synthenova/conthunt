@@ -167,13 +167,15 @@ class CloudTasksService:
             import httpx
 
             asset_id = UUID(payload["asset_id"])
+            is_priority = payload.get("priority", False)
             async with httpx.AsyncClient(timeout=self.settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
                 try:
                     await download_asset_with_claim(
                         http_client=client,
                         asset_id=asset_id,
                         platform=payload["platform"],
-                        external_id=payload["external_id"]
+                        external_id=payload["external_id"],
+                        skip_semaphore=is_priority,
                     )
                 except Exception as e:
                     logger.error(f"[LOCAL] Media download failed: {e}", exc_info=True)

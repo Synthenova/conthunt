@@ -39,7 +39,7 @@ async def create_checkout_session(
         raise HTTPException(status_code=500, detail="Payment configuration missing")
 
     # Get user's Dodo customer ID if available
-    user_id = UUID(user["db_user_id"])
+    user_id = user["db_user_id"]  # Already a UUID
     customer_id = None
     
     async with get_db_connection() as conn:
@@ -71,7 +71,7 @@ async def get_subscription_status(user: AuthUser = Depends(get_current_user)):
     Get subscription status.
     Reads subscription_id from DB, then fetches live status from Dodo API.
     """
-    user_id = UUID(user["db_user_id"])
+    user_id = user["db_user_id"]  # Already a UUID
     
     async with get_db_connection() as conn:
         result = await conn.execute(
@@ -116,7 +116,7 @@ async def get_usage_summary(user: AuthUser = Depends(get_current_user)):
             {"user_id": user_id}
         )
         row = result.fetchone()
-            
+
     if not row:
         raise HTTPException(status_code=404, detail="User not found")
     

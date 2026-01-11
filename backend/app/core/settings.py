@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     QUEUE_TWELVELABS: str = "twelvelabs-queue"
     QUEUE_GEMINI: str = "gemini-queue"
     QUEUE_RAW_ARCHIVE: str = "raw-archive-queue"
+    QUEUE_MEDIA_DOWNLOAD_PRIORITY: str = "media-download-priority"
 
 
     # ScrapeCreators API

@@ -10,8 +10,6 @@ from app.db.session import get_db_connection
 from app.db.queries.analysis import has_user_accessed_analysis, record_user_analysis_access
 from app.db import set_rls_user
 from app.services.credit_tracker import credit_tracker
-from app.api.v1.analysis import run_gemini_analysis
-from app.agent.analysis_inline import run_inline_video_analysis
 
 
 class AnalysisService:
@@ -24,16 +22,23 @@ class AnalysisService:
         user_id: UUID,
         user_role: str,
         media_asset_id: UUID,
-        wait: bool = False,
         background_tasks: Optional[BackgroundTasks] = None,
         context_source: str = "api",
     ) -> Dict[str, Any]:
         """
         Trigger a paid video analysis.
         
+        All analysis goes through the unified run_gemini_analysis flow which:
+        - Uses atomic claim to prevent race conditions
+        - Dispatches priority download if asset is pending
+        - Spawns background task for LLM processing
+        
         Checks if user already accessed this analysis (free re-access).
         If not, checks credit limits and charges.
         """
+        # Import here to avoid circular dependency
+        from app.api.v1.analysis import run_gemini_analysis
+        
         # Get user's period_start for credit tracking
         async with get_db_connection() as conn:
             result = await conn.execute(
@@ -68,18 +73,15 @@ class AnalysisService:
         else:
             logger.info(f"Free re-access: user={user_id} already analyzed asset={media_asset_id}")
         
-        # Trigger Analysis
-        if wait:
-            logger.info(f"[{context_source}] Running inline analysis for {media_asset_id}")
-            return await run_inline_video_analysis(media_asset_id)
-        else:
-            logger.info(f"[{context_source}] Spawning background analysis for {media_asset_id}")
-            return await run_gemini_analysis(
-                media_asset_id=media_asset_id,
-                background_tasks=background_tasks,
-                use_cloud_tasks=True
-            )
+        # Trigger unified analysis flow (handles priority downloads, race conditions, etc.)
+        logger.info(f"[{context_source}] Triggering unified analysis for {media_asset_id}")
+        return await run_gemini_analysis(
+            media_asset_id=media_asset_id,
+            background_tasks=background_tasks,
+            use_cloud_tasks=True
+        )
 
 
 # Global instance
 analysis_service = AnalysisService()
+

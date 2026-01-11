@@ -63,7 +63,7 @@ from app.db.queries.analysis import (
     get_video_analysis_by_media_asset,
     get_video_analyses_by_media_assets,
     insert_video_analysis,
-    create_pending_analysis,
+    claim_or_create_analysis,
     update_analysis_status,
     has_user_accessed_analysis,
     record_user_analysis_access,
@@ -151,7 +151,7 @@ __all__ = [
     "get_video_analysis_by_media_asset",
     "get_video_analyses_by_media_assets",
     "insert_video_analysis",
-    "create_pending_analysis",
+    "claim_or_create_analysis",
     "update_analysis_status",
     # Insights
     "get_board_insights",

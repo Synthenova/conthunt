@@ -169,8 +169,13 @@ async def download_asset_with_claim(
     asset_id: UUID,
     platform: str,
     external_id: str,
+    skip_semaphore: bool = False,
 ) -> None:
-    """Download asset with claim check and semaphore."""
+    """Download asset with claim check and optional semaphore.
+    
+    Args:
+        skip_semaphore: If True, bypass concurrency limit (for priority downloads).
+    """
     from app.db.session import get_db_connection
     
     settings = get_settings()
@@ -179,9 +184,7 @@ async def download_asset_with_claim(
         logger.debug(f"Media download disabled, skipping asset {asset_id}")
         return
     
-    semaphore = get_download_semaphore()
-    
-    async with semaphore:
+    async def _do_download():
         # Try to claim the asset
         async with get_db_connection() as conn:
             asset = await claim_asset_for_download(conn, asset_id)
@@ -207,6 +210,17 @@ async def download_asset_with_claim(
             return
         
         await download_single_asset(http_client, asset, platform, external_id)
+    
+    if skip_semaphore:
+        # Priority download: bypass semaphore
+        logger.info(f"[PRIORITY] Downloading asset {asset_id} without semaphore")
+        await _do_download()
+    else:
+        # Normal download: respect semaphore
+        semaphore = get_download_semaphore()
+        async with semaphore:
+            await _do_download()
+
 
 
 async def download_assets_batch(

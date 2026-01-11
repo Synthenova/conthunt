@@ -12,7 +12,6 @@ from app.auth.firebase import get_current_user
 from app.db.session import get_db_connection
 from app.db.queries.analysis import (
     get_video_analysis_by_media_asset,
-    create_pending_analysis,
     update_analysis_status,
 )
 from app.db.queries.content import get_media_asset_by_id
@@ -118,17 +117,21 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
         raise
 
 
-
 async def run_gemini_analysis(
     media_asset_id: UUID, 
     background_tasks: BackgroundTasks | None = None,
-    use_cloud_tasks: bool = False
+    use_cloud_tasks: bool = True
 ) -> VideoAnalysisResponse:
     """
-    Non-blocking Gemini analysis - returns immediately.
-    Creates 'processing' record and spawns background task.
-    Does NOT trigger TwelveLabs indexing.
+    Unified Gemini analysis entry point.
+    
+    1. Atomically claims or retrieves existing analysis (prevents race conditions).
+    2. Checks media asset status and dispatches priority download if needed.
+    3. Spawns background task for LLM processing.
+    4. Returns immediately with current status.
     """
+    from app.db.queries.analysis import claim_or_create_analysis
+    
     logger.info(f"run_gemini_analysis called for media_asset {media_asset_id}")
     
     async with get_db_connection() as conn:
@@ -140,6 +143,7 @@ async def run_gemini_analysis(
         # Determine video URI for analysis
         source_url = media_asset.get("source_url", "")
         gcs_uri = media_asset.get("gcs_uri")
+        asset_status = media_asset.get("status", "pending")
         
         # For YouTube, always use source_url (gcs_uri is not a real video file)
         is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
@@ -151,69 +155,107 @@ async def run_gemini_analysis(
         if not video_uri:
             raise HTTPException(status_code=400, detail="No video URL available for analysis")
         
-        # 2. Check if analysis exists (any status) for this media_asset
-        existing = await get_video_analysis_by_media_asset(conn, media_asset_id)
-        if existing:
-            status = existing.get("status", "completed")
-            analysis = None
-            if status == "completed" and existing.get("analysis_result"):
-                analysis = VideoAnalysisResult(**existing["analysis_result"])
-            
-            return VideoAnalysisResponse(
-                id=existing["id"],
-                media_asset_id=media_asset_id,
-                status=status,
-                analysis=analysis,
-                error=existing.get("error"),
-                created_at=existing["created_at"],
-                cached=True,
-            )
-
-        # 3. Create pending analysis record
-        analysis_id = await create_pending_analysis(
+        # 2. Atomically claim or create analysis (prevents race conditions)
+        analysis_id, status, was_created = await claim_or_create_analysis(
             conn,
             media_asset_id=media_asset_id,
             prompt=DEFAULT_ANALYSIS_PROMPT,
         )
         await conn.commit()
         
-        logger.info(f"Created pending analysis {analysis_id} for media_asset {media_asset_id}")
+        # If existing analysis is completed, return cached result
+        if status == "completed":
+            existing = await get_video_analysis_by_media_asset(conn, media_asset_id)
+            analysis = None
+            if existing and existing.get("analysis_result"):
+                analysis = VideoAnalysisResult(**existing["analysis_result"])
+            return VideoAnalysisResponse(
+                id=analysis_id,
+                media_asset_id=media_asset_id,
+                status="completed",
+                analysis=analysis,
+                error=existing.get("error") if existing else None,
+                created_at=existing["created_at"] if existing else datetime.utcnow(),
+                cached=True,
+            )
+        
+        # If already processing/queued, just return status (task already running)
+        if status in ("processing", "queued") and not was_created:
+            return VideoAnalysisResponse(
+                id=analysis_id,
+                media_asset_id=media_asset_id,
+                status=status,
+                analysis=None,
+                created_at=datetime.utcnow(),
+                cached=True,
+            )
+        
+        logger.info(f"Created/claimed analysis {analysis_id} for media_asset {media_asset_id}")
 
-        # 4. Spawn background task for LLM processing
-        # 4. Spawn background task for LLM processing
-        logger.info(f"[ANALYSIS] Spawning background task for analysis_id={analysis_id}")
+    # 3. Check if we need to prioritize the media download
+    # Only dispatch priority download if asset is 'pending' (not yet claimed by any downloader)
+    if not is_youtube and asset_status == "pending":
+        logger.info(f"[PRIORITY] Asset {media_asset_id} is pending, dispatching priority download")
+        # Get content item info for the download task
+        platform = media_asset.get("platform", "unknown")
+        # Get external_id from content_item
+        async with get_db_connection() as conn:
+            from sqlalchemy import text
+            result = await conn.execute(
+                text("""
+                    SELECT ci.platform, ci.external_id
+                    FROM content_items ci
+                    JOIN media_assets ma ON ma.content_item_id = ci.id
+                    WHERE ma.id = :asset_id
+                """),
+                {"asset_id": media_asset_id}
+            )
+            row = result.fetchone()
+            if row:
+                platform, external_id = row[0], row[1]
+            else:
+                platform, external_id = "unknown", "unknown"
         
-        if use_cloud_tasks:
-             # Use Cloud Tasks
-             logger.info(f"[ANALYSIS] Using Cloud Tasks (queue={settings.QUEUE_GEMINI}) for analysis {analysis_id}")
-             await cloud_tasks.create_http_task(
-                 queue_name=settings.QUEUE_GEMINI,
-                 relative_uri="/v1/tasks/gemini/analyze",
-                 payload={
-                     "analysis_id": str(analysis_id),
-                     "media_asset_id": str(media_asset_id),
-                     "video_uri": video_uri
-                 }
-             )
-        elif background_tasks:
-             # Legacy/Local mode
-             import asyncio
-             asyncio.create_task(_execute_gemini_analysis(analysis_id, media_asset_id, video_uri))
-             logger.info(f"[ANALYSIS] Background task spawned successfully (local asyncio)")
-        else:
-             logger.warning(f"[ANALYSIS] WARNING: No execution method provided, task detached")
-             import asyncio
-             asyncio.create_task(_execute_gemini_analysis(analysis_id, media_asset_id, video_uri))
-        
-        # 5. Return immediately with processing status
-        return VideoAnalysisResponse(
-            id=analysis_id,
-            media_asset_id=media_asset_id,
-            status="processing",
-            analysis=None,
-            created_at=datetime.utcnow(),
-            cached=False,
+        await cloud_tasks.create_http_task(
+            queue_name=settings.QUEUE_MEDIA_DOWNLOAD_PRIORITY,
+            relative_uri="/v1/tasks/media/download",
+            payload={
+                "asset_id": str(media_asset_id),
+                "platform": platform,
+                "external_id": external_id,
+                "priority": True,  # Signal for local handler to skip semaphore
+            }
         )
+
+    # 4. Spawn background task for LLM processing
+    logger.info(f"[ANALYSIS] Spawning background task for analysis_id={analysis_id}")
+    
+    if use_cloud_tasks or not background_tasks:
+        logger.info(f"[ANALYSIS] Using Cloud Tasks (queue={settings.QUEUE_GEMINI}) for analysis {analysis_id}")
+        await cloud_tasks.create_http_task(
+            queue_name=settings.QUEUE_GEMINI,
+            relative_uri="/v1/tasks/gemini/analyze",
+            payload={
+                "analysis_id": str(analysis_id),
+                "media_asset_id": str(media_asset_id),
+                "video_uri": video_uri
+            }
+        )
+    else:
+        # Legacy/Local mode (fallback)
+        import asyncio
+        asyncio.create_task(_execute_gemini_analysis(analysis_id, media_asset_id, video_uri))
+        logger.info(f"[ANALYSIS] Background task spawned successfully (local asyncio)")
+    
+    # 5. Return immediately with processing status
+    return VideoAnalysisResponse(
+        id=analysis_id,
+        media_asset_id=media_asset_id,
+        status="processing",
+        analysis=None,
+        created_at=datetime.utcnow(),
+        cached=False,
+    )
 
 
 @router.post(
@@ -258,7 +300,6 @@ async def analyze_video(
         user_id=user_id,
         user_role=_user["role"],
         media_asset_id=media_asset_id,
-        wait=False,
         background_tasks=background_tasks,
         context_source="api_endpoint"
     )

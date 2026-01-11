@@ -81,7 +81,6 @@ async def _ensure_video_analyses(
                         user_id=user_id,          # Pass UUID directly
                         user_role=role,
                         media_asset_id=mid,
-                        wait=False,
                         background_tasks=None, # Already in bg task
                         context_source="board_insights"
                     )

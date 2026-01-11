@@ -14,7 +14,6 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.prebuilt import InjectedState
 
 from app.core import get_settings
-from app.agent.analysis_inline import run_inline_video_analysis
 from app.agent.model_factory import init_chat_model
 
 settings = get_settings()
@@ -199,8 +198,12 @@ async def get_video_analysis(
     This includes summary, key topics, and hashtags.
     Use this when the user asks for "analysis" or "summary" of a specific video they found.
     """
+    import asyncio
     from firebase_admin import auth as firebase_auth
     from app.services.analysis_service import analysis_service
+    from app.db.session import get_db_connection
+    from app.db.queries.analysis import get_video_analysis_by_media_asset
+    from app.schemas.analysis import VideoAnalysisResult
     
     try:
         headers = await _get_headers(config)
@@ -228,15 +231,71 @@ async def get_video_analysis(
         
         media_asset_uuid = UUID(media_asset_id)
         
-        # Use centralized service with wait=True for inline execution
+        # Trigger unified analysis flow (handles priority downloads, race conditions, etc.)
         try:
-            return await analysis_service.trigger_paid_analysis(
+            result = await analysis_service.trigger_paid_analysis(
                 user_id=db_user_id,
                 user_role=user_role,
                 media_asset_id=media_asset_uuid,
-                wait=True,
                 context_source="agent_tool"
             )
+            
+            # Convert to dict if needed
+            if hasattr(result, 'model_dump'):
+                result = result.model_dump()
+            
+            # If already completed, return immediately
+            if result.get("status") == "completed" and result.get("analysis"):
+                return result
+            
+            # Otherwise, poll for completion (max 60 seconds)
+            # Since we prioritized the upload, it should complete quickly
+            analysis_id = result.get("id")
+            if not analysis_id:
+                return result  # Can't poll without ID
+            
+            for attempt in range(12):  # 12 x 5s = 60 seconds
+                await asyncio.sleep(5)
+                
+                async with get_db_connection() as conn:
+                    analysis = await get_video_analysis_by_media_asset(conn, media_asset_uuid)
+                
+                if not analysis:
+                    continue
+                    
+                status = analysis.get("status", "")
+                
+                if status == "completed" and analysis.get("analysis_result"):
+                    return {
+                        "id": str(analysis["id"]),
+                        "media_asset_id": str(media_asset_uuid),
+                        "status": "completed",
+                        "analysis": analysis["analysis_result"],
+                        "error": None,
+                        "cached": True,
+                    }
+                elif status == "failed":
+                    return {
+                        "id": str(analysis["id"]),
+                        "media_asset_id": str(media_asset_uuid),
+                        "status": "failed",
+                        "analysis": None,
+                        "error": analysis.get("error", "Analysis failed"),
+                        "cached": True,
+                    }
+                # Still processing, continue polling
+            
+            # Timeout - return processing status
+            return {
+                "id": str(analysis_id),
+                "media_asset_id": str(media_asset_uuid),
+                "status": "processing",
+                "analysis": None,
+                "error": None,
+                "message": "Analysis is still processing. The video may still be uploading. Please try again in a moment.",
+                "cached": False,
+            }
+            
         except Exception as limit_err:
             return {"error": str(limit_err)}
 

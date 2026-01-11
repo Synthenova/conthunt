@@ -1,10 +1,7 @@
-"""Payment webhook endpoints (Dodo)."""
-import hmac
-import hashlib
 from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
-import base64
+from sqlalchemy import text
 from sqlalchemy import text
 
 from app.core import get_settings, logger
@@ -14,62 +11,7 @@ from app.schemas.roles import UserRole
 router = APIRouter(tags=["webhooks"])
 
 
-def parse_dodo_signature_header(header: str) -> str | None:
-    """Parse v1 signature from webhook header."""
-    parts = header.split(",")
-    for i in range(0, len(parts) - 1, 2):
-        version = parts[i].strip()
-        sig = parts[i + 1].strip()
-        if version == "v1":
-            return sig
-    return None
 
-
-def get_dodo_signing_key(raw_secret: str) -> bytes:
-    """Decode Dodo webhook secret."""
-    if not raw_secret:
-        raise ValueError("Empty webhook secret")
-    if raw_secret.startswith("whsec_"):
-        return base64.b64decode(raw_secret[6:])
-    return raw_secret.encode("utf-8")
-
-
-def verify_dodo_webhook(
-    raw_body: bytes, 
-    webhook_id: str, 
-    webhook_timestamp: str, 
-    webhook_signature: str
-) -> None:
-    """Verify webhook signature."""
-    settings = get_settings()
-    raw_secret = settings.DODO_WEBHOOK_SECRET
-
-    if not raw_secret:
-        logger.warning("DODO_WEBHOOK_SECRET not configured, skipping verification")
-        return
-
-    try:
-        key = get_dodo_signing_key(raw_secret)
-    except Exception as e:
-        logger.error(f"Failed to parse Dodo webhook secret: {e}")
-        raise HTTPException(status_code=500, detail="Webhook secret misconfigured")
-
-    received_sig_b64 = parse_dodo_signature_header(webhook_signature)
-    if not received_sig_b64:
-        raise HTTPException(status_code=400, detail="Signature parsing error")
-
-    try:
-        payload_str = raw_body.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid body encoding")
-
-    signed_message = f"{webhook_id}.{webhook_timestamp}.{payload_str}".encode("utf-8")
-    digest = hmac.new(key, signed_message, hashlib.sha256).digest()
-    expected_sig_b64 = base64.b64encode(digest).decode("ascii")
-
-    if not hmac.compare_digest(expected_sig_b64, received_sig_b64):
-        logger.error("Webhook signature mismatch!")
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
 
 def parse_iso_datetime(value: str | None) -> datetime | None:
@@ -100,18 +42,43 @@ async def dodo_subscription_webhook(request: Request):
     """
     raw_body = await request.body()
     
-    webhook_id = request.headers.get("webhook-id")
-    webhook_ts = request.headers.get("webhook-timestamp")
-    webhook_sig = request.headers.get("webhook-signature")
+    from app.services.dodo_client import get_dodo_client
+    from dodopayments import AsyncDodoPayments
+    
+    try:
+        webhook_key = get_settings().DODO_WEBHOOK_SECRET
+        if not webhook_key:
+             logger.warning("DODO_WEBHOOK_SECRET not configured, skipping verification")
+             return {"status": "ignored", "reason": "missing_webhook_secret"}
 
-    if not webhook_id or not webhook_ts or not webhook_sig:
-        raise HTTPException(status_code=400, detail="Missing webhook headers")
+        settings = get_settings()
+        client = AsyncDodoPayments(
+            bearer_token=settings.DODO_API_KEY,
+            environment="test_mode" if "test" in settings.DODO_BASE_URL else "live_mode",
+            webhook_key=webhook_key
+        )
 
-    verify_dodo_webhook(raw_body, webhook_id, webhook_ts, webhook_sig)
+        event = client.webhooks.unwrap(
+            raw_body,
+            headers={
+                "webhook-id": request.headers.get("webhook-id", ""),
+                "webhook-signature": request.headers.get("webhook-signature", ""),
+                "webhook-timestamp": request.headers.get("webhook-timestamp", ""),
+            },
+        )
+    except Exception as e:
+        logger.error(f"Webhook verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
-    event = await request.json()
-    event_type = event.get("type")
-    data = event.get("data", {})
+    if hasattr(event, "model_dump"):
+         event_data_dict = event.model_dump()
+    elif hasattr(event, "to_dict"):
+         event_data_dict = event.to_dict()
+    else:
+         event_data_dict = event
+         
+    event_type = event_data_dict.get("type")
+    data = event_data_dict.get("data", {})
     
     logger.info(f"Dodo webhook: {event_type} (ID: {webhook_id})")
     
