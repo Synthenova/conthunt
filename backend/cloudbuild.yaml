@@ -9,6 +9,7 @@ steps:
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/conthunt-backend/app'
       - '--builder=gcr.io/buildpacks/builder:google-22'
       - '--path=backend/'
+      - '--publish'
       - '--env=GOOGLE_ENTRYPOINT=uvicorn app.main:app --host 0.0.0.0 --port 8080'
 
   # ==========================================
