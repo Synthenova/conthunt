@@ -3,7 +3,7 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'conthunt_service') THEN
-    CREATE ROLE conthunt_service WITH LOGIN PASSWORD 'G>O[D2$v6]|V\_CZ';
+    CREATE ROLE conthunt_service WITH LOGIN PASSWORD 'PLACEHOLDER_CHANGE_ME_MANUALLY';
   END IF;
 END
 $$;

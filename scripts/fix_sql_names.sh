@@ -1,0 +1,22 @@
+#!/bin/bash
+cd backend/.sqls
+
+mv 005_mig_twelvelabs_to_media.sql 014_mig_twelvelabs_to_media.sql
+mv 014_performance_indices.sql 015_performance_indices.sql
+mv 012_grant_create_schema.sql 016_grant_create_schema.sql
+mv 005_optimize_board_items.sql 017_optimize_board_items.sql
+mv 015_chat_context.sql 018_chat_context.sql
+mv 016_board_insights.sql 019_board_insights.sql
+mv 017_usage_tracking.sql 020_usage_tracking.sql
+mv 018_search_limits.sql 021_search_limits.sql
+mv 019_fix_usage_rls.sql 022_fix_usage_rls.sql
+mv 020_seed_missing_limits.sql 023_seed_missing_limits.sql
+mv 021_waitlist.sql 024_waitlist.sql
+mv 20240911_add_chat_tags.sql 025_add_chat_tags.sql
+mv 20240912_add_chat_tags_sort_order.sql 026_add_chat_tags_sort_order.sql
+mv 022_user_analysis_access.sql 027_user_analysis_access.sql
+mv 023_author_columns.sql 028_author_columns.sql
+mv 023b_author_index.sql 029_author_index.sql
+mv 20250104_add_chat_tags_deleted_at.sql 030_add_chat_tags_deleted_at.sql
+mv 024_credit_system.sql 031_credit_system.sql
+mv 025_set_period_start.sql 032_set_period_start.sql

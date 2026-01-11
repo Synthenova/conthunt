@@ -37,6 +37,6 @@ CREATE INDEX idx_twelvelabs_assets_content ON conthunt.twelvelabs_assets(content
 CREATE INDEX idx_video_analyses_content ON conthunt.video_analyses(content_item_id);
 
 -- Grant permissions
-GRANT SELECT, INSERT, UPDATE, DELETE ON conthunt.twelvelabs_indexes TO conthunt_app;
+
 GRANT SELECT, INSERT, UPDATE, DELETE ON conthunt.twelvelabs_assets TO conthunt_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON conthunt.video_analyses TO conthunt_app;
