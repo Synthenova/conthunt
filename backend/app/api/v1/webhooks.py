@@ -42,6 +42,14 @@ async def dodo_subscription_webhook(request: Request):
     """
     raw_body = await request.body()
     
+    # Extract headers
+    webhook_id = request.headers.get("webhook-id")
+    webhook_sig = request.headers.get("webhook-signature")
+    webhook_ts = request.headers.get("webhook-timestamp")
+
+    if not webhook_id or not webhook_sig or not webhook_ts:
+         raise HTTPException(status_code=400, detail="Missing webhook headers")
+
     from app.services.dodo_client import get_dodo_client
     from dodopayments import AsyncDodoPayments
     
@@ -52,6 +60,7 @@ async def dodo_subscription_webhook(request: Request):
              return {"status": "ignored", "reason": "missing_webhook_secret"}
 
         settings = get_settings()
+        # Webhook verification doesn't need async, but we use the client structure
         client = AsyncDodoPayments(
             bearer_token=settings.DODO_API_KEY,
             environment="test_mode" if "test" in settings.DODO_BASE_URL else "live_mode",
@@ -61,32 +70,49 @@ async def dodo_subscription_webhook(request: Request):
         event = client.webhooks.unwrap(
             raw_body,
             headers={
-                "webhook-id": request.headers.get("webhook-id", ""),
-                "webhook-signature": request.headers.get("webhook-signature", ""),
-                "webhook-timestamp": request.headers.get("webhook-timestamp", ""),
+                "webhook-id": webhook_id,
+                "webhook-signature": webhook_sig,
+                "webhook-timestamp": webhook_ts,
             },
         )
     except Exception as e:
         logger.error(f"Webhook verification failed: {e}")
         raise HTTPException(status_code=401, detail="Invalid signature")
 
+    # Handle Event object (Pydantic model or dict)
     if hasattr(event, "model_dump"):
          event_data_dict = event.model_dump()
     elif hasattr(event, "to_dict"):
          event_data_dict = event.to_dict()
-    else:
+    elif isinstance(event, dict):
          event_data_dict = event
+    else:
+         # Fallback for object with attributes
+         event_data_dict = {}
+         if hasattr(event, "type"):
+             event_data_dict["type"] = event.type
+         if hasattr(event, "data"):
+             event_data_dict["data"] = event.data
+
+    # Ensure data is a dict (if model_dump was used, it should be)
+    # If not, try to convert data object to dict
+    # Ensure data is a dict (if model_dump was used, it should be)
+    # If not, try to convert data object to dict
+    resource_data = event_data_dict.get("data", {})
+    if hasattr(resource_data, "model_dump"):
+        resource_data = resource_data.model_dump()
+    elif hasattr(resource_data, "to_dict"):
+        resource_data = resource_data.to_dict()
          
     event_type = event_data_dict.get("type")
-    data = event_data_dict.get("data", {})
     
     logger.info(f"Dodo webhook: {event_type} (ID: {webhook_id})")
     
     # Extract user_id from metadata (we pass this during checkout)
-    metadata = data.get("metadata") or {}
-    customer = data.get("customer") or {}
+    metadata = resource_data.get("metadata") or {}
+    customer = resource_data.get("customer") or {}
     customer_metadata = customer.get("metadata") or {}
-    customer_id = customer.get("customer_id") or data.get("customer_id")
+    customer_id = customer.get("customer_id") or resource_data.get("customer_id")
     
     user_id_str = metadata.get("user_id") or customer_metadata.get("user_id")
     
@@ -100,10 +126,10 @@ async def dodo_subscription_webhook(request: Request):
         logger.error(f"Webhook {webhook_id}: Invalid user_id format: {user_id_str}")
         return {"status": "ignored", "reason": "invalid_user_id"}
     
-    subscription_id = data.get("subscription_id") or data.get("id")
-    product_id = data.get("product_id")
-    status = data.get("status")
-    current_period_start = parse_iso_datetime(data.get("current_period_start"))
+    subscription_id = resource_data.get("subscription_id") or resource_data.get("id")
+    product_id = resource_data.get("product_id")
+    status = resource_data.get("status")
+    current_period_start = parse_iso_datetime(resource_data.get("current_period_start"))
     
     # Map product to role
     settings = get_settings()
