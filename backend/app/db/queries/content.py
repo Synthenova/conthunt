@@ -10,7 +10,7 @@ from app.core.logging import logger
 from app.services.cdn_signer import generate_signed_url
 
 
-@log_query_timing
+
 async def get_content_item_by_id(
     conn: AsyncConnection,
     content_item_id: UUID,
@@ -74,7 +74,7 @@ async def get_content_item_by_id(
     }
 
 
-@log_query_timing
+
 async def get_video_media_asset_for_content_item(
     conn: AsyncConnection,
     content_item_id: UUID,
@@ -150,7 +150,7 @@ async def get_media_asset_by_id(
     }
 
 
-@log_query_timing
+
 async def get_media_asset_with_content(
     conn: AsyncConnection,
     media_asset_id: UUID,

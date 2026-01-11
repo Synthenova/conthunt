@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.db.decorators import log_query_timing
 
 
-@log_query_timing
+
 async def get_board_insights(
     conn: AsyncConnection,
     board_id: UUID,
@@ -39,7 +39,7 @@ async def get_board_insights(
     }
 
 
-@log_query_timing
+
 async def upsert_pending_board_insights(
     conn: AsyncConnection,
     board_id: UUID,
@@ -69,7 +69,7 @@ async def upsert_pending_board_insights(
     return result.scalar_one()
 
 
-@log_query_timing
+
 async def update_board_insights_status(
     conn: AsyncConnection,
     insights_id: UUID,
@@ -101,7 +101,7 @@ async def update_board_insights_status(
     )
 
 
-@log_query_timing
+
 async def get_board_media_assets_since(
     conn: AsyncConnection,
     board_id: UUID,
@@ -140,7 +140,7 @@ async def get_board_media_assets_since(
     ]
 
 
-@log_query_timing
+
 async def get_board_insights_progress(
     conn: AsyncConnection,
     board_id: UUID,

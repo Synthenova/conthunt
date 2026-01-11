@@ -21,7 +21,7 @@ def compute_search_hash(query: str, inputs: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-@log_query_timing
+
 async def insert_search(
     conn: AsyncConnection,
     user_id: UUID,
@@ -56,7 +56,7 @@ async def insert_search(
     return search_id
 
 
-@log_query_timing
+
 async def update_search_status(
     conn: AsyncConnection,
     search_id: UUID,
@@ -69,7 +69,7 @@ async def update_search_status(
     )
 
 
-@log_query_timing
+
 async def insert_platform_call(
     conn: AsyncConnection,
     search_id: UUID,
@@ -120,7 +120,7 @@ async def insert_platform_call(
     return call_id
 
 
-@log_query_timing
+
 async def insert_platform_calls_batch(
     conn: AsyncConnection,
     calls: List[dict],
@@ -167,7 +167,7 @@ async def insert_platform_calls_batch(
     )
 
 
-@log_query_timing
+
 async def upsert_content_item(
     conn: AsyncConnection,
     item: NormalizedItem,
@@ -216,7 +216,7 @@ async def upsert_content_item(
     return row[0], row[1]
 
 
-@log_query_timing
+
 async def upsert_content_items_batch(
     conn: AsyncConnection,
     items: List[NormalizedItem],
@@ -304,7 +304,7 @@ async def upsert_content_items_batch(
     return mapping
 
 
-@log_query_timing
+
 async def insert_search_result(
     conn: AsyncConnection,
     search_id: UUID,
@@ -328,7 +328,7 @@ async def insert_search_result(
     )
 
 
-@log_query_timing
+
 async def insert_media_asset(
     conn: AsyncConnection,
     content_item_id: UUID,
@@ -359,7 +359,7 @@ async def insert_media_asset(
     return asset_id
 
 
-@log_query_timing
+
 async def insert_search_results_batch(
     conn: AsyncConnection,
     results: List[dict],
@@ -381,7 +381,7 @@ async def insert_search_results_batch(
     )
 
 
-@log_query_timing
+
 async def insert_media_assets_batch(
     conn: AsyncConnection,
     assets: List[dict],
@@ -418,7 +418,7 @@ async def insert_media_assets_batch(
 
 from app.core import logger
 
-@log_query_timing
+
 async def get_search_by_id(
     conn: AsyncConnection,
     search_id: UUID,
@@ -456,7 +456,7 @@ async def get_search_by_id(
     }
 
 
-@log_query_timing
+
 async def get_user_searches(
     conn: AsyncConnection,
     limit: int = 20,
@@ -484,7 +484,7 @@ async def get_user_searches(
     ]
 
 
-@log_query_timing
+
 async def get_platform_calls_for_search(
     conn: AsyncConnection,
     search_id: UUID,
@@ -517,7 +517,7 @@ async def get_platform_calls_for_search(
     ]
 
 
-@log_query_timing
+
 async def get_search_results_with_content(
     conn: AsyncConnection,
     search_id: UUID,
@@ -589,7 +589,7 @@ async def get_search_results_with_content(
     return items
 
 
-@log_query_timing
+
 async def get_search_items_summary(
     conn: AsyncConnection,
     search_id: UUID,
@@ -629,7 +629,7 @@ async def get_search_items_summary(
     return items
 
 
-@log_query_timing
+
 async def get_media_asset_with_access_check(
     conn: AsyncConnection,
     asset_id: UUID,
@@ -666,7 +666,7 @@ async def get_media_asset_with_access_check(
 
 
 
-@log_query_timing
+
 async def get_search_with_cursors(
     conn: AsyncConnection,
     search_id: UUID,
@@ -721,7 +721,7 @@ async def get_search_with_cursors(
     }
 
 
-@log_query_timing
+
 async def get_full_search_detail(conn: AsyncConnection, search_id: UUID) -> dict | None:
     """
     Fetch ALL search data in a single query:

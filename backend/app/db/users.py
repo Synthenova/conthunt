@@ -9,7 +9,7 @@ from app.db.decorators import log_query_timing
 from app.core import logger
 
 
-@log_query_timing
+
 async def get_or_create_user(
     conn: AsyncConnection, 
     firebase_uid: str,

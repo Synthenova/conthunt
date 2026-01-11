@@ -10,7 +10,7 @@ from app.db.decorators import log_query_timing
 
 from app.schemas.chats import Chat as ChatSchema
 
-@log_query_timing
+
 async def create_chat(
     conn: AsyncConnection,
     chat_id: UUID,
@@ -37,7 +37,7 @@ async def create_chat(
     )
 
 
-@log_query_timing
+
 async def get_user_chats(
     conn: AsyncConnection,
     user_id: UUID,
@@ -82,7 +82,7 @@ async def get_user_chats(
         ))
     return results
 
-@log_query_timing
+
 async def get_chat_thread_id(conn: AsyncConnection, chat_id: UUID) -> Optional[str]:
     """Get thread_id for a chat."""
     row = await conn.execute(
@@ -92,7 +92,7 @@ async def get_chat_thread_id(conn: AsyncConnection, chat_id: UUID) -> Optional[s
     res = row.fetchone()
     return res[0] if res else None
 
-@log_query_timing
+
 async def check_chat_exists(conn: AsyncConnection, chat_id: UUID) -> bool:
     """Check if a chat exists."""
     row = await conn.execute(
@@ -102,7 +102,7 @@ async def check_chat_exists(conn: AsyncConnection, chat_id: UUID) -> bool:
     return bool(row.fetchone())
 
 
-@log_query_timing
+
 async def delete_chat(conn: AsyncConnection, chat_id: UUID) -> None:
     """Soft delete a chat."""
     await conn.execute(
@@ -110,7 +110,7 @@ async def delete_chat(conn: AsyncConnection, chat_id: UUID) -> None:
         {"id": chat_id}
     )
 
-@log_query_timing
+
 async def update_chat_title(
     conn: AsyncConnection,
     chat_id: UUID,
@@ -144,7 +144,7 @@ async def update_chat_title(
     )
 
 
-@log_query_timing
+
 async def upsert_chat_tags(
     conn: AsyncConnection,
     chat_id: UUID,
@@ -205,7 +205,7 @@ async def upsert_chat_tags(
     )
 
 
-@log_query_timing
+
 async def get_chat_tags(
     conn: AsyncConnection,
     chat_id: UUID,
@@ -234,7 +234,7 @@ async def get_chat_tags(
     ]
 
 
-@log_query_timing
+
 async def update_chat_tag_orders(
     conn: AsyncConnection,
     chat_id: UUID,
@@ -262,7 +262,7 @@ async def update_chat_tag_orders(
     )
 
 
-@log_query_timing
+
 async def soft_delete_chat_tag(
     conn: AsyncConnection,
     chat_id: UUID,

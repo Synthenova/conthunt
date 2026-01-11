@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.db.decorators import log_query_timing
 
 
-@log_query_timing
+
 async def get_video_analysis_by_media_asset(
     conn: AsyncConnection,
     media_asset_id: UUID,
@@ -39,7 +39,7 @@ async def get_video_analysis_by_media_asset(
     }
 
 
-@log_query_timing
+
 async def get_video_analyses_by_media_assets(
     conn: AsyncConnection,
     media_asset_ids: list[UUID],
@@ -73,7 +73,7 @@ async def get_video_analyses_by_media_assets(
     ]
 
 
-@log_query_timing
+
 async def claim_or_create_analysis(
     conn: AsyncConnection,
     media_asset_id: UUID,
@@ -114,7 +114,7 @@ async def claim_or_create_analysis(
     return (row[0], row[1], row[2])
 
 
-@log_query_timing
+
 async def update_analysis_status(
     conn: AsyncConnection,
     analysis_id: UUID,
@@ -147,7 +147,7 @@ async def update_analysis_status(
     )
 
 
-@log_query_timing
+
 async def insert_video_analysis(
     conn: AsyncConnection,
     media_asset_id: UUID,
@@ -183,7 +183,7 @@ async def insert_video_analysis(
     return analysis_id
 
 
-@log_query_timing
+
 async def has_user_accessed_analysis(
     conn: AsyncConnection,
     user_id: UUID,
@@ -201,7 +201,7 @@ async def has_user_accessed_analysis(
     return result.fetchone() is not None
 
 
-@log_query_timing
+
 async def record_user_analysis_access(
     conn: AsyncConnection,
     user_id: UUID,

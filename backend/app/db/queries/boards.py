@@ -10,7 +10,7 @@ from app.db.decorators import log_query_timing
 from app.services.content_builder import content_item_from_row
 
 
-@log_query_timing
+
 async def create_board(
     conn: AsyncConnection,
     user_id: UUID,
@@ -28,7 +28,7 @@ async def create_board(
     return board_id
 
 
-@log_query_timing
+
 async def get_user_boards(
     conn: AsyncConnection,
     user_id: UUID,
@@ -95,7 +95,7 @@ async def get_user_boards(
     ]
 
 
-@log_query_timing
+
 async def get_board_by_id(
     conn: AsyncConnection,
     board_id: UUID,
@@ -126,7 +126,7 @@ async def get_board_by_id(
     }
 
 
-@log_query_timing
+
 async def delete_board(
     conn: AsyncConnection,
     board_id: UUID,
@@ -139,7 +139,7 @@ async def delete_board(
     return result.rowcount > 0
 
 
-@log_query_timing
+
 async def add_item_to_board(
     conn: AsyncConnection,
     board_id: UUID,
@@ -167,7 +167,7 @@ async def add_item_to_board(
         raise
 
 
-@log_query_timing
+
 async def batch_add_items_to_board(
     conn: AsyncConnection,
     board_id: UUID,
@@ -200,7 +200,7 @@ async def batch_add_items_to_board(
     return result.rowcount
 
 
-@log_query_timing
+
 async def remove_item_from_board(
     conn: AsyncConnection,
     board_id: UUID,
@@ -217,7 +217,7 @@ async def remove_item_from_board(
     return result.rowcount > 0
 
 
-@log_query_timing
+
 async def get_board_items(
     conn: AsyncConnection,
     board_id: UUID,
@@ -285,7 +285,7 @@ async def get_board_items(
     return items
 
 
-@log_query_timing
+
 async def get_board_items_summary(
     conn: AsyncConnection,
     board_id: UUID,
@@ -326,7 +326,7 @@ async def get_board_items_summary(
     return items
 
 
-@log_query_timing
+
 async def search_user_boards(
     conn: AsyncConnection,
     user_id: UUID,
@@ -368,7 +368,7 @@ async def search_user_boards(
     ]
 
 
-@log_query_timing
+
 async def search_in_board(
     conn: AsyncConnection,
     board_id: UUID,

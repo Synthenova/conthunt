@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.db.decorators import log_query_timing
 
 
-@log_query_timing
+
 async def get_user_id_by_firebase(conn: AsyncConnection, firebase_uid: str) -> UUID | None:
     """Get internal user ID from Firebase UID. Use this first in webhooks."""
     result = await conn.execute(
@@ -19,7 +19,7 @@ async def get_user_id_by_firebase(conn: AsyncConnection, firebase_uid: str) -> U
     return row[0] if row else None
 
 
-@log_query_timing
+
 async def get_user_role(conn: AsyncConnection, user_id: UUID) -> str:
     """Get user's current role."""
     result = await conn.execute(
@@ -30,7 +30,7 @@ async def get_user_role(conn: AsyncConnection, user_id: UUID) -> str:
     return row[0] if row else "free"
 
 
-@log_query_timing
+
 async def get_user_by_uuid(conn: AsyncConnection, user_id: UUID) -> dict | None:
     """Get user details by internal UUID."""
     result = await conn.execute(
@@ -52,7 +52,7 @@ async def get_user_by_uuid(conn: AsyncConnection, user_id: UUID) -> dict | None:
     }
 
 
-@log_query_timing
+
 async def get_user_with_billing(conn: AsyncConnection, user_id: UUID) -> dict | None:
     """Get user with billing info for credit tracking."""
     result = await conn.execute(
@@ -77,7 +77,7 @@ async def get_user_with_billing(conn: AsyncConnection, user_id: UUID) -> dict | 
     }
 
 
-@log_query_timing
+
 async def update_user_role(conn: AsyncConnection, user_id: UUID, new_role: str) -> bool:
     """Update user role. Returns True if user found."""
     result = await conn.execute(
@@ -87,7 +87,7 @@ async def update_user_role(conn: AsyncConnection, user_id: UUID, new_role: str) 
     return result.rowcount > 0
 
 
-@log_query_timing
+
 async def update_user_subscription(
     conn: AsyncConnection,
     user_id: UUID,
@@ -130,7 +130,7 @@ async def update_user_subscription(
     return result.rowcount > 0
 
 
-@log_query_timing
+
 async def clear_user_subscription(conn: AsyncConnection, user_id: UUID) -> bool:
     """Clear subscription data when cancelled/expired."""
     result = await conn.execute(
