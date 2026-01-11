@@ -1,4 +1,5 @@
 """Application settings loaded from environment variables."""
+import os
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -17,9 +18,7 @@ class Settings(BaseSettings):
     # Cloud Tasks
     CLOUD_TASKS_SA_EMAIL: str = "tasks-invoker@conthunt-dev.iam.gserviceaccount.com"
     API_BASE_URL: str = "https://api.conthunt.com"
-    
-    # CORS - comma-separated list of allowed origins
-    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+
     
     # queues
     QUEUE_MEDIA_DOWNLOAD: str = "media-download-queue"
@@ -67,13 +66,17 @@ class Settings(BaseSettings):
     # Frontend Return URL
     FRONTEND_RETURN_URL: str = "http://localhost:3000/app/billing/return"
 
-    # LangGraph & Redis
-    # LANGGRAPH_URL is no longer required - we use direct graph calls now
-    LANGGRAPH_URL: str = ""  # Deprecated - kept for backward compatibility
+    # Redis
     REDIS_URL: str = "redis://localhost:6379"
 
+    # Openrouter
+    OPENAI_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENAI_API_KEY: str = ""
+
     class Config:
-        env_file = ".env"
+        # Pydantic loads from the first file found in this list, OR merges them depending on library version.
+        # But crucially, real Environment Variables (like from Secret Manager or Shell) ALWAYS override files.
+        env_file = (".env", f".env.{os.getenv('APP_ENV', 'local')}")
         env_file_encoding = "utf-8"
         extra = "ignore"
 

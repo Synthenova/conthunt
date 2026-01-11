@@ -1,0 +1,73 @@
+steps:
+  # ==========================================
+  # 1. Build & Push Backend
+  # ==========================================
+  - name: 'gcr.io/k8s-skaffold/pack'
+    id: 'build-backend'
+    args:
+      - 'build'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/conthunt-backend/app'
+      - '--builder=gcr.io/buildpacks/builder:google-22'
+      - '--path=backend/'
+      - '--env=GOOGLE_ENTRYPOINT=uvicorn app.main:app --host 0.0.0.0 --port 8080'
+
+  # ==========================================
+  # 2. Deploy Backend (with ALL Secrets)
+  # ==========================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-backend'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'conthunt'
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/conthunt-backend/app'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--service-account=976912795426-compute@developer.gserviceaccount.com'
+      # --set-secrets maps Secret Manager keys to Environment Variables in the container
+      # Format: ENV_VAR=SECRET_NAME:VERSION
+      - '--set-secrets=DATABASE_URL=DATABASE_URL:latest'
+      - '--set-secrets=TWELVELABS_API_KEY=TWELVELABS_API_KEY:latest'
+      - '--set-secrets=TWELVELABS_INDEX_ID=TWELVELABS_INDEX_ID:latest'
+      - '--set-secrets=TWELVELABS_DEFAULT_INDEX_NAME=TWELVELABS_DEFAULT_INDEX_NAME:latest'
+      - '--set-secrets=TWELVELABS_UPLOAD_TIMEOUT=TWELVELABS_UPLOAD_TIMEOUT:latest'
+      - '--set-secrets=TWELVELABS_INDEX_TIMEOUT=TWELVELABS_INDEX_TIMEOUT:latest'
+      - '--set-secrets=DODO_API_KEY=DODO_API_KEY:latest'
+      - '--set-secrets=DODO_WEBHOOK_SECRET=DODO_WEBHOOK_SECRET:latest'
+      - '--set-secrets=DODO_BASE_URL=DODO_BASE_URL:latest'
+      - '--set-secrets=DODO_PRODUCT_CREATOR=DODO_PRODUCT_CREATOR:latest'
+      - '--set-secrets=DODO_PRODUCT_PRO=DODO_PRODUCT_PRO:latest'
+      - '--set-secrets=SCRAPECREATORS_API_KEY=SCRAPECREATORS_API_KEY:latest'
+      - '--set-secrets=SCRAPECREATORS_BASE_URL=SCRAPECREATORS_BASE_URL:latest'
+      - '--set-secrets=REDIS_URL=REDIS_URL:latest'
+      - '--set-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest'
+      - '--set-secrets=OPENAI_BASE_URL=OPENAI_BASE_URL:latest'
+      - '--set-secrets=LOG_LEVEL=LOG_LEVEL:latest'
+      - '--set-secrets=API_BASE_URL=API_BASE_URL:latest'
+      - '--set-secrets=DB_SCHEMA=DB_SCHEMA:latest'
+      - '--set-secrets=GCS_BUCKET_RAW=GCS_BUCKET_RAW:latest'
+      - '--set-secrets=GCS_BUCKET_MEDIA=GCS_BUCKET_MEDIA:latest'
+      - '--set-secrets=CDN_SIGNING_KEY_NAME=CDN_SIGNING_KEY_NAME:latest'
+      - '--set-secrets=CDN_SIGNING_KEY_VALUE=CDN_SIGNING_KEY_VALUE:latest'
+      - '--set-secrets=CDN_URL_PREFIX=CDN_URL_PREFIX:latest'
+      - '--set-secrets=CLOUD_TASKS_SA_EMAIL=CLOUD_TASKS_SA_EMAIL:latest'
+      - '--set-secrets=QUEUE_MEDIA_DOWNLOAD=QUEUE_MEDIA_DOWNLOAD:latest'
+      - '--set-secrets=QUEUE_TWELVELABS=QUEUE_TWELVELABS:latest'
+      - '--set-secrets=QUEUE_GEMINI=QUEUE_GEMINI:latest'
+      - '--set-secrets=QUEUE_RAW_ARCHIVE=QUEUE_RAW_ARCHIVE:latest'
+      - '--set-secrets=QUEUE_MEDIA_DOWNLOAD_PRIORITY=QUEUE_MEDIA_DOWNLOAD_PRIORITY:latest'
+      - '--set-secrets=MEDIA_DOWNLOAD_ENABLED=MEDIA_DOWNLOAD_ENABLED:latest'
+      - '--set-secrets=MEDIA_MAX_CONCURRENCY=MEDIA_MAX_CONCURRENCY:latest'
+      - '--set-secrets=MEDIA_HTTP_TIMEOUT_S=MEDIA_HTTP_TIMEOUT_S:latest'
+      - '--set-secrets=RAW_UPLOAD_ENABLED=RAW_UPLOAD_ENABLED:latest'
+      - '--set-secrets=FRONTEND_RETURN_URL=FRONTEND_RETURN_URL:latest'
+      # Standard Env vars we might want explicit
+      - '--set-env-vars=GCP_PROJECT=$PROJECT_ID'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/conthunt-backend/app'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
