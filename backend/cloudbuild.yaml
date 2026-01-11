@@ -27,6 +27,7 @@ steps:
       - '--region=us-central1'
       - '--platform=managed'
       - '--allow-unauthenticated'
+      - '--add-cloudsql-instances=conthunt-prod:us-central1:conthunt-prod'
 
       # --set-secrets maps Secret Manager keys to Environment Variables in the container
       # Format: ENV_VAR=SECRET_NAME:VERSION
