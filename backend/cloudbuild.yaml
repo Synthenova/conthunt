@@ -67,8 +67,7 @@ steps:
       # Standard Env vars we might want explicit
       - '--set-env-vars=GCP_PROJECT=$PROJECT_ID'
 
-images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/conthunt-backend/app'
+
 
 options:
   logging: CLOUD_LOGGING_ONLY

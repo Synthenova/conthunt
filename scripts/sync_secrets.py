@@ -25,6 +25,10 @@ def upload_secrets(env_file_path):
                 key = key.strip()
                 value = value.strip()
                 
+                # Strip inline comments (e.g. "120 # seconds" -> "120")
+                if '#' in value:
+                    value = value.split('#', 1)[0].strip()
+
                 # Remove surrounding quotes if present
                 if (value.startswith('"') and value.endswith('"')) or \
                    (value.startswith("'") and value.endswith("'")):
