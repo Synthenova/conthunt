@@ -293,6 +293,9 @@ export default function ProfilePage() {
                                     {user?.metadata.creationTime ? new Date(user.metadata.creationTime).toLocaleDateString() : 'N/A'}
                                 </span>
                             </div>
+                        </div>
+
+                        <div className="py-4 space-y-3">
                             <div className="flex items-center justify-between text-xs">
                                 <span className="text-muted-foreground">Status</span>
                                 <Badge variant="outline" className="border-green-500/20 bg-green-500/10 text-green-500 h-5 px-2 text-[10px]">
@@ -301,7 +304,7 @@ export default function ProfilePage() {
                             </div>
                         </div>
 
-                        <div className="pt-4 pb-0">
+                        {/* <div className="pt-4 pb-0">
                             <Link href="/app/billing/return" className="flex items-center justify-between group p-2 -mx-2 rounded-lg hover:bg-primary/5 transition-colors">
                                 <div className="flex items-center gap-3">
                                     <Shield className="h-4 w-4 text-muted-foreground" />
@@ -309,7 +312,7 @@ export default function ProfilePage() {
                                 </div>
                                 <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
                             </Link>
-                        </div>
+                        </div> */}
                     </GlassPanel>
                 </div>
             </div>

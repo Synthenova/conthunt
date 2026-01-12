@@ -30,7 +30,7 @@ router = APIRouter(tags=["video-analysis"])
 llm = ChatGoogleGenerativeAI(
     model="gemini-3-flash-preview",
     temperature=0.7,
-    project='conthunt-dev',
+    project=settings.GCP_PROJECT,
     vertexai=True
 )
 
