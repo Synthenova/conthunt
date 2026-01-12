@@ -54,11 +54,6 @@ class Settings(BaseSettings):
     TWELVELABS_UPLOAD_TIMEOUT: int = 120  # seconds
     TWELVELABS_INDEX_TIMEOUT: int = 180  # seconds
 
-    # Dodo Payments
-    DODO_API_KEY: str = ""
-    DODO_WEBHOOK_SECRET: str = ""
-    DODO_BASE_URL: str = "https://test.dodopayments.com"
-    DODO_BRAND_ID: str = ""  # Optional: filter products by brand
 
     # Frontend Return URL
     FRONTEND_RETURN_URL: str = "http://localhost:3000/app/billing/return"

@@ -44,14 +44,14 @@ async def get_me(user: AuthUser = Depends(get_current_user)):
     })
     
     # Add each capped feature
+    # Add each feature (even if uncapped)
     for feature, data in summary["features"].items():
-        if data["cap"]:  # Only show features with caps
-            usage_list.append({
-                "feature": feature,
-                "period": "monthly",
-                "limit": data["cap"],
-                "used": data["uses"]
-            })
+        usage_list.append({
+            "feature": feature,
+            "period": "monthly",
+            "limit": data["cap"],  # None for unlimited
+            "used": data["uses"]
+        })
     
     return {
         "id": str(user_uuid),

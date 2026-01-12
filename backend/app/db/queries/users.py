@@ -58,7 +58,7 @@ async def get_user_with_billing(conn: AsyncConnection, user_id: UUID) -> dict | 
     result = await conn.execute(
         text("""
         SELECT id, firebase_uid, email, role, 
-               dodo_customer_id, dodo_subscription_id, current_period_start
+               current_period_start
         FROM users WHERE id = :user_id
         """),
         {"user_id": user_id}
@@ -71,9 +71,7 @@ async def get_user_with_billing(conn: AsyncConnection, user_id: UUID) -> dict | 
         "firebase_uid": row[1],
         "email": row[2],
         "role": row[3],
-        "dodo_customer_id": row[4],
-        "dodo_subscription_id": row[5],
-        "current_period_start": row[6],
+        "current_period_start": row[4],
     }
 
 
@@ -92,8 +90,6 @@ async def update_user_subscription(
     conn: AsyncConnection,
     user_id: UUID,
     role: str = None,
-    customer_id: str = None,
-    subscription_id: str = None,
     current_period_start: datetime = None,
 ) -> bool:
     """
@@ -106,12 +102,6 @@ async def update_user_subscription(
     if role is not None:
         fields.append("role = :role")
         params["role"] = role
-    if customer_id is not None:
-        fields.append("dodo_customer_id = :customer_id")
-        params["customer_id"] = customer_id
-    if subscription_id is not None:
-        fields.append("dodo_subscription_id = :subscription_id")
-        params["subscription_id"] = subscription_id
     if current_period_start is not None:
         fields.append("current_period_start = :period_start")
         params["period_start"] = current_period_start
@@ -137,7 +127,6 @@ async def clear_user_subscription(conn: AsyncConnection, user_id: UUID) -> bool:
         text("""
         UPDATE users 
         SET role = 'free',
-            dodo_subscription_id = NULL,
             current_period_start = NULL
         WHERE id = :user_id
         """),

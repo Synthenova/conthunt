@@ -112,25 +112,7 @@ from app.db.queries.chats import (
 )
 
 # Billing queries
-from app.db.queries.billing import (
-    upsert_webhook_event,
-    mark_webhook_processed,
-    get_user_subscription,
-    get_subscription_by_id,
-    get_last_event_ts,
-    upsert_user_subscription,
-    create_pending_plan_change,
-    get_pending_plan_change,
-    get_pending_changes_to_apply,
-    mark_pending_change_applied,
-    cancel_pending_plan_changes,
-    get_product,
-    get_role_for_product,
-    upsert_product,
-    product_exists,
-    get_user_id_by_subscription,
-    get_user_id_by_customer,
-)
+
 
 __all__ = [
     # Search
@@ -203,23 +185,6 @@ __all__ = [
     "get_chat_tags",
     "update_chat_tag_orders",
     "soft_delete_chat_tag",
-    # Billing
-    "upsert_webhook_event",
-    "mark_webhook_processed",
-    "get_user_subscription",
-    "get_subscription_by_id",
-    "get_last_event_ts",
-    "upsert_user_subscription",
-    "create_pending_plan_change",
-    "get_pending_plan_change",
-    "get_pending_changes_to_apply",
-    "mark_pending_change_applied",
-    "cancel_pending_plan_changes",
-    "get_product",
-    "get_role_for_product",
-    "upsert_product",
-    "product_exists",
-    "get_user_id_by_subscription",
-    "get_user_id_by_customer",
+    "soft_delete_chat_tag",
 ]
 

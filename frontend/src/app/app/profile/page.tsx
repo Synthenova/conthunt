@@ -120,17 +120,27 @@ export default function ProfilePage() {
                                         </div>
                                         <div className="text-right">
                                             <p className="text-lg font-bold">
-                                                {item.used} <span className="text-xs text-muted-foreground">/ {item.limit}</span>
+                                                {item.used}
+                                                {item.limit && (
+                                                    <span className="text-xs text-muted-foreground"> / {item.limit}</span>
+                                                )}
                                             </p>
                                         </div>
                                     </div>
 
-                                    <div className="relative h-1.5 w-full bg-primary/5 rounded-full overflow-hidden">
-                                        <div
-                                            className="absolute inset-y-0 left-0 bg-primary shadow-[0_0_10px_rgba(206,206,206,0.5)] transition-all duration-1000 ease-out"
-                                            style={{ width: `${Math.min((item.used / item.limit) * 100, 100)}%` }}
-                                        />
-                                    </div>
+                                    {item.limit ? (
+                                        <div className="relative h-1.5 w-full bg-primary/5 rounded-full overflow-hidden">
+                                            <div
+                                                className="absolute inset-y-0 left-0 bg-primary shadow-[0_0_10px_rgba(206,206,206,0.5)] transition-all duration-1000 ease-out"
+                                                style={{ width: `${Math.min((item.used / item.limit) * 100, 100)}%` }}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="text-[10px] text-muted-foreground italic flex items-center gap-1">
+                                            <div className="h-1.5 w-1.5 rounded-full bg-green-500/50" />
+                                            Unlimited usage
+                                        </div>
+                                    )}
                                 </GlassPanel>
                             </StaggerItem>
                         ))}
