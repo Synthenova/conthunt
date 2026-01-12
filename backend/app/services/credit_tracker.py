@@ -1,7 +1,7 @@
-"""Credit-based usage tracking (Counting only)."""
+"""Credit-based usage tracking with monthly credit period resets."""
 import json
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import text
@@ -17,11 +17,66 @@ FEATURE_CREDITS = {
     "index_video": 5,
 }
 
+# Role to monthly credits mapping (matches Dodo product metadata)
+ROLE_CREDITS = {
+    "free": 50,
+    "creator": 1000,
+    "pro_research": 3000,
+}
+
+# Credit period duration (30 days regardless of billing cycle)
+CREDIT_PERIOD_DAYS = 30
+
 
 class CreditTracker:
     """
-    Usage tracking only. No limits enforced.
+    Usage tracking with monthly credit periods.
+    Credits reset every 30 days from the subscription start date.
+    Works for both monthly and yearly billing cycles.
     """
+
+    async def _get_credit_period_start(self, conn, user_id: UUID) -> Optional[datetime]:
+        """Get user's current credit period start from database."""
+        result = await conn.execute(
+            text("SELECT credit_period_start FROM users WHERE id = :user_id"),
+            {"user_id": user_id}
+        )
+        row = result.fetchone()
+        return row[0] if row and row[0] else None
+
+    async def _advance_credit_period_if_needed(self, conn, user_id: UUID, current_period: datetime) -> datetime:
+        """
+        Check if 30 days have passed since credit_period_start.
+        If so, advance to next period (keeping alignment with original start date).
+        Returns the effective period start for credit calculations.
+        """
+        now = datetime.utcnow()
+        # Strip timezone info for comparison (DB may return tz-aware)
+        if current_period.tzinfo is not None:
+            current_period = current_period.replace(tzinfo=None)
+        period_end = current_period + timedelta(days=CREDIT_PERIOD_DAYS)
+        
+        if now >= period_end:
+            # Calculate how many periods have passed
+            days_since_start = (now - current_period).days
+            periods_passed = days_since_start // CREDIT_PERIOD_DAYS
+            
+            # Advance to current period (maintains alignment with original date)
+            new_period_start = current_period + timedelta(days=periods_passed * CREDIT_PERIOD_DAYS)
+            
+            # Update in database
+            await conn.execute(
+                text("""
+                UPDATE users SET credit_period_start = :new_period
+                WHERE id = :user_id
+                """),
+                {"user_id": user_id, "new_period": new_period_start}
+            )
+            
+            logger.info(f"Advanced credit period for user {user_id}: {current_period} -> {new_period_start}")
+            return new_period_start
+        
+        return current_period
 
     async def record_usage(
         self,
@@ -103,18 +158,19 @@ class CreditTracker:
         context: Optional[dict] = None
     ) -> dict:
         """
-        Check simply records usage if requested. Always returns allowed=True.
+        Check and record usage. Always returns allowed=True (no enforcement).
         """
         credit_cost = FEATURE_CREDITS.get(feature, 1)
+        total_credits = ROLE_CREDITS.get(role, 50)
         
         # Record usage if requested
         if record:
             await self.record_usage(user_id, feature, context)
         
-        # We just return simplified info as we don't track limits anymore
+        # Return credit info (no enforcement, just tracking)
         return {
             "allowed": True,
-            "credits_remaining": 999999, # Infinite
+            "credits_remaining": total_credits,
             "feature_uses_remaining": None,
         }
 
@@ -125,13 +181,24 @@ class CreditTracker:
         current_period_start: datetime | None = None
     ) -> dict:
         """
-        Get usage summary (just what has been used).
+        Get usage summary with actual credit limits based on role.
+        Automatically advances credit period if 30 days have passed.
         """
-        # Fallback period start if none provided
-        period_start = current_period_start or datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        # Get credit limit based on role
+        total_credits = ROLE_CREDITS.get(role, 50)
         
         async with get_db_connection() as conn:
-            # Get usage per feature
+            # Get credit period start from DB
+            period_start = await self._get_credit_period_start(conn, user_id)
+            
+            # If no credit period set, use provided or default to now
+            if not period_start:
+                period_start = current_period_start or datetime.utcnow()
+            else:
+                # Check if we need to advance the period (30 days passed)
+                period_start = await self._advance_credit_period_if_needed(conn, user_id, period_start)
+            
+            # Get usage per feature within current credit period
             result = await conn.execute(
                 text("""
                 SELECT feature, COUNT(*) as uses, COALESCE(SUM(quantity), 0) as credits
@@ -154,14 +221,18 @@ class CreditTracker:
                 }
                 total_credits_used += credits
             
+            # Calculate next reset date
+            next_reset = period_start + timedelta(days=CREDIT_PERIOD_DAYS)
+            
             return {
                 "credits": {
-                    "total": 999999,
+                    "total": total_credits,
                     "used": total_credits_used,
-                    "remaining": 999999 - total_credits_used,
+                    "remaining": max(0, total_credits - total_credits_used),
                 },
                 "features": features,
                 "period_start": period_start.isoformat() + "Z",
+                "next_reset": next_reset.isoformat() + "Z",
             }
 
 

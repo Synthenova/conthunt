@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENAI_API_KEY: str = ""
 
+    # Dodo Payments
+    DODO_API_KEY: str = ""
+    DODO_WEBHOOK_SECRET: str = ""
+    DODO_BRAND_ID: str = ""
+    DODO_ENVIRONMENT: str = "test_mode"  # or "live_mode"
+
     class Config:
         # Pydantic loads from the first file found in this list, OR merges them depending on library version.
         # But crucially, real Environment Variables (like from Secret Manager or Shell) ALWAYS override files.

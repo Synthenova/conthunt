@@ -31,7 +31,7 @@ class CloudTasksService:
         """
         if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:
             # Local development: Dispatch directly to background function
-            logger.info(f"[LOCAL] Dispatching background task for {relative_uri} in queue {queue_name}")
+            # logger.info(f"[LOCAL] Dispatching background task for {relative_uri} in queue {queue_name}")
             import asyncio
             asyncio.create_task(self._run_local_task(relative_uri, payload))
             return "local-task-id"
