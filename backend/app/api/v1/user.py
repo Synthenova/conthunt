@@ -43,9 +43,10 @@ async def get_me(user: AuthUser = Depends(get_current_user)):
         "used": summary["credits"]["used"]
     })
     
-    # Add each capped feature
+    # Add feature stats
     for feature, data in summary["features"].items():
-        if data["cap"]:  # Only show features with caps
+        # Always show video_analysis and explicitly capped features
+        if data["cap"] or feature in ["video_analysis", "index_video"]:
             usage_list.append({
                 "feature": feature,
                 "period": "monthly",
