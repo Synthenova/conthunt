@@ -61,13 +61,63 @@ class CreditTracker:
         except Exception as e:
             logger.error(f"Failed to record usage for {user_id}: {e}")
 
-    def _get_period_start(self, current_period_start: datetime | None) -> datetime:
-        """Get billing period start, fallback to 1st of month if not set."""
-        if current_period_start:
-            return current_period_start
+    def _get_credit_period_start(self, subscription_start: datetime | None) -> datetime:
+        """
+        Get the start of the current MONTHLY credit period.
         
+        Credits reset monthly based on subscription anniversary date, NOT billing cycle.
+        
+        Example:
+          - User subscribed on Jan 15
+          - Today is Mar 20
+          - Current credit period: Mar 15 to Apr 15
+          - Returns: Mar 15
+        
+        This ensures both monthly and yearly subscribers get monthly credit resets.
+        """
         now = datetime.utcnow()
-        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
+        if not subscription_start:
+            # Fallback: use 1st of current month
+            return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
+        # Get the anniversary day (capped at 28 to handle Feb edge cases)
+        anniversary_day = min(subscription_start.day, 28)
+        
+        # Calculate which monthly period we're in
+        # Start with this month's anniversary
+        this_month_anniversary = now.replace(
+            day=anniversary_day, 
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        
+        if now >= this_month_anniversary:
+            # We're past this month's anniversary, so current period started this month
+            return this_month_anniversary
+        else:
+            # We haven't hit this month's anniversary yet, period started last month
+            # Go to previous month
+            if now.month == 1:
+                return now.replace(
+                    year=now.year - 1, 
+                    month=12, 
+                    day=anniversary_day,
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+            else:
+                return now.replace(
+                    month=now.month - 1, 
+                    day=anniversary_day,
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+
+    def _get_period_start(self, current_period_start: datetime | None) -> datetime:
+        """
+        DEPRECATED: Use _get_credit_period_start for monthly credits.
+        Kept for backward compatibility.
+        """
+        return self._get_credit_period_start(current_period_start)
+
 
     async def get_credits_used(
         self,
@@ -280,6 +330,188 @@ class CreditTracker:
                 "period_start": period_start.isoformat() + "Z",
             }
 
+    # =========================================================================
+    # SUBSCRIPTION LIFECYCLE CREDIT METHODS
+    # =========================================================================
+
+    async def get_plan_credits(self, conn, role: str) -> int:
+        """Get total credits for a plan role."""
+        result = await conn.execute(
+            text("SELECT total_credits FROM plan_credits WHERE plan_role = :role"),
+            {"role": role}
+        )
+        row = result.fetchone()
+        return row[0] if row else 0
+
+    async def grant_cycle_credits(
+        self,
+        user_id: UUID,
+        role: str,
+        period_start: datetime,
+        reason: str = "renewal",
+    ) -> int:
+        """
+        Grant full cycle credits for a new billing period.
+        
+        This is a no-op in the "usage since date" model - credits are
+        implicitly reset when period_start changes. This method exists
+        for explicit logging/auditing.
+        
+        Returns the total credits available for the new cycle.
+        """
+        async with get_db_connection() as conn:
+            total_credits = await self.get_plan_credits(conn, role)
+            
+            # Log the credit grant event for auditing
+            await conn.execute(
+                text("""
+                INSERT INTO usage_logs (user_id, feature, quantity, context)
+                VALUES (:user_id, :feature, :quantity, :context)
+                """),
+                {
+                    "user_id": user_id,
+                    "feature": "credit_grant",
+                    "quantity": 0,  # No actual deduction
+                    "context": json.dumps({
+                        "type": reason,
+                        "role": role,
+                        "credits_granted": total_credits,
+                        "period_start": period_start.isoformat() if period_start else None,
+                    })
+                }
+            )
+            
+            logger.info(f"Credits: {user_id} | {reason} | +{total_credits} for {role}")
+            return total_credits
+
+    async def grant_upgrade_topup(
+        self,
+        user_id: UUID,
+        old_role: str,
+        new_role: str,
+    ) -> int:
+        """
+        Grant top-up credits on upgrade (Option A).
+        
+        Top-up = new_plan_credits - old_plan_credits
+        
+        If the user had used some credits on the old plan, they keep that
+        usage but gain the difference in total allowance.
+        
+        Returns the top-up amount granted.
+        """
+        async with get_db_connection() as conn:
+            old_credits = await self.get_plan_credits(conn, old_role)
+            new_credits = await self.get_plan_credits(conn, new_role)
+            
+            topup = max(0, new_credits - old_credits)
+            
+            if topup > 0:
+                # Log the top-up for auditing
+                await conn.execute(
+                    text("""
+                    INSERT INTO usage_logs (user_id, feature, quantity, context)
+                    VALUES (:user_id, :feature, :quantity, :context)
+                    """),
+                    {
+                        "user_id": user_id,
+                        "feature": "credit_grant",
+                        "quantity": 0,  # No actual deduction
+                        "context": json.dumps({
+                            "type": "upgrade_topup",
+                            "old_role": old_role,
+                            "new_role": new_role,
+                            "old_credits": old_credits,
+                            "new_credits": new_credits,
+                            "topup": topup,
+                        })
+                    }
+                )
+                
+                logger.info(f"Credits: {user_id} | upgrade | +{topup} ({old_role} → {new_role})")
+            
+            return topup
+
+    async def on_subscription_sync(
+        self,
+        user_id: UUID,
+        old_subscription: dict | None,
+        new_subscription: dict,
+    ) -> dict:
+        """
+        Handle credit operations after subscription sync.
+        
+        Called by webhook handler after upserting user_subscriptions.
+        Detects and handles:
+        - Renewal: period_start changed → grant full cycle credits
+        - Upgrade: product_id changed, same period → grant top-up
+        
+        Returns dict with credit_event and credits_granted.
+        """
+        result = {"credit_event": None, "credits_granted": 0}
+        
+        new_period_start = new_subscription.get("current_period_start")
+        new_product_id = new_subscription.get("product_id")
+        new_status = new_subscription.get("status")
+        
+        # Only process active subscriptions
+        if new_status not in ("active", "trialing"):
+            return result
+        
+        # Get role for new product
+        from app.db.queries.billing import get_role_for_product
+        async with get_db_connection() as conn:
+            new_role = await get_role_for_product(conn, new_product_id)
+        
+        if not new_role:
+            return result
+        
+        if old_subscription:
+            old_period_start = old_subscription.get("current_period_start")
+            old_product_id = old_subscription.get("product_id")
+            
+            # Get old role
+            if old_product_id:
+                async with get_db_connection() as conn:
+                    old_role = await get_role_for_product(conn, old_product_id)
+            else:
+                old_role = None
+            
+            # RENEWAL: period_start changed
+            if old_period_start and new_period_start and old_period_start != new_period_start:
+                credits = await self.grant_cycle_credits(
+                    user_id=user_id,
+                    role=new_role,
+                    period_start=new_period_start,
+                    reason="renewal",
+                )
+                result["credit_event"] = "renewal"
+                result["credits_granted"] = credits
+            
+            # UPGRADE: product changed within same period
+            elif old_product_id and new_product_id and old_product_id != new_product_id:
+                if old_period_start == new_period_start and old_role:
+                    topup = await self.grant_upgrade_topup(
+                        user_id=user_id,
+                        old_role=old_role,
+                        new_role=new_role,
+                    )
+                    result["credit_event"] = "upgrade"
+                    result["credits_granted"] = topup
+        else:
+            # NEW SUBSCRIPTION
+            credits = await self.grant_cycle_credits(
+                user_id=user_id,
+                role=new_role,
+                period_start=new_period_start,
+                reason="new_subscription",
+            )
+            result["credit_event"] = "new_subscription"
+            result["credits_granted"] = credits
+        
+        return result
+
 
 # Global instance
 credit_tracker = CreditTracker()
+

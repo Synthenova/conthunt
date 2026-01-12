@@ -140,6 +140,177 @@ class DodoService:
             )
             return {"status": "cancelled" if immediate else "cancel_scheduled"}
 
+    # =========================================================================
+    # Product Caching (for dynamic product → role mapping)
+    # =========================================================================
+
+    async def list_products(self, recurring_only: bool = True) -> list[dict]:
+        """
+        List all products from Dodo API.
+        
+        Args:
+            recurring_only: If True, filter to subscription products only
+            
+        Returns:
+            List of product dicts with product_id, name, is_recurring, price, 
+            billing_interval (monthly/yearly), and metadata.
+        """
+        products = []
+        try:
+            async with get_dodo_client() as client:
+                async for prod in client.products.list():
+                    prod_dict = prod.model_dump() if hasattr(prod, "model_dump") else dict(prod)
+                    
+                    is_recurring = prod_dict.get("is_recurring", False)
+                    if recurring_only and not is_recurring:
+                        continue
+                    
+                    # Extract billing interval from Dodo's payment_frequency_count/interval
+                    # or from the product structure
+                    payment_freq = prod_dict.get("payment_frequency_count", 1)
+                    payment_interval = prod_dict.get("payment_frequency_interval", "month")
+                    
+                    # Determine billing_interval: monthly vs yearly
+                    if payment_interval == "year" or payment_freq >= 12:
+                        billing_interval = "yearly"
+                    else:
+                        billing_interval = "monthly"
+                    
+                    metadata = prod_dict.get("metadata") or {}
+                    
+                    products.append({
+                        "product_id": prod_dict.get("product_id"),
+                        "name": prod_dict.get("name"),
+                        "is_recurring": is_recurring,
+                        "price": prod_dict.get("price"),
+                        "currency": prod_dict.get("currency"),
+                        "billing_interval": billing_interval,
+                        "app_role": metadata.get("app_role"),
+                        "metadata": metadata,
+                        "updated_at": prod_dict.get("updated_at"),
+                        "raw": prod_dict,
+                    })
+            
+            logger.info(f"Listed {len(products)} products from Dodo")
+            return products
+        except Exception as e:
+            logger.error(f"Failed to list products: {e}")
+            raise
+
+    async def get_products_for_checkout(self) -> list[dict]:
+        """
+        Get all subscription products formatted for checkout/frontend display.
+        Filters to only products that have app_role in metadata.
+        """
+        products = await self.list_products(recurring_only=True)
+        
+        # Filter to products with valid app_role
+        valid_products = [
+            p for p in products 
+            if p.get("app_role") in ("creator", "pro_research")
+        ]
+        
+        # Sort by role then by interval (monthly first)
+        valid_products.sort(key=lambda p: (
+            0 if p["app_role"] == "creator" else 1,
+            0 if p["billing_interval"] == "monthly" else 1
+        ))
+        
+        return valid_products
+
+    async def get_product_by_role_and_interval(
+        self, 
+        app_role: str, 
+        billing_interval: str = "monthly"
+    ) -> dict | None:
+        """
+        Get a specific product by app_role and billing_interval.
+        
+        Args:
+            app_role: "creator" or "pro_research"
+            billing_interval: "monthly" or "yearly"
+            
+        Returns:
+            Product dict or None if not found
+        """
+        products = await self.list_products(recurring_only=True)
+        
+        for p in products:
+            if p.get("app_role") == app_role and p.get("billing_interval") == billing_interval:
+                return p
+        
+        # Fallback: try to find any product with matching role
+        for p in products:
+            if p.get("app_role") == app_role:
+                logger.warning(f"No exact match for {app_role}/{billing_interval}, using {p['product_id']}")
+                return p
+        
+        return None
+
+    async def get_product(self, product_id: str) -> dict | None:
+        """
+        Fetch a single product from Dodo API.
+        
+        Args:
+            product_id: Dodo product ID
+            
+        Returns:
+            Product dict or None if not found
+        """
+        try:
+            async with get_dodo_client() as client:
+                prod = await client.products.retrieve(product_id)
+                prod_dict = prod.model_dump() if hasattr(prod, "model_dump") else dict(prod)
+                
+                return {
+                    "product_id": prod_dict.get("product_id"),
+                    "name": prod_dict.get("name"),
+                    "is_recurring": prod_dict.get("is_recurring", False),
+                    "price": prod_dict.get("price"),
+                    "currency": prod_dict.get("currency"),
+                    "metadata": prod_dict.get("metadata") or {},
+                    "updated_at": prod_dict.get("updated_at"),
+                    "raw": prod_dict,
+                }
+        except Exception as e:
+            logger.error(f"Failed to get product {product_id}: {e}")
+            return None
+
+    async def ensure_product_cached(self, conn, product_id: str) -> None:
+        """
+        Ensure product exists in local cache (dodo_products table).
+        If not, fetch from Dodo API and cache it.
+        
+        Args:
+            conn: AsyncConnection to use
+            product_id: Dodo product ID
+        """
+        from app.db.queries.billing import product_exists, upsert_product
+        
+        # Check if already cached
+        if await product_exists(conn, product_id):
+            return
+        
+        # Fetch from Dodo API
+        product = await self.get_product(product_id)
+        if not product:
+            logger.warning(f"Product {product_id} not found in Dodo API, cannot cache")
+            return
+        
+        # Cache it
+        await upsert_product(
+            conn,
+            product_id=product["product_id"],
+            name=product["name"],
+            is_recurring=product["is_recurring"],
+            price=product["price"],
+            currency=product["currency"],
+            metadata=product["metadata"],
+            raw=product["raw"],
+        )
+        logger.info(f"Cached product {product_id} from Dodo API")
+
 
 # Global instance
 dodo_service = DodoService()
+

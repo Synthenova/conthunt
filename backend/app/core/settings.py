@@ -58,10 +58,7 @@ class Settings(BaseSettings):
     DODO_API_KEY: str = ""
     DODO_WEBHOOK_SECRET: str = ""
     DODO_BASE_URL: str = "https://test.dodopayments.com"
-
-    # Products
-    DODO_PRODUCT_CREATOR: str = "pdt_ak5GBsLOOR8y7tqEh2plw"
-    DODO_PRODUCT_PRO: str = "pdt_dPXYTaQF4iax5DT7PLD8A"
+    DODO_BRAND_ID: str = ""  # Optional: filter products by brand
 
     # Frontend Return URL
     FRONTEND_RETURN_URL: str = "http://localhost:3000/app/billing/return"
