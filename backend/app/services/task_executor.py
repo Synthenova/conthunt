@@ -34,12 +34,20 @@ class CloudTaskExecutor:
             return {"status": "ok"}
             
         except Exception as e:
+            from fastapi import HTTPException
+
             if self._should_retry(e) and self.retry_count < self.max_retries:
                 logger.warning(
-                    f"Task failed (attempt {self.retry_count + 1}/{self.max_retries + 1}), retrying. Error: {e}"
+                    "Task failed (attempt %s/%s), retrying. Error: %r",
+                    self.retry_count + 1,
+                    self.max_retries,
+                    e,
+                    exc_info=True,
                 )
-                # Re-raise to trigger Cloud Tasks retry (needs non-2xx response)
-                raise e 
+                raise HTTPException(
+                    status_code=503,
+                    detail="Retryable upstream error (httpx)",
+                ) from e
             
             # Final failure handling (Stop Retrying)
             logger.error(
