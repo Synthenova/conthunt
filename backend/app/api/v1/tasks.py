@@ -100,12 +100,17 @@ async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Req
             await _on_fail(Exception("Video not ready after 3 min timeout"))
             return {"status": "failed", "error": "Video not ready after timeout"}
 
+    # Use fresh video URI from asset if available (e.g. GCS URI after download)
+    final_video_uri = payload.video_uri
+    if asset:
+        final_video_uri = asset.get("gcs_uri") or asset.get("video_url") or payload.video_uri
+
     return await executor.run(
         handler=_execute_gemini_analysis,
         on_fail=_on_fail,
         analysis_id=payload.analysis_id,
         media_asset_id=payload.media_asset_id,
-        video_uri=payload.video_uri
+        video_uri=final_video_uri
     )
 
 @router.post("/twelvelabs/index")

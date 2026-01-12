@@ -59,7 +59,7 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
     
     start_time = time.time()
     logger.info(f"[ANALYSIS] Starting background task for media_asset_id={media_asset_id}, analysis_id={analysis_id}")
-    logger.debug(f"[ANALYSIS] Video URI: {video_uri}")
+    logger.info(f"[ANALYSIS] Video URI: {video_uri}")
     
     try:
         # 1. Build Message

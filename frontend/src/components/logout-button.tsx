@@ -1,6 +1,6 @@
 "use client";
 
-import { auth } from "@/lib/firebaseClient";
+import { forceLogout } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
@@ -14,13 +14,7 @@ export function LogoutButton({ className, variant = "destructive", children }: L
     const router = useRouter();
 
     const handleLogout = async () => {
-        try {
-            await auth.signOut();
-            await fetch("/api/sessionLogout", { method: "POST" });
-            router.push("/login");
-        } catch (error) {
-            console.error("Logout failed", error);
-        }
+        await forceLogout();
     };
 
     return (

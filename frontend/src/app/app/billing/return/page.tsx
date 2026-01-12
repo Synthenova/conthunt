@@ -1,277 +1,360 @@
 "use client";
 
-// Skip prerendering - Firebase auth requires runtime environment variables
 export const dynamic = 'force-dynamic';
 
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import { auth } from "@/lib/firebaseClient";
-import { Button } from "@/components/ui/button";
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardFooter,
-    CardHeader,
-    CardTitle,
-} from "@/components/ui/card";
+import React, { useState } from "react";
 import { Check, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import "./pricing.css";
+import { useBilling } from "./hooks/useBilling";
+import { PreviewModal } from "./components/PreviewModal";
+import { CancelConfirmModal } from "./components/CancelConfirmModal";
+import { roleOrder, Product } from "./types";
+import AppHomeLoading from "../../loading";
+import { FadeIn } from "@/components/ui/animations";
 
-function BillingReturnContent() {
-    const searchParams = useSearchParams();
-    const router = useRouter();
-    const [loading, setLoading] = useState<string | null>(null);
-    const [role, setRole] = useState<string | null>(null);
-    const [verifying, setVerifying] = useState(false);
+function PricingSection() {
+    const {
+        products,
+        loading,
+        userLoading,
+        actionLoading,
+        error,
+        previewData,
+        previewLoading,
+        previewError,
+        subscription,
+        cancelConfirmOpen,
+        handleCheckout,
+        handleUpgrade,
+        handleDowngrade,
+        showCancelConfirm,
+        closeCancelConfirm,
+        confirmCancel,
+        undoCancel,
+        confirmPlanChange,
+        clearPreviewError,
+        clearPreviewData
+    } = useBilling();
 
-    const status = searchParams.get("status");
-    const subscriptionId = searchParams.get("subscription_id");
+    const [isAnnual, setIsAnnual] = useState(false);
 
-    useEffect(() => {
-        if (!auth) return;
-        // Listen for auth changes to get the latest role (claims)
-        const unsubscribe = auth.onIdTokenChanged(async (user) => {
-            if (user) {
-                const token = await user.getIdTokenResult();
-                setRole((token.claims.role as string) || "free");
-            } else {
-                setRole(null);
-            }
-        });
-        return () => unsubscribe();
-    }, []);
+    // Helpers to find products
+    const getProduct = (role: string, annual: boolean): Product | undefined => {
+        const roleProducts = products.filter(p => p.metadata.app_role === role);
+        if (roleProducts.length === 0) return undefined;
+        // Sort by price: Low = Monthly, High = Yearly
+        const sorted = [...roleProducts].sort((a, b) => a.price - b.price);
 
-    useEffect(() => {
-        if (status === "active") {
-            setVerifying(true);
-            let attempts = 0;
-            let active = true;
+        if (sorted.length === 1) return sorted[0];
+        return annual ? sorted[sorted.length - 1] : sorted[0];
+    };
 
-            const pollRole = async () => {
-                // Wait for auth to initialize
-                if (!auth || !auth.currentUser) {
-                    console.log(`[BillingReturn] Waiting for auth... (attempt ${attempts})`);
-                    if (active && attempts < 30) {
-                        attempts++;
-                        setTimeout(pollRole, 500);
-                    } else if (active) {
-                        console.log("[BillingReturn] Auth wait timed out");
-                        setVerifying(false);
-                        toast.error("Authentication failed. Please log in.");
-                    }
-                    return;
-                }
+    const creatorProduct = getProduct("creator", isAnnual);
+    const proProduct = getProduct("pro_research", isAnnual);
+    const freeProduct = {
+        product_id: "free",
+        name: "Free",
+        price: 0,
+        metadata: { app_role: "free", credits: "50" }
+    } as Product;
 
-                try {
-                    console.log("[BillingReturn] Polling for role update (force refreshing token)...");
-                    // Force refresh to get new claims
-                    const token = await auth.currentUser.getIdTokenResult(true);
-                    const currentRole = token.claims.role as string;
-                    console.log(`[BillingReturn] Current role: ${currentRole}`);
-
-                    if ((currentRole === "creator" || currentRole === "pro_research") && active) {
-                        setRole(currentRole);
-                        toast.success("Subscription activated successfully!", {
-                            description: `ID: ${subscriptionId}`,
-                            duration: 5000,
-                        });
-                        setVerifying(false);
-                        // Optional: redirect or close?
-                        return;
-                    }
-
-                    if (attempts < 20 && active) { // Retry for ~40 seconds total (increased for safety)
-                        attempts++;
-                        setTimeout(pollRole, 2000);
-                    } else if (active) {
-                        // Timeout reached
-                        setVerifying(false);
-                        toast.warning("Payment received, but account update is delayed.", {
-                            description: "Your plan will update automatically in a moment.",
-                            duration: 5000,
-                        });
-                    }
-                } catch (e) {
-                    console.error("Error polling role:", e);
-                    // Retry on error too?
-                    if (attempts < 20 && active) {
-                        attempts++;
-                        setTimeout(pollRole, 2000);
-                    }
-                }
-            };
-
-            pollRole();
-
-            return () => { active = false; };
-        } else if (status === "failed") {
-            toast.error("Subscription payment failed.", {
-                description: "Stayed on previous plan. Please try again.",
-                duration: 5000,
-            });
-        } else if (status === "cancelled") {
-            toast.info("Subscription setup cancelled.");
+    // Prices for display
+    const getDisplayPrice = (product: Product | undefined, annual: boolean) => {
+        if (!product) return 0;
+        const rawPrice = product.price / 100; // Convert cents to dollars
+        if (annual && rawPrice > 100) { // Heuristic: if price > 100, assume it's yearly total, so divide by 12
+            return Math.round(rawPrice / 12);
         }
-    }, [status, subscriptionId]);
+        return Math.round(rawPrice);
+    };
 
-    const handleSubscribe = async (plan: "creator" | "pro_research") => {
-        try {
-            setLoading(plan);
-            if (!auth) {
-                toast.error("Auth not available yet.");
-                return;
+    const creatorPrice = getDisplayPrice(creatorProduct, isAnnual);
+    const proPrice = getDisplayPrice(proProduct, isAnnual);
+
+    const handlePlanAction = (targetProduct: Product | undefined) => {
+        if (!targetProduct) return;
+
+        const currentProductId = subscription?.product_id;
+        const hasSubscription = subscription?.has_subscription;
+
+        // If same product, do nothing
+        if (targetProduct.product_id === currentProductId) {
+            return;
+        }
+
+        // Special case: Switching to Free
+        if (targetProduct.metadata.app_role === "free") {
+            if (hasSubscription) {
+                // If on a paid plan, switching to free is a cancellation
+                showCancelConfirm();
             }
-            const user = auth.currentUser;
-            if (!user) {
-                toast.error("Please log in to subscribe.");
-                return;
-            }
+            return;
+        }
 
-            const idToken = await user.getIdToken();
-            const { BACKEND_URL } = await import('@/lib/api');
-            const res = await fetch(`${BACKEND_URL}/v1/billing/dodo/checkout-session`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${idToken}`,
-                },
-                body: JSON.stringify({ plan }),
-            });
+        // Find current product to compare
+        const currentProduct = products.find(p => p.product_id === currentProductId);
+        const currentPrice = currentProduct?.price || 0;
+        const currentCredits = parseInt(currentProduct?.metadata.credits || "0");
 
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.detail || "Failed to start checkout");
-            }
+        const targetPrice = targetProduct.price;
+        const targetCredits = parseInt(targetProduct.metadata.credits || "0");
 
-            const data = await res.json();
-            if (data.checkout_url) {
-                window.location.href = data.checkout_url;
+        // Upgrade if MORE money OR MORE credits
+        // (e.g. Monthly -> Annual is more money = Upgrade)
+        // (e.g. Creator -> Pro is more money and credits = Upgrade)
+        const isUpgrade = targetPrice > currentPrice || targetCredits > currentCredits;
+
+        if (hasSubscription) {
+            if (isUpgrade) {
+                handleUpgrade(targetProduct.product_id, targetProduct.name);
             } else {
-                throw new Error("No checkout URL returned");
+                handleDowngrade(targetProduct.product_id, targetProduct.name);
             }
-        } catch (error: any) {
-            toast.error(error.message);
-        } finally {
-            setLoading(null);
+        } else {
+            handleCheckout(targetProduct.product_id);
         }
     };
 
-    const isPlanActive = (planRole: string) => role === planRole;
+    const renderActionButton = (product: Product | undefined, label: string = "CHOOSE PLAN") => {
+        if (!product) return <button className="glass-button w-full py-3 text-[0.95rem] font-medium font-nav opacity-50 cursor-not-allowed">Unavailable</button>;
 
-    if (verifying) {
+        const isCurrent = product.product_id === subscription?.product_id;
+        const isLoading = actionLoading === product.product_id || actionLoading === "undo_cancel";
+        const hasSubscription = subscription?.has_subscription;
+        const isScheduledForCancel = subscription?.cancel_at_period_end;
+
+        // If scheduled for cancellation, show "RETAIN PLAN" on current plan
+        if (isCurrent && isScheduledForCancel) {
+            return (
+                <button
+                    className="glass-button w-full py-3 text-[0.95rem] font-medium font-nav border-amber-500/20 text-amber-500"
+                    onClick={undoCancel}
+                    disabled={!!actionLoading}
+                >
+                    {actionLoading === "undo_cancel" ? <Loader2 className="animate-spin h-5 w-5" /> : "RETAIN PLAN"}
+                </button>
+            );
+        }
+
+        // Current plan (not scheduled for cancel)
+        if (isCurrent) {
+            return (
+                <button className="glass-button w-full py-3 text-[0.95rem] font-medium font-nav border-green-500/20 text-green-500/50 cursor-not-allowed opacity-60 shadow-none hover:bg-transparent hover:shadow-none hover:text-green-500/50" disabled>
+                    CURRENT PLAN
+                </button>
+            );
+        }
+
+        // Plan change buttons work normally - if scheduled for cancel, handleUpgrade/handleDowngrade will auto-undo it BTS
+
+        let buttonLabel = label;
+        let buttonClass = "glass-button w-full py-3 text-[0.95rem] font-medium font-nav";
+
+        // Determine label based on relationship to current plan
+        if (hasSubscription) {
+            if (product.metadata.app_role === "free") {
+                buttonLabel = "CANCEL SUBSCRIPTION";
+            } else {
+                const currentProduct = products.find(p => p.product_id === subscription?.product_id);
+                const currentPrice = currentProduct?.price || 0;
+                const currentCredits = parseInt(currentProduct?.metadata.credits || "0");
+
+                const targetPrice = product.price;
+                const targetCredits = parseInt(product.metadata.credits || "0");
+
+                const isUpgrade = targetPrice > currentPrice || targetCredits > currentCredits;
+
+                buttonLabel = isUpgrade ? "UPGRADE" : "DOWNGRADE";
+            }
+        }
+
         return (
-            <div className="container mx-auto py-20 px-4 text-center flex flex-col items-center justify-center min-h-[50vh]">
-                <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
-                <h2 className="text-2xl font-bold">Verifying Subscription...</h2>
-                <p className="text-muted-foreground mt-2">Please wait while we confirm your payment details.</p>
-            </div>
+            <button
+                className={buttonClass}
+                onClick={() => handlePlanAction(product)}
+                disabled={!!actionLoading}
+            >
+                {isLoading ? <Loader2 className="animate-spin h-5 w-5" /> : buttonLabel}
+            </button>
         );
+    };
+
+    if (loading || userLoading) {
+        return <AppHomeLoading />;
     }
 
+    // Credits Display
+    const freeCredits = "50";
+    const creatorCredits = creatorProduct?.metadata.credits || "1000";
+    const proCredits = proProduct?.metadata.credits || "3000";
+
     return (
-        <div className="container mx-auto py-10 px-4">
-            <div className="mb-8 text-center">
-                <h1 className="text-3xl font-bold tracking-tight">Manage Subscription</h1>
-                <p className="text-muted-foreground mt-2">
-                    {status === "failed"
-                        ? "Your last payment failed. Please choose a plan to retry."
-                        : "Choose the plan that powers your research."}
-                </p>
-            </div>
+        <section id="pricing" className="pricing-section min-h-screen flex flex-col justify-center py-24 scroll-mt-16">
+            <PreviewModal
+                previewLoading={previewLoading}
+                previewError={previewError}
+                previewData={previewData}
+                actionLoading={actionLoading}
+                onCloseError={clearPreviewError}
+                onCancelPreview={clearPreviewData}
+                onConfirm={confirmPlanChange}
+            />
 
-            <div className="grid gap-8 md:grid-cols-2 lg:max-w-4xl lg:mx-auto">
-                {/* Creator Plan */}
-                <Card className={`flex flex-col border-border/50 bg-black text-white relative overflow-hidden ${isPlanActive("creator") ? "border-green-500/50" : ""}`}>
-                    <div className="absolute top-0 right-0 p-4 opacity-10">
-                        {/* Decorative Background Element */}
-                    </div>
-                    <CardHeader>
-                        <CardTitle className="text-muted-foreground text-sm font-medium uppercase tracking-wider">Creator</CardTitle>
-                        <div className="flex items-baseline gap-1 mt-2">
-                            <span className="text-4xl font-bold">$29</span>
-                            <span className="text-muted-foreground">/mo</span>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="flex-1">
-                        <ul className="space-y-4 text-sm mt-4">
-                            <li className="flex items-center gap-3">
-                                <Check className="h-4 w-4 text-primary" />
-                                <span>2 Platforms</span>
-                            </li>
-                            <li className="flex items-center gap-3">
-                                <Check className="h-4 w-4 text-primary" />
-                                <span>50 AI Analyses / mo</span>
-                            </li>
-                            <li className="flex items-center gap-3">
-                                <Check className="h-4 w-4 text-primary" />
-                                <span>Basic Trends</span>
-                            </li>
-                        </ul>
-                    </CardContent>
-                    <CardFooter>
-                        <Button
-                            variant={isPlanActive("creator") ? "secondary" : "outline"}
-                            className={`w-full ${isPlanActive("creator") ? "bg-green-600 hover:bg-green-700 text-white" : "bg-transparent border-white/20 hover:bg-white/10 text-white"}`}
-                            onClick={() => handleSubscribe("creator")}
-                            disabled={!!loading || isPlanActive("creator")}
-                        >
-                            {loading === "creator" ? "Processing..." : isPlanActive("creator") ? "Current Plan" : "Subscribe"}
-                        </Button>
-                    </CardFooter>
-                </Card>
+            <CancelConfirmModal
+                isOpen={cancelConfirmOpen}
+                periodEndDate={subscription?.current_period_end || null}
+                actionLoading={actionLoading}
+                onClose={closeCancelConfirm}
+                onConfirm={confirmCancel}
+            />
 
-                {/* Pro Research Plan */}
-                <Card className={`flex flex-col border-primary/50 bg-black text-white relative shadow-lg shadow-primary/10 ${isPlanActive("pro_research") ? "border-green-500/50" : ""}`}>
-                    <div className="absolute top-0 right-0 bg-primary px-3 py-1 rounded-bl-lg text-xs font-semibold text-primary-foreground">
-                        MOST POPULAR
-                    </div>
-                    <CardHeader>
-                        <CardTitle className="text-primary text-sm font-medium uppercase tracking-wider">Pro Research</CardTitle>
-                        <div className="flex items-baseline gap-1 mt-2">
-                            <span className="text-4xl font-bold">$79</span>
-                            <span className="text-muted-foreground">/mo</span>
+            <div className="max-w-6xl mx-auto px-6 w-full">
+                {/* Header & Toggle */}
+                <FadeIn>
+                    <div className="text-center mb-16">
+                        <h2 className="text-3xl font-medium text-white mb-4">Transparent Pricing</h2>
+                        <p className="text-neutral-400 mb-8">Lock in Beta pricing today. Prices increase after V1.0 launch.</p>
+
+                        <div className="flex items-center justify-center gap-3 mb-10">
+                            <span
+                                className={`text-sm font-medium transition-colors ${isAnnual ? 'text-white' : 'text-neutral-400'}`}
+                            >
+                                Paid Annually
+                            </span>
+
+                            <button
+                                onClick={() => setIsAnnual(!isAnnual)}
+                                className="relative h-8 w-14 rounded-full border border-white/10 bg-[#050505] transition-colors focus:outline-none ring-1 ring-white/5 active:scale-95 duration-200"
+                                aria-pressed={isAnnual}
+                            >
+                                <span className="sr-only">Toggle annual billing</span>
+                                <span
+                                    className="pointer-events-none absolute left-1 top-1 h-6 w-6 transform rounded-full bg-gradient-to-b from-white to-neutral-200 shadow-sm transition-transform duration-300"
+                                    style={{ transform: isAnnual ? 'translateX(24px)' : 'translateX(0)' }}
+                                ></span>
+                            </button>
+
+                            <span className="text-[10px] font-bold bg-indigo-500/10 text-indigo-400 px-2.5 py-1 rounded-full border border-indigo-500/20 tracking-wide uppercase">
+                                Save up to 20%
+                            </span>
                         </div>
-                    </CardHeader>
-                    <CardContent className="flex-1">
-                        <ul className="space-y-4 text-sm mt-4">
-                            <li className="flex items-center gap-3">
-                                <Check className="h-4 w-4 text-primary" />
-                                <span>All Platforms</span>
-                            </li>
-                            <li className="flex items-center gap-3">
-                                <Check className="h-4 w-4 text-primary" />
-                                <span>Unlimited AI Analysis</span>
-                            </li>
-                            <li className="flex items-center gap-3">
-                                <Check className="h-4 w-4 text-primary" />
-                                <span>Deep Frame Breakdown</span>
-                            </li>
-                            <li className="flex items-center gap-3">
-                                <Check className="h-4 w-4 text-primary" />
-                                <span>Export to Notion/CSV</span>
-                            </li>
-                        </ul>
-                    </CardContent>
-                    <CardFooter>
-                        <Button
-                            className={`w-full ${isPlanActive("pro_research") ? "bg-green-600 hover:bg-green-700 text-white" : "bg-white text-black hover:bg-white/90"}`}
-                            onClick={() => handleSubscribe("pro_research")}
-                            disabled={!!loading || isPlanActive("pro_research")}
-                        >
-                            {loading === "pro_research" ? "Processing..." : isPlanActive("pro_research") ? "Current Plan" : "Subscribe"}
-                        </Button>
-                    </CardFooter>
-                </Card>
+
+                        {error && (
+                            <div className="max-w-md mx-auto mb-8 p-3 bg-red-500/10 border border-red-500/20 text-red-500 rounded-lg text-sm">
+                                {error}
+                            </div>
+                        )}
+                    </div>
+                </FadeIn>
+
+                <FadeIn delay={0.2}>
+
+                    {/* Cards Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto">
+
+                        {/* Free Plan */}
+                        <div className="p-6 rounded-3xl border border-white/5 bg-[#070707] flex flex-col">
+                            <div className="mb-4">
+                                <span className="text-sm font-medium text-neutral-400">Free</span>
+                                <div className="text-4xl font-medium text-white mt-2">$0<span className="text-base text-neutral-500 font-normal pricing-month">/mo</span></div>
+                            </div>
+                            <ul className="space-y-3 mb-8 flex-1">
+                                {['2 Platforms (IG, TikTok)', '10 Searches / mo', '10 AI Analyses / mo', 'Gemini Flash Model', '1 AI Board'].map((item, i) => (
+                                    <li key={i} className="flex items-center gap-3 text-sm text-neutral-300">
+                                        <Check className="text-neutral-500 shrink-0" size={16} />{item}
+                                    </li>
+                                ))}
+                            </ul>
+                            {renderActionButton(freeProduct, "GET STARTED")}
+                        </div>
+
+                        {/* Creator Plan */}
+                        <div className="p-6 rounded-3xl border border-white/5 bg-[#070707] relative flex flex-col">
+                            <div className="absolute top-0 right-0 bg-[#CECECE] text-black text-[10px] font-bold px-3 py-1 rounded-bl-xl rounded-tr-2xl uppercase tracking-wide">Popular</div>
+                            <div className="mb-4">
+                                <span className="text-sm font-medium text-neutral-400">Creator</span>
+                                <div className="flex items-end gap-1 mt-2">
+                                    <span className="text-2xl font-medium text-neutral-500 line-through mr-1">${isAnnual ? 49 : 49}</span>
+                                    <span className="text-4xl font-medium text-white">$</span>
+                                    <div className="text-4xl font-medium text-white">{creatorPrice}</div>
+                                    <div className="flex flex-col mb-1 text-left">
+                                        <span className="text-base text-neutral-500 font-normal pricing-month">/mo</span>
+                                        <span className="text-[10px] text-neutral-600 font-medium uppercase tracking-wide">
+                                            {isAnnual ? 'Billed Annually' : 'Billed Monthly'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <ul className="space-y-3 mb-8 flex-1">
+                                {[
+                                    'All Platforms',
+                                    '50 Searches / mo',
+                                    `${creatorCredits} AI Credits / mo`,
+                                    'Latest AI Models',
+                                    '5 AI Boards'
+                                ].map((item, i) => (
+                                    <li key={i} className="flex items-center gap-3 text-sm text-neutral-300">
+                                        <Check className="text-neutral-500 shrink-0" size={16} />{item}
+                                    </li>
+                                ))}
+                            </ul>
+                            {renderActionButton(creatorProduct, "CHOOSE PLAN")}
+                        </div>
+
+                        {/* Pro Plan */}
+                        <div className="p-6 rounded-3xl border border-white/10 bg-[rgba(26,26,26,0.89)] relative flex flex-col shadow-2xl shadow-indigo-500/10">
+                            <div className="absolute top-0 right-0 bg-[#CECECE] text-black text-[10px] font-bold px-3 py-1 rounded-bl-xl rounded-tr-2xl uppercase tracking-wide">Full Experience</div>
+                            <div className="mb-4">
+                                <span className="text-sm font-medium text-[#CECECE]">Pro Research</span>
+                                <div className="flex items-end gap-1 mt-2">
+                                    <span className="text-2xl font-medium text-neutral-600 line-through mr-1">${isAnnual ? 139 : 139}</span>
+                                    <span className="text-4xl font-medium text-white">$</span>
+                                    <div className="text-4xl font-medium text-white">{proPrice}</div>
+                                    <div className="flex flex-col mb-1 text-left">
+                                        <span className="text-base text-neutral-500 font-normal pricing-month">/mo</span>
+                                        <span className="text-[10px] text-neutral-600 font-medium uppercase tracking-wide">
+                                            {isAnnual ? 'Billed Annually' : 'Billed Monthly'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <ul className="space-y-3 mb-8 flex-1">
+                                {[
+                                    'All Platforms + Upcoming',
+                                    '300 Searches / mo',
+                                    `${proCredits} AI Credits / mo`,
+                                    'Latest AI Models',
+                                    '25 AI Boards',
+                                    'Deep Search Agent (new)'
+                                ].map((item, i) => (
+                                    <li key={i} className="flex items-center gap-3 text-sm text-neutral-300">
+                                        <Check className="text-[#CECECE] shrink-0" size={16} />{item}
+                                    </li>
+                                ))}
+                            </ul>
+                            <div className="w-full bg-[#070707] rounded-[69px]">
+                                {renderActionButton(proProduct, "CHOOSE PLAN")}
+                            </div>
+                        </div>
+                    </div>
+                </FadeIn>
+
+                <FadeIn delay={0.4}>
+
+                    <div className="mt-12 text-center">
+                        <p className="text-xs text-neutral-500 uppercase tracking-widest mb-2">Risk Reversal</p>
+                        <p className="text-sm text-neutral-400">14 day money back guarantee. T&C applied.</p>
+                    </div>
+                </FadeIn>
             </div>
-        </div>
+        </section>
     );
 }
 
 export default function BillingReturnPage() {
     return (
-        <Suspense fallback={<div>Loading subscription details...</div>}>
-            <BillingReturnContent />
-        </Suspense>
+        <React.Suspense fallback={<AppHomeLoading />}>
+            <PricingSection />
+        </React.Suspense>
     );
 }
