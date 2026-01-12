@@ -111,6 +111,9 @@ from app.db.queries.chats import (
     soft_delete_chat_tag,
 )
 
+# Billing queries
+
+
 __all__ = [
     # Search
     "compute_search_hash",
@@ -182,4 +185,6 @@ __all__ = [
     "get_chat_tags",
     "update_chat_tag_orders",
     "soft_delete_chat_tag",
+    "soft_delete_chat_tag",
 ]
+

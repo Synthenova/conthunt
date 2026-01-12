@@ -1,177 +1,338 @@
+"""Webhook handlers for Dodo Payments."""
 from datetime import datetime
-from uuid import UUID
-from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import text
+from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import text
 
-from app.core import get_settings, logger
-from app.db import get_db_connection, queries
-from app.schemas.roles import UserRole
-
-router = APIRouter(tags=["webhooks"])
+from app.core import logger
+from app.db.session import get_db_connection
+from app.services import dodo_client, billing_service
 
 
+router = APIRouter(prefix="/webhooks")
 
 
-
-def parse_iso_datetime(value: str | None) -> datetime | None:
-    """Parse ISO datetime string."""
-    if not value:
-        return None
-    try:
-        if value.endswith("Z"):
-            value = value[:-1] + "+00:00"
-        return datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        return None
-
-
-@router.post("/webhooks/dodo/subscription")
-async def dodo_subscription_webhook(request: Request):
+async def store_webhook_event(webhook_id: str, event_type: str, subscription_id: str, payload: dict) -> bool:
     """
-    Handle Dodo payment webhooks.
-    
-    Expects user_id in metadata (passed during checkout).
-    Events handled:
-    - subscription.active / subscription.renewed: Grant access, set period_start
-    - subscription.plan_changed: Update role
-    - subscription.cancelled / subscription.expired: Revoke access
-    - subscription.on_hold: Keep access (grace period)
-    - payment.failed: Keep access, log warning
-    
+    Store webhook event for idempotency.
+    Returns True if new event, False if already processed.
     """
-    raw_body = await request.body()
-    
-    # Extract headers
-    webhook_id = request.headers.get("webhook-id")
-    webhook_sig = request.headers.get("webhook-signature")
-    webhook_ts = request.headers.get("webhook-timestamp")
-
-    if not webhook_id or not webhook_sig or not webhook_ts:
-         raise HTTPException(status_code=400, detail="Missing webhook headers")
-
-    from app.services.dodo_client import get_dodo_client
-    from dodopayments import AsyncDodoPayments
-    
     try:
-        webhook_key = get_settings().DODO_WEBHOOK_SECRET
-        if not webhook_key:
-             logger.warning("DODO_WEBHOOK_SECRET not configured, skipping verification")
-             return {"status": "ignored", "reason": "missing_webhook_secret"}
-
-        settings = get_settings()
-        # Webhook verification doesn't need async, but we use the client structure
-        client = AsyncDodoPayments(
-            bearer_token=settings.DODO_API_KEY,
-            environment="test_mode" if "test" in settings.DODO_BASE_URL else "live_mode",
-            webhook_key=webhook_key
-        )
-
-        event = client.webhooks.unwrap(
-            raw_body,
-            headers={
-                "webhook-id": webhook_id,
-                "webhook-signature": webhook_sig,
-                "webhook-timestamp": webhook_ts,
-            },
-        )
+        import json
+        async with get_db_connection() as conn:
+            result = await conn.execute(
+                text("""
+                INSERT INTO webhook_events (webhook_id, event_type, subscription_id, payload)
+                VALUES (:webhook_id, :event_type, :subscription_id, CAST(:payload AS jsonb))
+                ON CONFLICT (webhook_id) DO NOTHING
+                RETURNING webhook_id
+                """),
+                {
+                    "webhook_id": webhook_id,
+                    "event_type": event_type,
+                    "subscription_id": subscription_id,
+                    "payload": json.dumps(payload),
+                }
+            )
+            return result.fetchone() is not None
     except Exception as e:
-        logger.error(f"Webhook verification failed: {e}")
-        raise HTTPException(status_code=401, detail="Invalid signature")
+        logger.error(f"Failed to store webhook event {webhook_id}: {e}")
+        return True  # Process anyway on error
 
-    # 1) Event type
+
+@router.post("/dodo")
+async def handle_dodo_webhook(request: Request):
+    """
+    Handle all Dodo webhook events.
+    Uses subscription.updated as primary sync for state changes.
+    """
+    # Get raw body and headers
+    body = await request.body()
+    headers = {
+        "webhook-id": request.headers.get("webhook-id", ""),
+        "webhook-signature": request.headers.get("webhook-signature", ""),
+        "webhook-timestamp": request.headers.get("webhook-timestamp", ""),
+    }
+    
+    # Verify signature using Dodo SDK
+    try:
+        client = dodo_client.get_dodo_client()
+        event = client.webhooks.unwrap(body, headers=headers)
+    except Exception as e:
+        logger.error(f"Webhook signature verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+    webhook_id = headers["webhook-id"]
     event_type = event.type
-
-    # 2) Event payload
-    # event.data is typically a Pydantic model -> convert once if you want a dict
-    data = event.data.model_dump() if hasattr(event.data, "model_dump") else event.data
+    event_data = event.data
+    event_ts = getattr(event, 'timestamp', None) or datetime.utcnow()
     
-    logger.info(f"Dodo webhook: {event_type} (ID: {webhook_id})")
     
-    # Extract user_id from metadata (we pass this during checkout)
-    metadata = data.get("metadata") or {}
-    customer = data.get("customer") or {}
-    customer_metadata = customer.get("metadata") or {}
-    customer_id = customer.get("customer_id") or data.get("customer_id")
+    logger.info(f"Received webhook: {event_type} (id: {webhook_id})")
     
-    user_id_str = metadata.get("user_id") or customer_metadata.get("user_id")
+    # Get subscription_id if available
+    subscription_id = getattr(event_data, 'subscription_id', None)
     
-    if not user_id_str:
-        logger.warning(f"Webhook {webhook_id}: user_id missing in metadata. Skipping.")
-        return {"status": "ignored", "reason": "missing_user_id"}
+    # Idempotency check
+    is_new = await store_webhook_event(webhook_id, event_type, subscription_id, {"type": event_type})
+    if not is_new:
+        logger.info(f"Webhook {webhook_id} already processed, skipping")
+        return {"status": "already_processed"}
     
     try:
-        user_id = UUID(user_id_str)
-    except ValueError:
-        logger.error(f"Webhook {webhook_id}: Invalid user_id format: {user_id_str}")
-        return {"status": "ignored", "reason": "invalid_user_id"}
+        # Route by event type
+        if event_type == "subscription.active":
+            await handle_subscription_active(event_data, event_ts)
+            
+        elif event_type == "subscription.updated":
+            await handle_subscription_updated(event_data, event_ts)
+            
+        elif event_type == "subscription.renewed":
+            await handle_subscription_renewed(event_data, event_ts)
+            
+        elif event_type == "subscription.plan_changed":
+            await handle_subscription_plan_changed(event_data, event_ts)
+            
+        elif event_type == "subscription.cancelled":
+            await handle_subscription_cancelled(event_data, event_ts)
+            
+        elif event_type == "subscription.expired":
+            await handle_subscription_expired(event_data, event_ts)
+            
+        elif event_type == "subscription.on_hold":
+            await handle_subscription_on_hold(event_data, event_ts)
+            
+        else:
+            logger.info(f"Unhandled webhook event type: {event_type}")
+            
+        return {"status": "ok"}
+        
+    except Exception as e:
+        logger.error(f"Error processing webhook {webhook_id}: {e}")
+        # Still return 200 to prevent retries for application errors
+        return {"status": "error", "message": str(e)}
+
+
+async def handle_subscription_active(data, event_ts: datetime):
+    """
+    Handle new subscription activation.
+    Links user to subscription, sets role and credits.
+    """
+    subscription_id = data.subscription_id
+    customer_id = data.customer.customer_id
+    product_id = data.product_id
+    metadata = data.metadata or {}
     
-    subscription_id = data.get("subscription_id") or data.get("id")
-    product_id = data.get("product_id")
-    status = data.get("status")
-    current_period_start = parse_iso_datetime(data.get("current_period_start"))
+    logger.info(f"Processing subscription.active: sub={subscription_id}, customer={customer_id}, product={product_id}")
     
-    # Map product to role
-    settings = get_settings()
-    product_role_map = {
-        settings.DODO_PRODUCT_CREATOR: UserRole.CREATOR.value,
-        settings.DODO_PRODUCT_PRO: UserRole.PRO_RESEARCH.value,
-    }
-    current_product_role = product_role_map.get(product_id)
+    # Find user - first try metadata, then customer_id
+    user_id = await billing_service.find_user_by_metadata(metadata)
+    if not user_id:
+        user_id = await billing_service.find_user_by_customer_id(customer_id)
     
-    logger.info(
-        f"Webhook {webhook_id}: user_id={user_id}, type={event_type}, "
-        f"status={status}, role={current_product_role}"
+    if not user_id:
+        logger.error(f"Could not find user for subscription {subscription_id}")
+        return
+    
+    # Apply subscription state - NEW subscription, set credit_period_start
+    await billing_service.apply_subscription_state(
+        user_id=user_id,
+        subscription_id=subscription_id,
+        customer_id=customer_id,
+        product_id=product_id,
+        status="active",
+        cancel_at_period_end=data.cancel_at_next_billing_date,
+        current_period_start=data.previous_billing_date,
+        current_period_end=data.next_billing_date,
+        webhook_ts=event_ts,
+        is_new_subscription=True,
     )
 
-    new_role = None
-    should_clear = False
 
-    if event_type in ("subscription.active", "subscription.renewed", "subscription.plan_changed"):
-        if status in ("active", "trialing") and current_product_role:
-            new_role = current_product_role
+async def handle_subscription_updated(data, event_ts: datetime):
+    """
+    Handle any subscription field update.
+    Primary sync mechanism for keeping state in sync.
+    """
+    subscription_id = data.subscription_id
+    customer_id = data.customer.customer_id
+    
+    logger.info(f"Processing subscription.updated: {subscription_id}")
+    
+    # Find user by subscription
+    user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_customer_id(customer_id)
+    
+    if not user_id:
+        logger.warning(f"Could not find user for subscription {subscription_id} in updated event")
+        return
+    
+    # Sync all state
+    await billing_service.apply_subscription_state(
+        user_id=user_id,
+        subscription_id=subscription_id,
+        customer_id=customer_id,
+        product_id=data.product_id,
+        status=data.status,
+        cancel_at_period_end=data.cancel_at_next_billing_date,
+        current_period_start=data.previous_billing_date,
+        current_period_end=data.next_billing_date,
+        webhook_ts=event_ts,
+    )
 
-    elif event_type in ("subscription.cancelled", "subscription.expired"):
-        should_clear = True
-        logger.info(f"Webhook {webhook_id}: Subscription ended.")
 
-    elif event_type == "subscription.on_hold":
-        logger.warning(f"Webhook {webhook_id}: On hold. Access preserved.")
-
-    elif event_type == "payment.failed":
-        logger.warning(f"Webhook {webhook_id}: Payment failed. Access preserved.")
-
-    # Update DB
-    async with get_db_connection() as conn:
-        if should_clear:
-            await queries.clear_user_subscription(conn, user_id)
-        else:
-            await queries.update_user_subscription(
-                conn=conn,
-                user_id=user_id,
-                role=new_role,
-                customer_id=customer_id,
+async def handle_subscription_renewed(data, event_ts: datetime):
+    """
+    Handle subscription renewal.
+    Check for pending downgrades and apply them.
+    """
+    subscription_id = data.subscription_id
+    customer_id = data.customer.customer_id
+    
+    logger.info(f"Processing subscription.renewed: {subscription_id}")
+    
+    # Check for pending downgrade
+    pending = await billing_service.get_pending_downgrade(subscription_id)
+    
+    if pending:
+        logger.info(f"Applying pending downgrade for subscription {subscription_id}")
+        try:
+            await dodo_client.change_plan(
                 subscription_id=subscription_id,
-                current_period_start=current_period_start,
+                product_id=pending["target_product_id"],
+                proration_mode="prorated_immediately",
             )
-        
-        # Sync Firebase claims if role changed
-        if new_role or should_clear:
-            try:
-                from firebase_admin import auth
-                result = await conn.execute(
-                    text("SELECT firebase_uid FROM users WHERE id = :user_id"),
-                    {"user_id": user_id}
-                )
-                row = result.fetchone()
-                if row:
-                    final_role = "free" if should_clear else new_role
-                    auth.set_custom_user_claims(row[0], {
-                        "role": final_role,
-                        "db_user_id": str(user_id)
-                    })
-                    logger.info(f"Synced Firebase claims: user_id={user_id} -> role={final_role}")
-            except Exception as e:
-                logger.error(f"Failed to sync Firebase claims: {e}")
+            await billing_service.mark_pending_applied(pending["id"])
+        except Exception as e:
+            logger.error(f"Failed to apply pending downgrade: {e}")
+    
+    # Sync state
+    user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if user_id:
+        await billing_service.apply_subscription_state(
+            user_id=user_id,
+            subscription_id=subscription_id,
+            customer_id=customer_id,
+            product_id=data.product_id,
+            status="active",
+            cancel_at_period_end=data.cancel_at_next_billing_date,
+            current_period_start=data.previous_billing_date,
+            current_period_end=data.next_billing_date,
+            webhook_ts=event_ts,
+        )
 
-    return {"status": "processed"}
+
+async def handle_subscription_plan_changed(data, event_ts: datetime):
+    """
+    Handle plan change (upgrade or applied downgrade).
+    Updates role and resets credits to new tier.
+    """
+    subscription_id = data.subscription_id
+    customer_id = data.customer.customer_id
+    
+    logger.info(f"Processing subscription.plan_changed: {subscription_id}")
+    
+    user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        logger.warning(f"Could not find user for subscription {subscription_id}")
+        return
+    
+    await billing_service.apply_subscription_state(
+        user_id=user_id,
+        subscription_id=subscription_id,
+        customer_id=customer_id,
+        product_id=data.product_id,
+        status=data.status,
+        cancel_at_period_end=data.cancel_at_next_billing_date,
+        current_period_start=data.previous_billing_date,
+        current_period_end=data.next_billing_date,
+        webhook_ts=event_ts,
+        is_plan_change=True,
+    )
+
+
+async def handle_subscription_cancelled(data, event_ts: datetime):
+    """
+    Handle subscription cancellation.
+    User keeps access until period ends.
+    """
+    subscription_id = data.subscription_id
+    customer_id = data.customer.customer_id
+    
+    logger.info(f"Processing subscription.cancelled: {subscription_id}")
+    
+    user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        logger.warning(f"Could not find user for subscription {subscription_id}")
+        return
+    
+    await billing_service.apply_subscription_state(
+        user_id=user_id,
+        subscription_id=subscription_id,
+        customer_id=customer_id,
+        product_id=data.product_id,
+        status="cancelled",
+        cancel_at_period_end=True,
+        current_period_start=data.previous_billing_date,
+        current_period_end=data.next_billing_date,
+        webhook_ts=event_ts,
+    )
+
+
+async def handle_subscription_expired(data, event_ts: datetime):
+    """
+    Handle subscription expiration.
+    Access ends, revert user to free tier.
+    """
+    subscription_id = data.subscription_id
+    
+    logger.info(f"Processing subscription.expired: {subscription_id}")
+    
+    user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        logger.warning(f"Could not find user for subscription {subscription_id}")
+        return
+    
+    # Revert to free tier
+    await billing_service.revert_to_free(user_id)
+
+
+async def handle_subscription_on_hold(data, event_ts: datetime):
+    """
+    Handle subscription put on hold (payment failed).
+    """
+    subscription_id = data.subscription_id
+    customer_id = data.customer.customer_id
+    
+    logger.info(f"Processing subscription.on_hold: {subscription_id}")
+    
+    user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        logger.warning(f"Could not find user for subscription {subscription_id}")
+        return
+    
+    await billing_service.apply_subscription_state(
+        user_id=user_id,
+        subscription_id=subscription_id,
+        customer_id=customer_id,
+        product_id=data.product_id,
+        status="on_hold",
+        cancel_at_period_end=data.cancel_at_next_billing_date,
+        current_period_start=data.previous_billing_date,
+        current_period_end=data.next_billing_date,
+        webhook_ts=event_ts,
+    )
+
+
+def parse_datetime(value) -> datetime:
+    """Parse datetime from various formats."""
+    if value is None:
+        return datetime.utcnow()
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    return datetime.utcnow()

@@ -22,7 +22,7 @@ export const BACKEND_URL = getBackendUrl();
 /**
  * Force full logout - clears both Firebase client auth and server session cookie.
  */
-async function forceLogout() {
+export async function forceLogout() {
     console.log("[forceLogout] Clearing all auth state...");
     try {
         // Clear server session cookie

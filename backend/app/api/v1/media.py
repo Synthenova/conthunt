@@ -76,23 +76,17 @@ async def get_media_view(
     """
     Get full media asset metadata with signed URL for ContentDrawer/Lightbox.
     Returns all data needed to display the media in a viewer.
-    """
-    print("DEIIIII")
+    """    
     user_uuid = user["db_user_id"]
     if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
     logger.info(f"[MEDIA_VIEW] Starting request for asset_id={asset_id}")
     
-    async with get_db_connection() as conn:
-        logger.info(f"[MEDIA_VIEW] User UUID: {user_uuid}")
-        
+    async with get_db_connection() as conn:                
         await set_rls_user(conn, user_uuid)
-        logger.info(f"[MEDIA_VIEW] RLS user set, fetching asset...")
-        
         # Get full metadata (query includes RLS join through searches)
-        asset = await queries.get_media_asset_with_content(conn, asset_id)
-        logger.info(f"[MEDIA_VIEW] Query result: {asset}")
+        asset = await queries.get_media_asset_with_content(conn, asset_id)        
     
     if not asset:
         logger.warning(f"[MEDIA_VIEW] Asset not found for asset_id={asset_id}")
