@@ -155,13 +155,16 @@ async def handle_subscription_updated(data, event_ts: datetime):
     """
     subscription_id = data.subscription_id
     customer_id = data.customer.customer_id
+    metadata = data.metadata or {}
     
     logger.info(f"Processing subscription.updated: {subscription_id}")
     
-    # Find user by subscription
+    # Find user by subscription, then customer_id, then metadata (for new users)
     user_id = await billing_service.find_user_by_subscription_id(subscription_id)
     if not user_id:
         user_id = await billing_service.find_user_by_customer_id(customer_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_metadata(metadata)
     
     if not user_id:
         logger.warning(f"Could not find user for subscription {subscription_id} in updated event")
@@ -188,6 +191,7 @@ async def handle_subscription_renewed(data, event_ts: datetime):
     """
     subscription_id = data.subscription_id
     customer_id = data.customer.customer_id
+    metadata = data.metadata or {}
     
     logger.info(f"Processing subscription.renewed: {subscription_id}")
     
@@ -206,8 +210,13 @@ async def handle_subscription_renewed(data, event_ts: datetime):
         except Exception as e:
             logger.error(f"Failed to apply pending downgrade: {e}")
     
-    # Sync state
+    # Find user by subscription, then customer_id, then metadata
     user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_customer_id(customer_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_metadata(metadata)
+    
     if user_id:
         await billing_service.apply_subscription_state(
             user_id=user_id,
@@ -229,10 +238,17 @@ async def handle_subscription_plan_changed(data, event_ts: datetime):
     """
     subscription_id = data.subscription_id
     customer_id = data.customer.customer_id
+    metadata = data.metadata or {}
     
     logger.info(f"Processing subscription.plan_changed: {subscription_id}")
     
+    # Find user by subscription, then customer_id, then metadata
     user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_customer_id(customer_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_metadata(metadata)
+    
     if not user_id:
         logger.warning(f"Could not find user for subscription {subscription_id}")
         return
@@ -258,10 +274,17 @@ async def handle_subscription_cancelled(data, event_ts: datetime):
     """
     subscription_id = data.subscription_id
     customer_id = data.customer.customer_id
+    metadata = data.metadata or {}
     
     logger.info(f"Processing subscription.cancelled: {subscription_id}")
     
+    # Find user by subscription, then customer_id, then metadata
     user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_customer_id(customer_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_metadata(metadata)
+    
     if not user_id:
         logger.warning(f"Could not find user for subscription {subscription_id}")
         return
@@ -285,10 +308,18 @@ async def handle_subscription_expired(data, event_ts: datetime):
     Access ends, revert user to free tier.
     """
     subscription_id = data.subscription_id
+    customer_id = data.customer.customer_id
+    metadata = data.metadata or {}
     
     logger.info(f"Processing subscription.expired: {subscription_id}")
     
+    # Find user by subscription, then customer_id, then metadata
     user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_customer_id(customer_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_metadata(metadata)
+    
     if not user_id:
         logger.warning(f"Could not find user for subscription {subscription_id}")
         return
@@ -303,10 +334,17 @@ async def handle_subscription_on_hold(data, event_ts: datetime):
     """
     subscription_id = data.subscription_id
     customer_id = data.customer.customer_id
+    metadata = data.metadata or {}
     
     logger.info(f"Processing subscription.on_hold: {subscription_id}")
     
+    # Find user by subscription, then customer_id, then metadata
     user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_customer_id(customer_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_metadata(metadata)
+    
     if not user_id:
         logger.warning(f"Could not find user for subscription {subscription_id}")
         return
