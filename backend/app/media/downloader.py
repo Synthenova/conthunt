@@ -1,7 +1,7 @@
 """Background media downloader."""
 import asyncio
-import hashlib
 from typing import List
+
 from uuid import UUID
 
 import httpx
@@ -112,7 +112,9 @@ async def download_single_asset(
     external_id: str,
 ) -> None:
     """
-    Download and store a single media asset.
+    Download and store a single media asset using streaming upload.
+    
+    Streams directly from source URL to GCS without loading entire file into RAM.
     Exceptions are propagated to allow Cloud Tasks retries.
     """
     from app.db.session import get_db_connection
@@ -122,7 +124,7 @@ async def download_single_asset(
     source_url = asset["source_url"]
     asset_type = asset["asset_type"]
     
-    # Download the file
+    # Stream download directly to GCS
     async with http_client.stream(
         "GET",
         source_url,
@@ -131,22 +133,17 @@ async def download_single_asset(
     ) as response:
         response.raise_for_status()
         
-        # Read content and compute hash
-        content = await response.aread()
-        sha256_hash = hashlib.sha256(content).hexdigest()
         mime_type = response.headers.get("content-type", "application/octet-stream")
         
         # Determine file extension
         ext = get_file_extension(source_url, mime_type)
         
-        # Build GCS key: media/{platform}/{external_id}/{asset_type}/{sha256}.{ext}
-        gcs_key = f"media/{platform}/{external_id}/{asset_type}/{sha256_hash}.{ext}"
-        
-        # Upload to GCS
-        gcs_uri = await async_gcs_client.upload_blob(
+        # Use asset_id in key (hash is stored in DB for deduplication)
+        gcs_key = f"media/{platform}/{external_id}/{asset_type}/{asset_id}.{ext}"
+        gcs_uri, sha256_hash, size_bytes = await async_gcs_client.upload_blob_streaming(
             bucket_name=settings.GCS_BUCKET_MEDIA,
             key=gcs_key,
-            data=content,
+            response=response,
             content_type=mime_type,
         )
         
@@ -158,10 +155,10 @@ async def download_single_asset(
                 gcs_uri=gcs_uri,
                 sha256=sha256_hash,
                 mime_type=mime_type,
-                size_bytes=len(content),
+                size_bytes=size_bytes,
             )
-        
-        # logger.info(f"Downloaded and stored asset {asset_id}: {gcs_uri}")
+
+
 
 
 async def download_asset_with_claim(

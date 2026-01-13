@@ -5,6 +5,7 @@ import { LogoutIcon, type LogoutIconHandle } from '@/components/ui/logout';
 import { cn } from '@/lib/utils';
 import { LogoutButton } from "@/components/logout-button";
 import { useRouter } from 'next/navigation';
+import { useProducts } from '@/contexts/ProductsContext';
 
 interface SidebarUserProps {
     user: any;
@@ -12,14 +13,13 @@ interface SidebarUserProps {
     isCollapsed: boolean;
 }
 
-const roleLabels: Record<string, string> = {
-    free: "Free Plan",
-    creator: "Creator Plan",
-    pro_research: "Pro Research"
-};
-
 export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) => {
     const router = useRouter();
+    const { getPlanName, loading: productsLoading } = useProducts();
+
+    const planDisplayName = profile?.role
+        ? getPlanName(profile.role)
+        : (productsLoading ? "Loading..." : "Free");
 
     return (
         <div className="p-4 border-t border-white/5 mt-auto">
@@ -40,7 +40,7 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
                                 {user?.displayName || user?.email?.split('@')[0] || "User"}
                             </p>
                             <p className="text-[9px] font-bold text-gray-500 uppercase tracking-tighter">
-                                {profile?.role ? roleLabels[profile.role] : "Loading plan..."}
+                                {planDisplayName}
                             </p>
                         </div>
                         <LogoutButton className="glass-button-red w-8 h-8 p-0 shrink-0 group/logout">

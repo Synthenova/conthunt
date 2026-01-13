@@ -272,7 +272,7 @@ function PricingSection() {
                         <div className="p-6 rounded-3xl border border-white/5 bg-[#070707] relative flex flex-col">
                             <div className="absolute top-0 right-0 bg-[#CECECE] text-black text-[10px] font-bold px-3 py-1 rounded-bl-xl rounded-tr-2xl uppercase tracking-wide">Popular</div>
                             <div className="mb-4">
-                                <span className="text-sm font-medium text-neutral-400">Creator</span>
+                                <span className="text-sm font-medium text-neutral-400">{creatorProduct?.name || 'Creator'}</span>
                                 <div className="flex items-end gap-1 mt-2">
                                     <span className="text-2xl font-medium text-neutral-500 line-through mr-1">${isAnnual ? 49 : 49}</span>
                                     <span className="text-4xl font-medium text-white">$</span>
@@ -305,7 +305,7 @@ function PricingSection() {
                         <div className="p-6 rounded-3xl border border-white/10 bg-[rgba(26,26,26,0.89)] relative flex flex-col shadow-2xl shadow-indigo-500/10">
                             <div className="absolute top-0 right-0 bg-[#CECECE] text-black text-[10px] font-bold px-3 py-1 rounded-bl-xl rounded-tr-2xl uppercase tracking-wide">Full Experience</div>
                             <div className="mb-4">
-                                <span className="text-sm font-medium text-[#CECECE]">Pro Research</span>
+                                <span className="text-sm font-medium text-[#CECECE]">{proProduct?.name || 'Research'}</span>
                                 <div className="flex items-end gap-1 mt-2">
                                     <span className="text-2xl font-medium text-neutral-600 line-through mr-1">${isAnnual ? 139 : 139}</span>
                                     <span className="text-4xl font-medium text-white">$</span>
