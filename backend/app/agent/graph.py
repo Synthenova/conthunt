@@ -89,7 +89,7 @@ async def call_model(state: MessagesState, config: RunnableConfig):
 
     # If this is the first message (no history), force the stronger model
     if len(messages) <= 1:
-        model_name = "google/gemini-3-pro"
+        model_name = "google/gemini-3-pro-preview"
     else:
         model_name = (config.get("configurable") or {}).get("model_name")
     image_urls = set((config.get("configurable") or {}).get("image_urls") or [])
