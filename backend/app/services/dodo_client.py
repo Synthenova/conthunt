@@ -45,25 +45,20 @@ async def get_products() -> list[dict]:
     
     try:
         # Fetch products - use items from response or async iterator
-        response = await client.products.list()
+        response = await client.products.list(brand_id=settings.DODO_BRAND_ID)
         
         # Handle both paginated response (.items) and async iterator
         product_list = getattr(response, 'items', None) or response
                 
         for product in product_list:
-            # Only include products from our brand that are recurring (subscriptions)
-            # Dodo API seems to use 'business_id' instead of 'brand_id' in some contexts
-            brand_id = getattr(product, 'brand_id', None) or getattr(product, 'business_id', None)
-            is_recurring = getattr(product, 'is_recurring', False)                    
-            
-            if brand_id == settings.DODO_BRAND_ID and is_recurring:
+            if product.is_recurring:
                 products.append({
                     "product_id": product.product_id,
                     "name": product.name,
-                    "description": getattr(product, 'description', ''),
-                    "price": getattr(product, 'price', 0),
-                    "currency": getattr(product, 'currency', 'USD'),
-                    "metadata": getattr(product, 'metadata', {}) or {},
+                    "description": product.description or '',
+                    "price": product.price or 0,
+                    "currency": product.currency or 'USD',
+                    "metadata": product.metadata or {},
                 })
         
         # Update cache
