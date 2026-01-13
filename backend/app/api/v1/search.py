@@ -163,7 +163,7 @@ async def search_worker(
             "search_id": str(search_id),
         })})
         
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
             # Create all platform tasks
             tasks = [
                 call_platform(client, slug, query, params)
@@ -375,7 +375,7 @@ async def load_more_worker(
             "search_id": str(search_id),
         })})
         
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
             # Create all platform tasks with cursors merged into params
             tasks = [
                 call_platform(client, slug, query, cursor_params)

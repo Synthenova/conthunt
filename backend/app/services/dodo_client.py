@@ -38,8 +38,10 @@ async def get_products() -> list[dict]:
     
     # Return cached if valid
     if _products_cache_expires and datetime.utcnow() < _products_cache_expires:
+        logger.info(f"[CACHE HIT] Returning {len(_products_cache)} cached products (expires in {(_products_cache_expires - datetime.utcnow()).seconds}s)")
         return list(_products_cache.values())
     
+    logger.info("[CACHE MISS] Fetching fresh products from Dodo...")
     client = get_dodo_client()
     products = []
     
@@ -51,6 +53,7 @@ async def get_products() -> list[dict]:
         product_list = getattr(response, 'items', None) or response
                 
         for product in product_list:
+            logger.info(f"[DODO RAW] product_id={product.product_id}, name='{product.name}', is_recurring={product.is_recurring}, metadata={product.metadata}")
             if product.is_recurring:
                 products.append({
                     "product_id": product.product_id,

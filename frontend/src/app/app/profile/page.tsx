@@ -28,6 +28,7 @@ import Link from "next/link";
 import { FadeIn, StaggerContainer, StaggerItem } from "@/components/ui/animations";
 import { cn } from "@/lib/utils";
 import { RocketIcon, type RocketIconHandle } from "@/components/ui/rocket";
+import { useProducts } from "@/contexts/ProductsContext";
 
 // Feature icons mapping
 const featureIcons: Record<string, any> = {
@@ -38,6 +39,7 @@ const featureIcons: Record<string, any> = {
 
 export default function ProfilePage() {
     const { profile, user, subscription, isLoading } = useUser();
+    const { getPlanName } = useProducts();
     const rocketRef = useRef<RocketIconHandle>(null);
 
     if (isLoading) {
@@ -48,11 +50,7 @@ export default function ProfilePage() {
         );
     }
 
-    const roleLabels: Record<string, string> = {
-        free: "Free",
-        creator: "Creator",
-        pro_research: "Pro Researcher"
-    };
+    // Plan names now fetched dynamically from Dodo via useProducts()
 
     const roleGradients: Record<string, string> = {
         free: "from-zinc-400 to-zinc-600",
@@ -106,7 +104,7 @@ export default function ProfilePage() {
                                 {user?.displayName || "Research Profile"}
                             </h1>
                             <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20 px-3 py-1">
-                                {profile?.role ? roleLabels[profile.role] : "Explorer"}
+                                {profile?.role ? getPlanName(profile.role) : "Explorer"}
                             </Badge>
                         </div>
                         <p className="text-muted-foreground flex items-center gap-2">
@@ -257,7 +255,7 @@ export default function ProfilePage() {
                                     <div className="flex items-center gap-2 p-3 bg-primary/5 rounded-lg">
                                         <Clock className="h-4 w-4 text-primary flex-shrink-0" />
                                         <p className="text-xs text-muted-foreground">
-                                            Downgrade to <span className="text-primary font-medium">{roleLabels[subscription.pending_downgrade.target_role]}</span> at renewal
+                                            Downgrade to <span className="text-primary font-medium">{getPlanName(subscription.pending_downgrade.target_role)}</span> at renewal
                                         </p>
                                     </div>
                                 )}

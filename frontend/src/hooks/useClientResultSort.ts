@@ -43,25 +43,52 @@ export function useClientResultSort(rawResults: any[], options: UseClientResultS
             const oneDay = 24 * 60 * 60 * 1000;
             const sevenDays = 7 * oneDay;
             const thirtyDays = 30 * oneDay;
-            const sixMonths = 6 * thirtyDays;
+            const ninetyDays = 90 * oneDay;
+            const sixMonths = 180 * oneDay;
             const oneYear = 365 * oneDay;
+
+            // For "yesterday", "this_week", "this_month" calculations
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const yesterdayStart = new Date(todayStart);
+            yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+            const yesterdayEnd = new Date(todayStart); // Yesterday ends at today 00:00:00
+
+            // Start of this week (assuming Monday start)
+            const currentDay = todayStart.getDay(); // 0 is Sunday
+            const distanceToMonday = currentDay === 0 ? 6 : currentDay - 1;
+            const thisWeekStart = new Date(todayStart);
+            thisWeekStart.setDate(todayStart.getDate() - distanceToMonday);
+
+            const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
             results = results.filter(item => {
                 if (!item.published_at) return false;
                 const date = new Date(item.published_at);
-                const diffTime = Math.abs(now.getTime() - date.getTime());
+                const diffTime = now.getTime() - date.getTime();
+                // Ensure we don't filter out future dates by accident if any (though usually strictly past)
+                // but checking diffTime > 0 is safer, or abs()
 
                 switch (clientDateFilter) {
                     case "today":
-                        return diffTime < oneDay;
+                        return date >= todayStart;
+                    case "yesterday":
+                        return date >= yesterdayStart && date < yesterdayEnd;
                     case "week":
-                        return diffTime < sevenDays;
+                        // Rolling 7 days
+                        return diffTime < sevenDays && diffTime >= 0;
+                    case "this_week":
+                        return date >= thisWeekStart;
                     case "month":
-                        return diffTime < thirtyDays;
+                        // Rolling 30 days
+                        return diffTime < thirtyDays && diffTime >= 0;
+                    case "this_month":
+                        return date >= thisMonthStart;
+                    case "three_months":
+                        return diffTime < ninetyDays && diffTime >= 0;
                     case "six_months":
-                        return diffTime < sixMonths;
+                        return diffTime < sixMonths && diffTime >= 0;
                     case "year":
-                        return diffTime < oneYear;
+                        return diffTime < oneYear && diffTime >= 0;
                     default:
                         return true;
                 }

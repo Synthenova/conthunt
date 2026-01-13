@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/layout/AppShell";
+import { ProductsProvider } from "@/contexts/ProductsContext";
 
 export default function AppLayout({
     children,
@@ -6,6 +7,8 @@ export default function AppLayout({
     children: React.ReactNode;
 }) {
     return (
-        <AppShell>{children}</AppShell>
+        <ProductsProvider>
+            <AppShell>{children}</AppShell>
+        </ProductsProvider>
     );
 }
