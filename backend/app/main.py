@@ -68,6 +68,7 @@ app.add_middleware(
         "https://conthunt-frontend-785174409154.us-central1.run.app",        
         "https://agent.conthunt.app",
         "https://dev.agent.conthunt.app",
+        "https://conthunt.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
