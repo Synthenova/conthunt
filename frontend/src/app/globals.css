@@ -4,6 +4,19 @@
 @plugin "tailwindcss-animate";
 @plugin "@tailwindcss/typography";
 
+@layer utilities {
+    .bg-\[\#0f0f0f\] {
+        background-color: #000000d4;
+        backdrop-filter: blur(6px);
+    }
+
+    @supports (color: color-mix(in lab, red, red)) {
+        .bg-white\/10 {
+            background-color: rgba(150, 201, 255, 0.1);
+        }
+    }
+}
+
 @theme {
     --color-background: hsl(var(--background));
     --color-foreground: hsl(var(--foreground));
