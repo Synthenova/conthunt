@@ -579,28 +579,26 @@ async def create_search(
     from app.services.credit_tracker import credit_tracker
     from sqlalchemy import text
     
-    # Get period_start for credit tracking
+    # Check and record credits + create search in one connection
     async with get_db_connection() as conn:
+        await set_rls_user(conn, user_uuid)
         result = await conn.execute(
             text("SELECT current_period_start FROM users WHERE id = :id"),
             {"id": user_uuid}
         )
         row = result.fetchone()
         period_start = row[0] if row else None
-    
-    await credit_tracker.check(
-        user_id=user_uuid,
-        role=user.get("role", "free"),
-        feature="search_query",
-        current_period_start=period_start,
-        record=True,
-        context={"platforms": list(request.inputs.keys())}
-    )
 
-    # Create search entry
-    async with get_db_connection() as conn:
-        await set_rls_user(conn, user_uuid)
-        
+        await credit_tracker.check(
+            user_id=user_uuid,
+            role=user.get("role", "free"),
+            feature="search_query",
+            current_period_start=period_start,
+            record=True,
+            context={"platforms": list(request.inputs.keys())},
+            conn=conn,
+        )
+
         search_id = await queries.insert_search(
             conn=conn,
             user_id=user_uuid,
@@ -754,11 +752,10 @@ async def load_more(
                 detail="No more results available (no platforms have pagination cursors)"
             )
     
-    # Check and charge credits
-    from app.services.credit_tracker import credit_tracker
-    from sqlalchemy import text
-    
-    async with get_db_connection() as conn:
+        # Check and charge credits
+        from app.services.credit_tracker import credit_tracker
+        from sqlalchemy import text
+        
         result = await conn.execute(
             text("SELECT current_period_start FROM users WHERE id = :id"),
             {"id": user_uuid}
@@ -766,14 +763,16 @@ async def load_more(
         row = result.fetchone()
         period_start = row[0] if row else None
     
-    await credit_tracker.check(
-        user_id=user_uuid,
-        role=user.get("role", "free"),
-        feature="search_query",
-        current_period_start=period_start,
-        record=True,
-        context={"search_id": str(search_id), "platforms": list(platform_cursors.keys()), "action": "load_more"}
-    )
+        await credit_tracker.check(
+            user_id=user_uuid,
+            role=user.get("role", "free"),
+            feature="search_query",
+            current_period_start=period_start,
+            record=True,
+            context={"search_id": str(search_id), "platforms": list(platform_cursors.keys()), "action": "load_more"},
+            conn=conn,
+        )
+        await conn.commit()
     
     # Spawn background worker via Cloud Tasks
     settings = get_settings()

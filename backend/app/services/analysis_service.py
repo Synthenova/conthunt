@@ -41,6 +41,7 @@ class AnalysisService:
         
         # Get user's period_start for credit tracking
         async with get_db_connection() as conn:
+            await set_rls_user(conn, user_id)
             result = await conn.execute(
                 text("SELECT current_period_start FROM users WHERE id = :id"),
                 {"id": user_id}
@@ -49,29 +50,27 @@ class AnalysisService:
             period_start = row[0] if row else None
             
             # Check if already accessed (free re-view)
-            await set_rls_user(conn, user_id)
             already_accessed = await has_user_accessed_analysis(conn, user_id, media_asset_id)
         
-        if not already_accessed:
-            # First access - check and charge credits
-            await credit_tracker.check(
-                user_id=user_id,
-                role=user_role,
-                feature="video_analysis",
-                current_period_start=period_start,
-                record=True,
-                context={"media_asset_id": str(media_asset_id), "source": context_source}
-            )
-            
-            # Record access for future free re-views
-            async with get_db_connection() as conn:
-                await set_rls_user(conn, user_id)
+            if not already_accessed:
+                # First access - check and charge credits
+                await credit_tracker.check(
+                    user_id=user_id,
+                    role=user_role,
+                    feature="video_analysis",
+                    current_period_start=period_start,
+                    record=True,
+                    context={"media_asset_id": str(media_asset_id), "source": context_source},
+                    conn=conn,
+                )
+                
+                # Record access for future free re-views
                 await record_user_analysis_access(conn, user_id, media_asset_id)
                 await conn.commit()
-            
-            logger.info(f"Charged credit for analysis: user={user_id}, asset={media_asset_id}")
-        else:
-            logger.info(f"Free re-access: user={user_id} already analyzed asset={media_asset_id}")
+                
+                logger.info(f"Charged credit for analysis: user={user_id}, asset={media_asset_id}")
+            else:
+                logger.info(f"Free re-access: user={user_id} already analyzed asset={media_asset_id}")
         
         # Trigger unified analysis flow (handles priority downloads, race conditions, etc.)
         logger.info(f"[{context_source}] Triggering unified analysis for {media_asset_id}")
@@ -84,4 +83,3 @@ class AnalysisService:
 
 # Global instance
 analysis_service = AnalysisService()
-

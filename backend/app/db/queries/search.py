@@ -20,6 +20,12 @@ def compute_search_hash(query: str, inputs: dict) -> str:
     canonical = json.dumps({"query": query, "inputs": inputs}, sort_keys=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
+_BATCH_CHUNK_SIZE = 200
+
+
+def _chunked(items: List[dict], size: int) -> List[List[dict]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
 
 
 async def insert_search(
@@ -146,25 +152,26 @@ async def insert_platform_calls_batch(
             "response_meta": call.get("response_meta", {}),
         })
 
-    await conn.execute(
-        text("""
-            INSERT INTO platform_calls (
-                id, search_id, platform, request_params, success,
-                http_status, error, duration_ms, next_cursor,
-                response_gcs_uri, response_meta
-            )
-            SELECT 
-                id, search_id, platform, request_params, success,
-                http_status, error, duration_ms, next_cursor,
-                response_gcs_uri, response_meta
-            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
-                id uuid, search_id uuid, platform text, request_params jsonb, success boolean,
-                http_status int, error text, duration_ms int, next_cursor jsonb,
-                response_gcs_uri text, response_meta jsonb
-            )
-        """),
-        {"data": json.dumps(prepared_calls)}
-    )
+    for chunk in _chunked(prepared_calls, _BATCH_CHUNK_SIZE):
+        await conn.execute(
+            text("""
+                INSERT INTO platform_calls (
+                    id, search_id, platform, request_params, success,
+                    http_status, error, duration_ms, next_cursor,
+                    response_gcs_uri, response_meta
+                )
+                SELECT 
+                    id, search_id, platform, request_params, success,
+                    http_status, error, duration_ms, next_cursor,
+                    response_gcs_uri, response_meta
+                FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                    id uuid, search_id uuid, platform text, request_params jsonb, success boolean,
+                    http_status int, error text, duration_ms int, next_cursor jsonb,
+                    response_gcs_uri text, response_meta jsonb
+                )
+            """),
+            {"data": json.dumps(chunk)}
+        )
 
 
 
@@ -260,46 +267,46 @@ async def upsert_content_items_batch(
             "payload": json.dumps(item.payload),
         })
 
-    result = await conn.execute(
-        text("""
-            INSERT INTO content_items (
-                id, platform, external_id, content_type, canonical_url,
-                title, primary_text, published_at, creator_handle,
-                author_id, author_name, author_url, author_image_url,
-                metrics, payload
-            )
-            SELECT 
-                id, platform, external_id, content_type, canonical_url,
-                title, primary_text, 
-                CAST(published_at AS TIMESTAMP WITH TIME ZONE), 
-                creator_handle,
-                author_id, author_name, author_url, author_image_url,
-                metrics::jsonb, payload::jsonb
-            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
-                id uuid, platform text, external_id text, content_type text, canonical_url text,
-                title text, primary_text text, published_at text, creator_handle text,
-                author_id text, author_name text, author_url text, author_image_url text,
-                metrics text, payload text
-            )
-            ON CONFLICT (platform, external_id) DO UPDATE SET
-                metrics = EXCLUDED.metrics,
-                updated_at = now(),
-                title = COALESCE(content_items.title, EXCLUDED.title),
-                primary_text = COALESCE(content_items.primary_text, EXCLUDED.primary_text),
-                canonical_url = COALESCE(content_items.canonical_url, EXCLUDED.canonical_url),
-                published_at = COALESCE(content_items.published_at, EXCLUDED.published_at),
-                author_id = COALESCE(content_items.author_id, EXCLUDED.author_id),
-                author_name = COALESCE(content_items.author_name, EXCLUDED.author_name),
-                author_url = COALESCE(content_items.author_url, EXCLUDED.author_url),
-                author_image_url = COALESCE(content_items.author_image_url, EXCLUDED.author_image_url)
-            RETURNING id, platform, external_id, (xmax = 0) AS inserted
-        """),
-        {"data": json.dumps(prepared_items)}
-    )
-    
     mapping = {}
-    for row in result.fetchall():
-        mapping[(row[1], row[2])] = (row[0], row[3])
+    for chunk in _chunked(prepared_items, _BATCH_CHUNK_SIZE):
+        result = await conn.execute(
+            text("""
+                INSERT INTO content_items (
+                    id, platform, external_id, content_type, canonical_url,
+                    title, primary_text, published_at, creator_handle,
+                    author_id, author_name, author_url, author_image_url,
+                    metrics, payload
+                )
+                SELECT 
+                    id, platform, external_id, content_type, canonical_url,
+                    title, primary_text, 
+                    CAST(published_at AS TIMESTAMP WITH TIME ZONE), 
+                    creator_handle,
+                    author_id, author_name, author_url, author_image_url,
+                    metrics::jsonb, payload::jsonb
+                FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                    id uuid, platform text, external_id text, content_type text, canonical_url text,
+                    title text, primary_text text, published_at text, creator_handle text,
+                    author_id text, author_name text, author_url text, author_image_url text,
+                    metrics text, payload text
+                )
+                ON CONFLICT (platform, external_id) DO UPDATE SET
+                    metrics = EXCLUDED.metrics,
+                    updated_at = now(),
+                    title = COALESCE(content_items.title, EXCLUDED.title),
+                    primary_text = COALESCE(content_items.primary_text, EXCLUDED.primary_text),
+                    canonical_url = COALESCE(content_items.canonical_url, EXCLUDED.canonical_url),
+                    published_at = COALESCE(content_items.published_at, EXCLUDED.published_at),
+                    author_id = COALESCE(content_items.author_id, EXCLUDED.author_id),
+                    author_name = COALESCE(content_items.author_name, EXCLUDED.author_name),
+                    author_url = COALESCE(content_items.author_url, EXCLUDED.author_url),
+                    author_image_url = COALESCE(content_items.author_image_url, EXCLUDED.author_image_url)
+                RETURNING id, platform, external_id, (xmax = 0) AS inserted
+            """),
+            {"data": json.dumps(chunk)}
+        )
+        for row in result.fetchall():
+            mapping[(row[1], row[2])] = (row[0], row[3])
     
     return mapping
 
@@ -368,17 +375,18 @@ async def insert_search_results_batch(
     if not results:
         return
 
-    await conn.execute(
-        text("""
-            INSERT INTO search_results (search_id, content_item_id, platform, rank)
-            SELECT search_id, content_item_id, platform, rank
-            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
-                search_id uuid, content_item_id uuid, platform text, rank int
-            )
-            ON CONFLICT (search_id, content_item_id) DO NOTHING
-        """),
-        {"data": json.dumps(results, default=str)}
-    )
+    for chunk in _chunked(results, _BATCH_CHUNK_SIZE):
+        await conn.execute(
+            text("""
+                INSERT INTO search_results (search_id, content_item_id, platform, rank)
+                SELECT search_id, content_item_id, platform, rank
+                FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                    search_id uuid, content_item_id uuid, platform text, rank int
+                )
+                ON CONFLICT (search_id, content_item_id) DO NOTHING
+            """),
+            {"data": json.dumps(chunk, default=str)}
+        )
 
 
 
@@ -400,20 +408,21 @@ async def insert_media_assets_batch(
             "source_url_list": json.dumps(asset.get("source_url_list")) if asset.get("source_url_list") else None,
         })
 
-    await conn.execute(
-        text("""
-            INSERT INTO media_assets (
-                id, content_item_id, asset_type, source_url, source_url_list, status
-            )
-            SELECT 
-                id, content_item_id, asset_type, source_url, source_url_list::jsonb, 'pending'
-            FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
-                id uuid, content_item_id uuid, asset_type text, source_url text, source_url_list text
-            )
-            ON CONFLICT (id) DO NOTHING
-        """),
-        {"data": json.dumps(prepared_assets)}
-    )
+    for chunk in _chunked(prepared_assets, _BATCH_CHUNK_SIZE):
+        await conn.execute(
+            text("""
+                INSERT INTO media_assets (
+                    id, content_item_id, asset_type, source_url, source_url_list, status
+                )
+                SELECT 
+                    id, content_item_id, asset_type, source_url, source_url_list::jsonb, 'pending'
+                FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                    id uuid, content_item_id uuid, asset_type text, source_url text, source_url_list text
+                )
+                ON CONFLICT (id) DO NOTHING
+            """),
+            {"data": json.dumps(chunk)}
+        )
 
 
 from app.core import logger

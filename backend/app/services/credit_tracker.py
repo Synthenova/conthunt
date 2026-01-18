@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
 from app.db.session import get_db_connection
 from app.db import set_rls_user
 from app.core import logger
@@ -82,7 +83,8 @@ class CreditTracker:
         self,
         user_id: UUID,
         feature: str,
-        context: Optional[dict] = None
+        context: Optional[dict] = None,
+        conn: Optional[AsyncConnection] = None,
     ) -> None:
         """
         Record usage. Credits consumed = FEATURE_CREDITS[feature].
@@ -93,7 +95,23 @@ class CreditTracker:
         context["credit_cost"] = credit_cost
         
         try:
-            async with get_db_connection() as conn:
+            if conn is None:
+                async with get_db_connection() as local_conn:
+                    await set_rls_user(local_conn, user_id)
+                    await local_conn.execute(
+                        text("""
+                        INSERT INTO usage_logs (user_id, feature, quantity, context)
+                        VALUES (:user_id, :feature, :quantity, :context)
+                        """),
+                        {
+                            "user_id": user_id,
+                            "feature": feature,
+                            "quantity": credit_cost,
+                            "context": json.dumps(context)
+                        }
+                    )
+                    logger.info(f"Usage: {user_id} | {feature} | -{credit_cost} credits")
+            else:
                 await set_rls_user(conn, user_id)
                 await conn.execute(
                     text("""
@@ -155,7 +173,8 @@ class CreditTracker:
         feature: str,
         current_period_start: datetime | None = None,
         record: bool = True,
-        context: Optional[dict] = None
+        context: Optional[dict] = None,
+        conn: Optional[AsyncConnection] = None,
     ) -> dict:
         """
         Check and record usage. Always returns allowed=True (no enforcement).
@@ -165,7 +184,7 @@ class CreditTracker:
         
         # Record usage if requested
         if record:
-            await self.record_usage(user_id, feature, context)
+            await self.record_usage(user_id, feature, context, conn=conn)
         
         # Return credit info (no enforcement, just tracking)
         return {
