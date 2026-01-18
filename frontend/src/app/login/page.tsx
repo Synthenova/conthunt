@@ -1,26 +1,96 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { auth } from "@/lib/firebaseClient";
-import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
+import firebase, { auth } from "@/lib/firebaseClient";
 import { GrainGradient } from "@paper-design/shaders-react";
 import { Loader2 } from "lucide-react";
 
 export default function LoginPage() {
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [emailLoading, setEmailLoading] = useState(false);
+    const [resetLoading, setResetLoading] = useState(false);
     const [error, setError] = useState("");
+    const [info, setInfo] = useState("");
+    const [showEmailForm, setShowEmailForm] = useState(false);
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
 
     const handleGoogleLogin = async () => {
         try {
             setLoading(true);
             setError("");
-            const provider = new GoogleAuthProvider();
-            await signInWithPopup(auth, provider);
+            const provider = new firebase.auth.GoogleAuthProvider();
+            await auth.signInWithPopup(provider);
         } catch (e: any) {
             console.error("Google login error", e);
             setError(e.message);
             setLoading(false);
+        }
+    };
+
+    const handleEmailSignIn = async () => {
+        try {
+            setEmailLoading(true);
+            setError("");
+            setInfo("");
+            if (!email || !password) {
+                setError("Please enter email and password.");
+                return;
+            }
+            await auth.signInWithEmailAndPassword(email, password);
+        } catch (e: any) {
+            console.error("Email sign-in error", e);
+            setError(e.message);
+        } finally {
+            setEmailLoading(false);
+        }
+    };
+
+    const handleEmailSignUp = async () => {
+        try {
+            setEmailLoading(true);
+            setError("");
+            setInfo("");
+            if (!email || !password) {
+                setError("Please enter email and password.");
+                return;
+            }
+            const credential = await auth.createUserWithEmailAndPassword(email, password);
+            const user = credential.user;
+            if (user) {
+                await user.sendEmailVerification({
+                    url: `${window.location.origin}/login`,
+                });
+            }
+            setInfo("Verification email sent. Please verify and then sign in.");
+            await auth.signOut();
+        } catch (e: any) {
+            console.error("Email sign-up error", e);
+            setError(e.message);
+        } finally {
+            setEmailLoading(false);
+        }
+    };
+
+    const handlePasswordReset = async () => {
+        try {
+            setResetLoading(true);
+            setError("");
+            setInfo("");
+            if (!email) {
+                setError("Enter your email to reset your password.");
+                return;
+            }
+            await auth.sendPasswordResetEmail(email, {
+                url: `${window.location.origin}/login`,
+            });
+            setInfo("Password reset email sent.");
+        } catch (e: any) {
+            console.error("Password reset error", e);
+            setError(e.message);
+        } finally {
+            setResetLoading(false);
         }
     };
 
@@ -31,6 +101,15 @@ export default function LoginPage() {
         const unsubscribe = auth.onAuthStateChanged(async (user) => {
             if (cancelled) return;
             if (user) {
+                const hasPasswordProvider = user.providerData.some(
+                    (provider) => provider?.providerId === "password",
+                );
+                if (hasPasswordProvider && !user.emailVerified) {
+                    setInfo("Please verify your email to continue.");
+                    await auth.signOut();
+                    setIsLoggingIn(false);
+                    return;
+                }
                 setIsLoggingIn(true);
                 console.log("AuthStateChanged: User detected. Getting ID Token...");
 
@@ -164,6 +243,67 @@ export default function LoginPage() {
                 {error && (
                     <div className="w-full p-3 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl text-center">
                         {error}
+                    </div>
+                )}
+
+                {info && (
+                    <div className="w-full p-3 text-sm text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-center">
+                        {info}
+                    </div>
+                )}
+
+                {!showEmailForm ? (
+                    <button
+                        type="button"
+                        onClick={() => setShowEmailForm(true)}
+                        className="glass-button w-fit py-4 px-12 text-base font-medium text-white/90 tracking-wide mt-2 hover:text-white transition-colors"
+                    >
+                        sign in with email
+                    </button>
+                ) : (
+                    <div className="w-full flex flex-col gap-4 animate-in">
+                        <input
+                            type="email"
+                            autoComplete="email"
+                            placeholder="Email"
+                            value={email}
+                            onChange={(event) => setEmail(event.target.value)}
+                            className="w-full rounded-full bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                        <input
+                            type="password"
+                            autoComplete="current-password"
+                            placeholder="Password"
+                            value={password}
+                            onChange={(event) => setPassword(event.target.value)}
+                            className="w-full rounded-full bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                        <div className="flex w-full items-center gap-3">
+                            <button
+                                type="button"
+                                onClick={handleEmailSignIn}
+                                disabled={emailLoading}
+                                className="glass-button flex-1 py-3 text-sm font-medium text-white/90 tracking-wide hover:text-white transition-colors disabled:opacity-60"
+                            >
+                                {emailLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "sign in"}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleEmailSignUp}
+                                disabled={emailLoading}
+                                className="glass-button-white flex-1 py-3 text-sm font-medium tracking-wide disabled:opacity-60"
+                            >
+                                {emailLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "sign up"}
+                            </button>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handlePasswordReset}
+                            disabled={resetLoading}
+                            className="text-xs text-white/60 hover:text-white transition-colors"
+                        >
+                            {resetLoading ? "sending reset email..." : "forgot password?"}
+                        </button>
                     </div>
                 )}
 

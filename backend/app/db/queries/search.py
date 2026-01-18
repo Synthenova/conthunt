@@ -423,10 +423,9 @@ async def get_search_by_id(
     conn: AsyncConnection,
     search_id: UUID,
 ) -> dict | None:
-    """Get search by ID (RLS will filter by user)."""
-    start_time = time.time()
+    """Get search by ID (RLS will filter by user)."""    
     # logger = logging.getLogger("app.db.queries.search") # or generic logger
-    logger.info(f"get_search_by_id: start query for {search_id}")
+    logger.debug(f"get_search_by_id: start query for {search_id}")
     
     result = await conn.execute(
         text("""
@@ -438,12 +437,11 @@ async def get_search_by_id(
     )
     row = result.fetchone()
     
-    duration = (time.time() - start_time) * 1000
     if not row:
-        logger.warning(f"get_search_by_id: not found or RLS blocked. search_id={search_id} duration={duration:.2f}ms")
+        logger.warning(f"get_search_by_id: not found or RLS blocked. search_id={search_id}")
         return None
         
-    logger.info(f"get_search_by_id: found search {search_id} duration={duration:.2f}ms")
+    logger.debug(f"get_search_by_id: found search {search_id}")
     return {
         "id": row[0],
         "user_id": row[1],

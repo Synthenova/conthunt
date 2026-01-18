@@ -2,9 +2,12 @@
 import logging
 import sys
 
+from opentelemetry.instrumentation.logging import LoggingInstrumentor
+
 
 def setup_logging(level: str = "INFO") -> logging.Logger:
     """Configure and return the application logger."""
+    LoggingInstrumentor().instrument(set_logging_format=False)
     logger = logging.getLogger("conthunt")
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
 
@@ -12,14 +15,13 @@ def setup_logging(level: str = "INFO") -> logging.Logger:
         handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d - %(message)s",
+            "%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d "
+            "| trace=%(otelTraceID)s span=%(otelSpanID)s sampled=%(otelTraceSampled)s "
+            "- %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-
-    return logger
-
 
     return logger
 

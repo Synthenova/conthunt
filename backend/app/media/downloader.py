@@ -193,7 +193,7 @@ async def download_asset_with_claim(
         # YouTube video assets: mark as stored without downloading
         # YouTube URLs are HTML pages, not direct video files
         if platform == "youtube" and asset.get("asset_type") == "video":
-            logger.info(f"YouTube video asset {asset_id} - marking stored without download")
+            logger.debug(f"YouTube video asset {asset_id} - marking stored without download")
             async with get_db_connection() as conn:
                 await conn.execute(
                     text("""
@@ -210,7 +210,7 @@ async def download_asset_with_claim(
     
     if skip_semaphore:
         # Priority download: bypass semaphore
-        logger.info(f"[PRIORITY] Downloading asset {asset_id} without semaphore")
+        logger.debug(f"[PRIORITY] Downloading asset {asset_id} without semaphore")
         await _do_download()
     else:
         # Normal download: respect semaphore
@@ -235,10 +235,10 @@ async def download_assets_batch(
     settings = get_settings()
     
     if not settings.MEDIA_DOWNLOAD_ENABLED:
-        logger.info(f"Media download disabled, skipping {len(asset_infos)} assets")
+        logger.debug(f"Media download disabled, skipping {len(asset_infos)} assets")
         return
     
-    logger.info(f"Starting background download of {len(asset_infos)} assets")
+    logger.debug(f"Starting background download of {len(asset_infos)} assets")
     
     async with httpx.AsyncClient(
         timeout=settings.MEDIA_HTTP_TIMEOUT_S,

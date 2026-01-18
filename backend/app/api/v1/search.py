@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
+from app.core.telemetry import trace_span
 from app.db import get_db_connection, set_rls_user, queries
 
 from app.platforms import (
@@ -33,6 +34,7 @@ from app.services.cloud_tasks import cloud_tasks
 router = APIRouter()
 
 
+@trace_span("search.call_platform")
 async def call_platform(
     client: httpx.AsyncClient,
     slug: str,
@@ -81,6 +83,7 @@ async def call_platform(
         )
 
 
+@trace_span("search.transform_result_to_stream_item")
 def transform_result_to_stream_item(result: PlatformCallResult) -> dict:
     """Transform a platform result to the format expected by frontend stream."""
     items_data = []
@@ -136,6 +139,7 @@ def transform_result_to_stream_item(result: PlatformCallResult) -> dict:
     }
 
 
+@trace_span("search.worker")
 async def search_worker(
     search_id: UUID,
     user_uuid: UUID,
@@ -308,7 +312,7 @@ async def search_worker(
         
         # Media downloads: Fan-out via Cloud Tasks
         if assets_to_download:
-            logger.info(f"Dispatching {len(assets_to_download)} media download tasks to Cloud Tasks...")
+            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks to Cloud Tasks...")
             for asset_info in assets_to_download:
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
@@ -341,6 +345,7 @@ async def search_worker(
             pass
 
 
+@trace_span("search.load_more_worker")
 async def load_more_worker(
     search_id: UUID,
     user_uuid: UUID,
@@ -508,7 +513,7 @@ async def load_more_worker(
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         if assets_to_download:
-            logger.info(f"Dispatching {len(assets_to_download)} media download tasks for load_more...")
+            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks for load_more...")
             for asset_info in assets_to_download:
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
@@ -547,6 +552,7 @@ async def get_redis():
 # --- Endpoints ---
 
 @router.post("/search")
+@trace_span("search.create_search")
 async def create_search(
     request: SearchRequest,
     user: dict = Depends(get_current_user),
@@ -622,6 +628,7 @@ async def create_search(
 
 
 @router.get("/search/{search_id}/stream")
+@trace_span("search.stream_search")
 async def stream_search(
     search_id: UUID,
     request: Request,
@@ -703,6 +710,7 @@ async def stream_search(
 
 
 @router.post("/search/{search_id}/more")
+@trace_span("search.load_more")
 async def load_more(
     search_id: UUID,
     user: dict = Depends(get_current_user),
@@ -784,6 +792,7 @@ async def load_more(
 
 
 @router.get("/search/{search_id}/more/stream")
+@trace_span("search.stream_load_more")
 async def stream_load_more(
     search_id: UUID,
     request: Request,

@@ -5,6 +5,7 @@ from google.cloud import tasks_v2
 from google.protobuf import timestamp_pb2
 
 from app.core import get_settings, logger
+from app.core.telemetry import trace_span
 from app.db.session import get_db_connection
 
 class CloudTasksService:
@@ -19,6 +20,7 @@ class CloudTasksService:
             queue_name
         )
 
+    @trace_span("cloud_tasks.create_http_task")
     async def create_http_task(
         self,
         queue_name: str,
@@ -29,9 +31,7 @@ class CloudTasksService:
         """
         Create a secure HTTP task on Cloud Tasks.
         """
-        if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:
-            # Local development: Dispatch directly to background function
-            # logger.info(f"[LOCAL] Dispatching background task for {relative_uri} in queue {queue_name}")
+        if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:            
             import asyncio
             asyncio.create_task(self._run_local_task(relative_uri, payload))
             return "local-task-id"
@@ -60,12 +60,13 @@ class CloudTasksService:
 
         try:
             response = self.client.create_task(request={"parent": parent, "task": task})
-            logger.info(f"Created task {response.name} for {relative_uri} in {queue_name}")
+            logger.debug(f"Created task {response.name} for {relative_uri} in {queue_name}")
             return response.name
         except Exception as e:
             logger.error(f"Failed to create cloud task: {e}")
             raise e
 
+    @trace_span("cloud_tasks.run_local_task")
     async def _run_local_task(self, uri: str, payload: dict | None):
         """
         Execute task logic locally (mirroring app/api/v1/tasks.py).
@@ -106,7 +107,7 @@ class CloudTasksService:
                             break
                         if status == "failed":
                             raise Exception("Video download failed")
-                        logger.info(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/18")
+                        logger.debug(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/18")
                         await asyncio.sleep(10)
                     else:
                         raise Exception("Video not ready after 3 min timeout")

@@ -11,10 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 # from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.core import get_settings, logger
+from app.core.logging import setup_logging, get_log_level
+from app.core.telemetry import setup_telemetry
 from app.db import init_db, close_db
 from app.api import v1_router
 from app.agent.runtime import create_agent_graph
 
+setup_logging(get_log_level())
 settings = get_settings()
 
 
@@ -22,16 +25,16 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown."""
     # Startup
-    logger.info("Starting Conthunt backend...")
+    logger.debug("Starting Conthunt backend...")
     try:
         await init_db()
-        logger.info("Database connection verified")
+        logger.debug("Database connection verified")
         
         # Initialize agent graph with Postgres checkpointer
         graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
         app.state.agent_graph = graph
         app.state._agent_saver_cm = saver_cm
-        logger.info("Agent graph initialized with Postgres checkpointer")
+        logger.debug("Agent graph initialized with Postgres checkpointer")
     except Exception as e:
         logger.error(f"Failed to start: {e}")
         raise
@@ -39,12 +42,12 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("Shutting down Conthunt backend...")
+    logger.debug("Shutting down Conthunt backend...")
     if hasattr(app.state, '_agent_saver_cm'):
         await app.state._agent_saver_cm.__aexit__(None, None, None)
-        logger.info("Agent checkpointer closed")
+        logger.debug("Agent checkpointer closed")
     await close_db()
-    logger.info("Database connections closed")
+    logger.debug("Database connections closed")
 
 
 app = FastAPI(
@@ -53,6 +56,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+setup_telemetry(app)
 
 # Honor X-Forwarded-* headers from Cloud Run so redirects keep HTTPS.
 # app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")

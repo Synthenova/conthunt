@@ -3,6 +3,8 @@ import httpx
 from typing import Callable, Any, Optional
 from fastapi import Request
 
+from app.core.telemetry import trace_span
+
 logger = logging.getLogger(__name__)
 
 class CloudTaskExecutor:
@@ -21,6 +23,7 @@ class CloudTaskExecutor:
         self.retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
         self.max_retries = max_retries
 
+    @trace_span("cloud_tasks.executor.run")
     async def run(
         self, 
         handler: Callable, 

@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENAI_API_KEY: str = ""
 
+    # OpenTelemetry
+    OTEL_SERVICE_NAME: str = ""
+    OTEL_RESOURCE_ATTRIBUTES: str = ""
+
     # Dodo Payments
     DODO_API_KEY: str = ""
     DODO_WEBHOOK_SECRET: str = ""

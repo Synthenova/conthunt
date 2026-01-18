@@ -1,6 +1,5 @@
 """History API endpoints - GET /v1/searches."""
 from uuid import UUID
-import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -83,29 +82,20 @@ async def get_search_detail(
     Get detailed search results.
     
     Includes platform calls, content items with payloads, and media assets.
-    """
-    req_start = time.time()
-    logger.info(f"get_search_detail: request for search_id={search_id}")
+    """    
+    logger.debug(f"get_search_detail: request for search_id={search_id}")
     
     user_uuid = user["db_user_id"]
     if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
-    logger.info(f"get_search_detail: start request processing")
+    logger.debug(f"get_search_detail: start request processing")
     
     async with get_db_connection() as conn:
-        t0 = time.time()
-        # Get cached user UUID (avoids DB hit if cached)
-        
-        
-        t0 = time.time()
-        # Set RLS context
         await set_rls_user(conn, user_uuid)
-        logger.info(f"get_search_detail: set_rls_user took {(time.time()-t0)*1000:.2f}ms")
 
         # Fetch detailed search data in ONE query
         search_data = await queries.get_full_search_detail(conn, search_id)
-        logger.info(f"get_search_detail: get_full_search_detail took {(time.time()-t0)*1000:.2f}ms")
         
         if not search_data:
             raise HTTPException(status_code=404, detail="Search not found")
@@ -169,10 +159,7 @@ async def get_search_detail(
             for pc in search_data.get("platform_calls", [])
         ],
         results=response_results
-    )
-    
-    duration = (time.time() - req_start) * 1000
-    logger.info(f"get_search_detail: finished search_id={search_id} duration={duration:.2f}ms")
+    )        
     return response
 
 
