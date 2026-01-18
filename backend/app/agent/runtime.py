@@ -36,7 +36,7 @@ async def create_agent_graph(database_url: str):
     options_param = quote(f"-c search_path={schema},public")
     keepalive_params = (
         "keepalives=1&keepalives_idle=30&keepalives_interval=10&"
-        "keepalives_count=5&prepare_threshold=0"
+        "keepalives_count=5"
     )
     
     # Simple string append to avoid urlparse issues with bracketed IPv4
