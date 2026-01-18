@@ -95,6 +95,7 @@ export function ChatTabs({
                             "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0 group/tab",
                             activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
                         )}
+                        aria-label={search.label}
                     >
                         {activeSearchId === search.id && (
                             <div className="absolute inset-0 rounded-lg glass-pill" />

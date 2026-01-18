@@ -15,14 +15,15 @@ export function ActionButtons({ isStreaming, canSend, onSend, onStop }: ActionBu
     if (isStreaming) {
         return (
             <PromptInputAction tooltip="Stop generating">
-                <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8 rounded-full"
-                    onClick={onStop}
-                >
-                    <Square className="h-4 w-4 fill-current" />
-                </Button>
+            <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 rounded-full"
+                onClick={onStop}
+                aria-label="Stop generating"
+            >
+                <Square className="h-4 w-4 fill-current" />
+            </Button>
             </PromptInputAction>
         );
     }
@@ -35,6 +36,7 @@ export function ActionButtons({ isStreaming, canSend, onSend, onStop }: ActionBu
                 className="h-8 w-8 rounded-full bg-foreground text-background hover:bg-foreground/90"
                 onClick={onSend}
                 disabled={!canSend}
+                aria-label="Send message"
             >
                 <ArrowUp className="h-4 w-4" />
             </Button>
