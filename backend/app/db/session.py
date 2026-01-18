@@ -15,6 +15,11 @@ from app.core import get_settings
 
 settings = get_settings()
 
+# Disable asyncpg prepared statement cache when using PgBouncer transaction pooling.
+connect_args: dict = {}
+if settings.DATABASE_URL.startswith("postgresql+asyncpg://"):
+    connect_args["statement_cache_size"] = 0
+
 # Create async engine
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
@@ -22,6 +27,7 @@ engine: AsyncEngine = create_async_engine(
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
+    connect_args=connect_args,
 )
 
 
