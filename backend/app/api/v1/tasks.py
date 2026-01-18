@@ -206,7 +206,7 @@ async def handle_media_download_task(payload: MediaDownloadTaskPayload, request:
     """
     Handle background media download task (one asset) with retries.
     """
-    logger.info(f"Received media download task for {payload.asset_id}")
+    logger.debug(f"Received media download task for {payload.asset_id}")
     executor = CloudTaskExecutor(request)
 
     async def _on_fail(e: Exception):
@@ -229,7 +229,7 @@ async def handle_raw_archive_task(payload: RawArchiveTaskPayload, request: Reque
     Handle background raw archive task with retries.
     """
     from app.storage.raw_archive import upload_raw_compressed
-    logger.info(f"Received raw archive task for search {payload.search_id} platform {payload.platform}")
+    logger.debug(f"Received raw archive task for search {payload.search_id} platform {payload.platform}")
     executor = CloudTaskExecutor(request)
     
     # Decode base64 to get compressed bytes (already gzipped)
