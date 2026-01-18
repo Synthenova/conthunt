@@ -7,10 +7,12 @@ import logging
 import argparse
 import sys
 import os
+import re
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s [%(levelname)s] [User-%(name)s] %(message)s',
     datefmt='%H:%M:%S'
 )
@@ -19,12 +21,14 @@ class AgentBrowser:
     def __init__(self, user_id, headless=False):
         self.user_id = user_id
         self.logger = logging.getLogger(str(user_id))
-        self.headless = headless
+        self.headless = False
         self.session_name = f"user_{user_id}"
+        self.command_timeout = 180
 
     async def run(self, command_str):
         """Run an agent-browser command."""
-        cmd = f"agent-browser --session {self.session_name} {command_str}"
+        headed_flag = "--headed " if not self.headless else ""
+        cmd = f"agent-browser {headed_flag}--session {self.session_name} {command_str}"
         self.logger.debug(f"Running: {cmd}")
         
         proc = await asyncio.create_subprocess_shell(
@@ -32,7 +36,11 @@ class AgentBrowser:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.command_timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise Exception(f"Command timed out after {self.command_timeout}s: {cmd}")
         
         if proc.returncode != 0:
             # Don't raise immediately, let caller handle? No, command failure is usually bad.
@@ -49,18 +57,43 @@ class AgentBrowser:
     async def snapshot(self, args="-i --json"):
         output = await self.run(f"snapshot {args}")
         try:
-            return json.loads(output)
+            data = json.loads(output)
+            if isinstance(data, dict) and "data" in data:
+                snapshot_text = data.get("data", {}).get("snapshot", "")
+                parsed = []
+                for line in snapshot_text.splitlines():
+                    line = line.strip()
+                    if not line.startswith("-"):
+                        continue
+                    ref_match = re.search(r"\[ref=(e\d+)\]", line)
+                    if not ref_match:
+                        continue
+                    ref_id = ref_match.group(1)
+                    role_match = re.search(r"-\s+([a-zA-Z]+)\b", line)
+                    name_match = re.search(r"\"([^\"]+)\"", line)
+                    parsed.append({
+                        "ref": ref_id,
+                        "role": role_match.group(1).lower() if role_match else "",
+                        "name": name_match.group(1) if name_match else "",
+                        "disabled": "[disabled]" in line,
+                        "raw": line,
+                    })
+                return parsed
+            return data
         except json.JSONDecodeError:
             self.logger.error(f"Failed to parse snapshot output: {output}")
             return []
 
+    def _as_ref(self, ref):
+        return ref if str(ref).startswith("@") else f"@{ref}"
+
     async def click(self, ref):
-        return await self.run(f"click {ref}")
+        return await self.run(f"click {self._as_ref(ref)}")
 
     async def fill(self, ref, text):
         # Escape quotes
         safe_text = text.replace('"', '\\"')
-        return await self.run(f'fill {ref} "{safe_text}"')
+        return await self.run(f'fill {self._as_ref(ref)} "{safe_text}"')
     
     async def press(self, key):
         return await self.run(f"press {key}")
@@ -75,6 +108,9 @@ class AgentBrowser:
     async def get_url(self):
         return await self.run("get url")
 
+    async def get_value(self, selector):
+        return await self.run(f"get value {selector}")
+
     async def mouse_move(self, x, y):
         return await self.run(f"mouse move {x} {y}")
 
@@ -87,13 +123,28 @@ class AgentBrowser:
     async def close(self):
         return await self.run("close")
 
+    async def save_screenshot(self, path):
+        return await self.run(f"screenshot {path}")
 
-async def user_flow(user_config):
+
+async def user_flow(user_config, timestamp_dir, headless=True):
     user_id = user_config['id']
-    browser = AgentBrowser(user_id)
+    browser = AgentBrowser(user_id, False)
     logger = browser.logger
-    base_url = "http://localhost:3000"
+    base_url = "https://dev.agent.conthunt.app"
     
+    user_dir = os.path.join(timestamp_dir, browser.session_name)
+    if timestamp_dir:
+        os.makedirs(user_dir, exist_ok=True)
+
+    async def capture(name):
+        if timestamp_dir:
+            try:
+                path = os.path.join(user_dir, f"{name}.png")
+                await browser.save_screenshot(path)
+            except Exception as e:
+                logger.error(f"Failed to save screenshot {name}: {e}")
+
     try:
         # 1. Login
         logger.info("Step 1: Login")
@@ -102,238 +153,266 @@ async def user_flow(user_config):
         # Assumption: Inputs will be named 'email' and 'password' or have those types
         await asyncio.sleep(2) # Wait for load (or use wait --load)
         elements = await browser.snapshot()
+
+        email_button_ref = None
+        for el in elements:
+            if el.get('role') == 'button':
+                name = (el.get('name') or el.get('text') or '').strip().lower()
+                if name == 'sign in with email':
+                    email_button_ref = el.get('ref')
+                    break
+
+        if email_button_ref:
+            logger.info("Opening email sign-in form...")
+            await browser.click(email_button_ref)
+            await asyncio.sleep(1)
+            elements = await browser.snapshot()
         
         email_ref = None
         pass_ref = None
         
         for el in elements:
-            # Look for email input
-            if el.get('tagName') == 'INPUT':
-                attrs = el.get('attributes', {})
-                name = attrs.get('name', '').lower()
-                type_ = attrs.get('type', '').lower()
-                
-                if name == 'email' or type_ == 'email':
+            if el.get('role') == 'textbox':
+                name = (el.get('name') or '').strip().lower()
+                if name == 'email':
                     email_ref = el.get('ref')
-                elif name == 'password' or type_ == 'password':
+                elif name == 'password':
                     pass_ref = el.get('ref')
 
         if email_ref and pass_ref:
             logger.info("Found login fields, filling...")
-            await browser.fill(email_ref, user_config['email'])
-            await browser.fill(pass_ref, user_config['password'])
-            await browser.press("Enter")
-            await browser.wait("--load networkidle")
+            email_value = ""
+            pass_value = ""
+            try:
+                email_value = await browser.get_value('input[type="email"]')
+                pass_value = await browser.get_value('input[type="password"]')
+            except Exception as e:
+                logger.warning(f"Autofill check failed; proceeding to fill: {e}")
+            if not email_value:
+                await browser.fill(email_ref, user_config['email'])
+            if not pass_value:
+                await browser.fill(pass_ref, user_config['password'])
+
+            elements = await browser.snapshot()
+            sign_in_ref = None
+            for el in elements:
+                if el.get('role') == 'button':
+                    name = (el.get('name') or el.get('text') or '').strip().lower()
+                    if name == 'sign in':
+                        sign_in_ref = el.get('ref')
+                        break
+
+            if sign_in_ref:
+                await browser.click(sign_in_ref)
+            else:
+                await browser.press("Enter")
         else:
             logger.warning("Email/Password fields not found (expected in current version). Proceeding manually or assuming logged in.")
             # In a real test we might error here, but user said 'assume we will add later'
             # So we carry on.
 
+        login_ready = False
+        start_wait = time.time()
+        while time.time() - start_wait < 60:
+            elements = await browser.snapshot()
+            has_trending = any(
+                el.get('role') == 'button'
+                and (el.get('name') or '').strip().lower() == "trending fitness content"
+                for el in elements
+            )
+            if has_trending:
+                login_ready = True
+                break
+            await asyncio.sleep(1)
+
+        if not login_ready:
+            logger.error("Login did not complete (missing 'Trending fitness content' button).")
+            return
+
+        await capture("step_1")
+
         # 2. Search
         logger.info("Step 2: Search")
         await browser.open(f"{base_url}/app")
-        await browser.wait("--load networkidle")
         
-        # Find PromptInputTextarea
         elements = await browser.snapshot()
-        textarea_ref = None
+        trending_ref = None
         for el in elements:
-            if el.get('tagName') == 'TEXTAREA':
-                # confirm it is the prompt input, maybe check placeholder
-                attrs = el.get('attributes', {})
-                placeholder = attrs.get('placeholder', '')
-                if "Find me viral" in placeholder or "cooking videos" in placeholder: # Based on page.tsx code
-                    textarea_ref = el.get('ref')
-                    break
-        
-        # Fallback to first textarea if placeholder doesn't match exactly
-        if not textarea_ref:
-             for el in elements:
-                if el.get('tagName') == 'TEXTAREA':
-                    textarea_ref = el.get('ref')
-                    break
+            if el.get('role') == 'button' and (el.get('name') or '').strip().lower() == "trending fitness content":
+                trending_ref = el.get('ref')
+                break
 
-        if textarea_ref:
-            logger.info("Found search input, typing query...")
-            await browser.fill(textarea_ref, "viral sung jin woo")
+        if trending_ref:
+            logger.info("Clicking 'Trending fitness content' suggestion...")
+            await browser.click(trending_ref)
+            await asyncio.sleep(1)
+        else:
+            logger.error("Trending fitness content button not found!")
+            return
+
+        elements = await browser.snapshot()
+        search_input_ref = next(
+            (
+                el.get('ref')
+                for el in elements
+                if el.get('role') == 'textbox'
+                and (el.get('name') or '').strip().lower() == "find me viral cooking videos..."
+            ),
+            None,
+        )
+        if search_input_ref:
+            logger.info("Focusing search input and submitting with Enter...")
+            await browser.click(search_input_ref)
             await browser.press("Enter")
         else:
-            logger.error("Search input not found!")
-            return
+            logger.warning("Search input not found; falling back to Enter.")
+            await browser.press("Enter")
+
+        await capture("step_2")
 
         # 3. Chat Interaction
         logger.info("Step 3: Chat Interaction")
-        # Explicitly wait for URL change
-        try:
-            await browser.wait("--url **/chats/**")
-        except:
+        # Explicitly wait for URL change (manual poll to allow longer wait)
+        chat_url_found = False
+        start_wait = time.time()
+        while time.time() - start_wait < 60:
+            try:
+                current_url = await browser.get_url()
+                if "/app/chats/" in current_url:
+                    chat_url_found = True
+                    break
+            except Exception as e:
+                logger.warning(f"URL check failed: {e}")
+            await asyncio.sleep(1)
+
+        if not chat_url_found:
             logger.error("Failed to redirect to chat page")
             return
-            
-        logger.info("Redirected to chat. Waiting for submit to be enabled (Stop to disappear).")
-        
-        # 4. Wait for Stop button to NOT exist (meaning 'Send' is ready)
-        # In ActionButtons.tsx, Stop button has tooltip "Stop generating"
-        # Since we can't easily see tooltips in snapshot JSON without hovering or accessibility tree details,
-        # we'll look for the ABSENCE of the Stop button or PRESENCE of Send button.
-        # Send button has ArrowUp icon. Stop has Square icon.
-        # But icons are SVGs. agent-browser might just see 'BUTTON'.
-        # However, PromptInputTextarea and buttons are in PromptInput.
-        
-        # We loop and snapshot.
-        start_wait = time.time()
-        ready = False
-        send_ref = None
-        
-        while time.time() - start_wait < 60: # 60s timeout
-            elements = await browser.snapshot()
-            
-            # Try to identify Stop vs Send.
-            # Usually Send button is enabled when not streaming.
-            # When streaming, Stop button is shown.
-            # We can check if there's a button with name="Stop generating" (if aria-label exists)
-            # or simply wait for the number of buttons to be what we expect in "Ready" state.
-            
-            # Let's assume the button with the ArrowUp is the target.
-            # If we see only one main action button, we can try to click it.
-            
-            # Heuristic: Find button in the input area.
-            # If it's "Stop", it might be clickable.
-            # We want to wait until it becomes "Send".
-            
-            # Since we can't easily distinguish purely by shape in JSON, 
-            # we rely on the user flow: We just searched. It should be generating.
-            # We wait some time.
-            
-            # Better: Check for "Send message" tooltip if exposed as name.
-            send_btn = next((el for el in elements if el.get('name') == 'Send message' or el.get('text') == 'Send message'), None)
-            stop_btn = next((el for el in elements if el.get('name') == 'Stop generating' or el.get('text') == 'Stop generating'), None)
 
+        logger.info("Waiting for model selector and disabled send button...")
+        start_wait = time.time()
+        model_ready = False
+        while time.time() - start_wait < 60:
+            elements = await browser.snapshot()
+            has_model_button = any(
+                el.get('role') == 'button' and (el.get('name') or '').strip() == "Gemini 3 Flash"
+                for el in elements
+            )
+            has_disabled_send = any(
+                el.get('role') == 'button'
+                and not (el.get('name') or '').strip()
+                and el.get('disabled')
+                for el in elements
+            )
+            if has_model_button and has_disabled_send:
+                model_ready = True
+                break
+            await asyncio.sleep(10)
+
+        if not model_ready:
+            logger.warning("Model selector or disabled send button not detected; proceeding anyway.")
+
+        message_ref = next(
+            (
+                el.get('ref')
+                for el in elements
+                if el.get('role') == 'textbox'
+                and (el.get('name') or '').strip().lower() == "message agent..."
+            ),
+            None,
+        )
+        if message_ref:
+            await browser.fill(message_ref, "retreive one search and analyse top 10 videos")
+        else:
+            logger.error("Message input not found.")
+            return
+            
+        logger.info("Waiting for streaming to finish before follow up...")
+        start_wait = time.time()
+        send_ref = None
+
+        while time.time() - start_wait < 180:
+            elements = await browser.snapshot()
+            send_btn = next(
+                (el for el in elements if (el.get('name') or '').strip() == "Send message"),
+                None,
+            )
+            stop_btn = next(
+                (el for el in elements if (el.get('name') or '').strip() == "Stop generating"),
+                None,
+            )
             if send_btn and not stop_btn:
-                ready = True
                 send_ref = send_btn.get('ref')
                 break
-                
             await asyncio.sleep(1)
-            
-        if not ready:
-            logger.warning("Could not definitively detect 'Send' state. Assuming ready after timeout.")
-            
-        # Type follow up
-        textarea_ref = next((el.get('ref') for el in elements if el.get('tagName') == 'TEXTAREA'), None)
-        if textarea_ref:
-            await browser.fill(textarea_ref, "analyse any 5 videos")
-            
-            # Wait for submit visible (already checked ready)
-            # Don't click immediately per instructions? "wait until submit is visible again dont click"
-            # Oh, instr 4: "wait until submit is visible again dont click" -> Wait, 
-            # I must type "analyse any 5 videos" then wait? 
-            # Instr 3: "... wait until ... enable ... and type analyse any 5 videos"
-            # Instr 4: "wait until submit is visible again dont click"
-            
-            # Wait, if I type, I usually need to send to start the next part?
-            # User says: "type analyse any 5 videos" then "wait until submit is visible again".
-            # This implies hitting enter/submit? Otherwise it won't be generating for submit to disappear/reappear.
-            # I will assume I need to submit.
-            
-            if send_ref:
-                await browser.click(send_ref)
-            else:
-                await browser.press("Enter")
-                
-            # Now wait for it to become visible *again* (meaning it became Stop then Send again)
-            # await asyncio.sleep(2) # give it time to switch to Stop
-            
-            # Wait for 'Send' again
-            # Reuse logic
-            # ... (Simulated wait for generation to finish)
-            await asyncio.sleep(5) 
-        
-        # 5. Glass Tabs Interaction (Drag & Click)
-        logger.info("Step 5: Glass Tabs Interaction Loop")
-        start_loop = time.time()
-        
-        while time.time() - start_loop < 60:
-            elements = await browser.snapshot()
-            
-            # 1. Find the Glass Tabs Container (for dragging)
-            # ChatTabs.tsx: className="... glass-nav ..."
-            tabs_container = None
-            for el in elements:
-                classes = el.get('attributes', {}).get('class', '')
-                if 'glass-nav' in classes:
-                    tabs_container = el
+
+        if not send_ref:
+            logger.error("Send button not ready after streaming.")
+            return
+
+        await browser.click(send_ref)
+        logger.info("Follow up submitted.")
+        elements = await browser.snapshot()
+        excluded_names = {
+            "rename chat",
+            "new chat",
+            "close",
+            "load more",
+            "thinking",
+            "gemini 3 flash",
+            "close chat",
+            "send message",
+            "stop generating",
+        }
+        start_index = next(
+            (idx for idx, el in enumerate(elements) if (el.get('name') or '').strip().lower() == "rename chat"),
+            None,
+        )
+        keyword_buttons = []
+        if start_index is not None:
+            for el in elements[start_index + 1:]:
+                name = (el.get('name') or '').strip()
+                lower_name = name.lower()
+                if lower_name in {"new chat", "close", "thinking"}:
                     break
-            
-            if tabs_container:
-                # Drag the container
-                logger.info("Dragging glass tabs container...")
-                # Get bounding box if available, or just guess middle of screen top?
-                # agent-browser snapshot -i doesn't give bbox by default unless asked? 
-                # Actually default snapshot gives accessibility tree. -i gives interactive. 
-                # If we don't have bbox, we can't drag precisely.
-                # But we can try 'mouse move' to the element if 'ref' works?
-                # 'mouse move' takes x y. We need to know where it is.
-                # Let's use 'get box'
-                
-                try:
-                    box_str = await browser.run(f"get box {tabs_container['ref']}")
-                    # Output: {"x":..., "y":..., "width":..., "height":...}
-                    box = json.loads(box_str)
-                    
-                    start_x = box['x'] + box['width'] / 2
-                    start_y = box['y'] + box['height'] / 2
-                    
-                    await browser.mouse_move(start_x, start_y)
-                    await browser.mouse_down()
-                    await browser.mouse_move(start_x - random.randint(50, 150), start_y) # Drag left/right
-                    await browser.mouse_up()
-                except Exception as e:
-                    logger.warning(f"Failed to drag tabs container: {e}")
-            else:
-                logger.warning("Glass tabs container (.glass-nav) not found")
-
-            # 2. Click a Random Tab (Search Keyword)
-            # We want buttons *inside* the glass-nav ideally, or just buttons that look like tabs.
-            # In snapshot, hierarchy might be flattened depending on depth.
-            # But we can look for buttons with specific expected classes or just 'role=button' and text.
-            # ChatTabs buttons have "relative px-4 h-8 ... group/tab"
-            
-            tabs = []
+                if el.get('role') != 'button' or not name:
+                    continue
+                if lower_name in excluded_names or lower_name.startswith("remove "):
+                    continue
+                keyword_buttons.append(el)
+        else:
             for el in elements:
-                # Heuristic: Buttons that are likely the tabs.
-                # They are usually short text.
-                if el.get('role') == 'button':
-                    classes = el.get('attributes', {}).get('class', '')
-                    # Check for 'group/tab' which is in the code
-                    if 'group/tab' in classes:
-                        tabs.append(el)
-            
-            # Fallback if class names aren't in snapshot (sometimes they are stripped or not full)
-            if not tabs:
-                 # Try finding buttons that are siblings in the container?
-                 # Too complex for simple script. fallback to any button not in blacklist.
-                 for el in elements:
-                    if el.get('role') == 'button':
-                        name = el.get('name', '')
-                        if name not in ['Stop generating', 'Send message', 'Attach image', 'New Chat', 'Close', 'Sign in with Google']:
-                            tabs.append(el)
+                name = (el.get('name') or '').strip()
+                lower_name = name.lower()
+                if el.get('role') != 'button' or not name:
+                    continue
+                if lower_name in excluded_names or lower_name.startswith("remove "):
+                    continue
+                keyword_buttons.append(el)
 
-            if tabs:
-                target = random.choice(tabs)
-                logger.info(f"Clicking search keyword tab: {target.get('name') or target.get('text')}")
-                try:
-                    await browser.click(target.get('ref'))
-                except:
-                    pass
-            
-            await asyncio.sleep(10)
+        if len(keyword_buttons) < 6:
+            logger.warning("Not enough keyword buttons found after follow up.")
+        else:
+            target_refs = [
+                keyword_buttons[3].get('ref'),
+                keyword_buttons[4].get('ref'),
+                keyword_buttons[5].get('ref'),
+            ]
+            click_order = [0, 1, 2, 0, 1, 2]
+            for idx in click_order:
+                await browser.click(target_refs[idx])
+                await asyncio.sleep(10)
+
+        await capture("step_3")
+        await asyncio.sleep(120)
+        return
 
     except Exception as e:
         logger.error(f"Error: {e}")
         import traceback
         traceback.print_exc()
     finally:
+        await capture("end")
         await browser.close()
 
 async def main():
@@ -341,9 +420,14 @@ async def main():
     parser.add_argument('--users', type=int, default=1)
     args = parser.parse_args()
     
-    users = [{'id': i, 'email': f'user{i}@test.com', 'password': 'password'} for i in range(args.users)]
+    users = [{'id': i, 'email': f'vnirmal2722000@gmail.com', 'password': 'velu2000'} for i in range(args.users)]
     
-    tasks = [user_flow(u) for u in users]
+    timestamp_dir = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    tasks = [
+        user_flow(u, timestamp_dir, headless=False)
+        for u in users
+    ]
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":

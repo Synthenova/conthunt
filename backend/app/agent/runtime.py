@@ -49,16 +49,8 @@ async def create_agent_graph(database_url: str):
     
     logger.info(f"Initializing AsyncPostgresSaver checkpointer with schema: {schema}")
     
-    # Disable server-side prepares for PgBouncer transaction pooling.
-    connection_kwargs = {
-        "autocommit": True,
-        "prepare_threshold": 0,
-    }
     # Create the async saver context manager
-    saver_cm = AsyncPostgresSaver.from_conn_string(
-        pg_url,
-        connection_kwargs=connection_kwargs,
-    )
+    saver_cm = AsyncPostgresSaver.from_conn_string(pg_url)
     saver = await saver_cm.__aenter__()
     
     # Create checkpoint tables if they don't exist
