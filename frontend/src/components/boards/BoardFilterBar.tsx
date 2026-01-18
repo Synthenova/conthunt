@@ -17,9 +17,7 @@ export type ClientDateFilter =
     | "today"
     | "yesterday"
     | "week"
-    | "this_week"
     | "month"
-    | "this_month"
     | "three_months"
     | "six_months"
     | "year";
@@ -58,9 +56,7 @@ export function BoardFilterBar({
         today: "Today",
         yesterday: "Yesterday",
         week: "Last 7 Days",
-        this_week: "This Week",
         month: "Last 30 Days",
-        this_month: "This Month",
         three_months: "Last 3 Months",
         six_months: "Past 6 Months",
         year: "Past Year"

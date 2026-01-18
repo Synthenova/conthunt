@@ -205,6 +205,7 @@ class CloudTasksService:
             
             board_id = UUID(payload["board_id"])
             user_id = UUID(payload["user_id"])
+            user_role = payload.get("user_role", "free")
             try:
                 # Mark as processing on pickup
                 async with get_db_connection() as conn:
@@ -214,7 +215,11 @@ class CloudTasksService:
                         await update_board_insights_status(conn, insights_id=row["id"], status="processing")
                         await conn.commit()
                 
-                await execute_board_insights(board_id=board_id, user_id=user_id)
+                await execute_board_insights(
+                    board_id=board_id,
+                    user_id=user_id,
+                    user_role=user_role,
+                )
             except Exception as e:
                 logger.error(f"[LOCAL] Board insights failed: {e}", exc_info=True)
                 async with get_db_connection() as conn:

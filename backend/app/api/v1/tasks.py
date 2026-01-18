@@ -47,6 +47,7 @@ class RawArchiveTaskPayload(BaseModel):
 class BoardInsightsTaskPayload(BaseModel):
     board_id: UUID
     user_id: UUID
+    user_role: str
 
 class SearchTaskPayload(BaseModel):
     search_id: UUID
@@ -288,6 +289,7 @@ async def handle_board_insights_task(payload: BoardInsightsTaskPayload, request:
         on_fail=_on_fail,
         board_id=payload.board_id,
         user_id=payload.user_id,
+        user_role=payload.user_role,
     )
 
 @router.post("/search/run")

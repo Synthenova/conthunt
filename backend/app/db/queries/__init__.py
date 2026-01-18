@@ -89,7 +89,6 @@ from app.db.queries.content import (
 # User queries
 from app.db.queries.users import (
     get_user_role,
-    get_user_by_uuid,
     get_user_with_billing,
     get_user_id_by_firebase,
     update_user_role,
@@ -168,7 +167,6 @@ __all__ = [
     "get_media_asset_with_content",
     # Users
     "get_user_role",
-    "get_user_by_uuid",
     "get_user_with_billing",
     "get_user_id_by_firebase",
     "update_user_role",
@@ -187,4 +185,3 @@ __all__ = [
     "soft_delete_chat_tag",
     "soft_delete_chat_tag",
 ]
-

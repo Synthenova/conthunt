@@ -31,28 +31,6 @@ async def get_user_role(conn: AsyncConnection, user_id: UUID) -> str:
 
 
 
-async def get_user_by_uuid(conn: AsyncConnection, user_id: UUID) -> dict | None:
-    """Get user details by internal UUID."""
-    result = await conn.execute(
-        text("""
-        SELECT id, firebase_uid, email, role, current_period_start 
-        FROM users WHERE id = :user_id
-        """),
-        {"user_id": user_id}
-    )
-    row = result.fetchone()
-    if not row:
-        return None
-    return {
-        "id": row[0],
-        "firebase_uid": row[1],
-        "email": row[2],
-        "role": row[3],
-        "current_period_start": row[4],
-    }
-
-
-
 async def get_user_with_billing(conn: AsyncConnection, user_id: UUID) -> dict | None:
     """Get user with billing info for credit tracking."""
     result = await conn.execute(

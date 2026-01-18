@@ -65,9 +65,11 @@ export default function BoardDetailPage() {
     const { data: board, isLoading: isBoardLoading, error: boardError } = getBoard(boardId);
     const { data: items, isLoading: isItemsLoading } = getBoardItems(boardId);
     const [activeTab, setActiveTab] = useState("videos");
-    const [shouldPollInsights, setShouldPollInsights] = useState(false);
-    const { data: insights, isLoading: isInsightsLoading } = getBoardInsights(boardId, {
-        refetchInterval: shouldPollInsights ? 5000 : false,
+    const { data: insights, isLoading: isInsightsLoading, isFetching: isInsightsFetching } = getBoardInsights(boardId, {
+        refetchInterval: (query) => {
+            const status = query.state.data?.status;
+            return status === "queued" || status === "processing" ? 5000 : false;
+        },
     });
 
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -122,22 +124,15 @@ export default function BoardDetailPage() {
         return items.filter((item) => new Date(item.added_at).getTime() > lastTime).length;
     }, [items, lastCompletedAt]);
 
+    const insightsStatus = insights?.status;
     const hasInsights = Boolean(insights?.insights);
-    const isProcessingInsights = insights?.status === "processing";
+    const isProcessingInsights = insightsStatus === "processing" || insightsStatus === "queued";
 
     // Progress tracking
     const progress = insights?.progress;
     const totalVideos = progress?.total_videos ?? 0;
     const analyzedVideos = progress?.analyzed_videos ?? 0;
     const failedVideos = progress?.failed_videos ?? 0;
-
-    // Auto-stop polling when insights complete or fail
-    useEffect(() => {
-        if (!insights) return;
-        if (insights.status === "completed" || insights.status === "failed") {
-            setShouldPollInsights(false);
-        }
-    }, [insights]);
 
     const handleDeleteBoard = async () => {
         try {
@@ -161,13 +156,10 @@ export default function BoardDetailPage() {
     };
 
     const handleRefreshInsights = async () => {
-        // Start polling immediately to avoid loader gap when mutation finishes
-        setShouldPollInsights(true);
         try {
             await refreshBoardInsights(boardId);
         } catch (error) {
             console.error("Failed to refresh insights:", error);
-            setShouldPollInsights(false);
         }
     };
 
@@ -253,7 +245,7 @@ export default function BoardDetailPage() {
                                     )}
                                     <span className="relative z-10 mix-blend-normal flex items-center gap-2">
                                         {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                                        {tab === 'videos' && newVideosCount > 0 && (
+                                        {tab === 'insights' && newVideosCount > 0 && (
                                             <Badge variant="secondary" className="bg-white/10 text-white text-[10px] px-1 py-0 h-3.5 min-w-3.5 flex items-center justify-center">
                                                 {newVideosCount}
                                             </Badge>
@@ -349,7 +341,7 @@ export default function BoardDetailPage() {
                                             ) : (
                                                 <RefreshCw className="h-4 w-4" />
                                             )}
-                                            Update insights
+                                            {newVideosCount > 0 ? `Update insights (${newVideosCount} new)` : "Update insights"}
                                         </Button>
                                     </div>
                                 ) : null}
@@ -436,11 +428,25 @@ export default function BoardDetailPage() {
                                         >
                                             <Sparkles className="h-4 w-4" />
                                             Get insights
-                                        </Button>
+                                            </Button>
                                     )}
                                 </div>
                             ) : (
-                                <div className="grid gap-4 lg:grid-cols-2">
+                                <div className="relative">
+                                    {(isProcessingInsights || isRefreshingInsights || isInsightsFetching) && (
+                                        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/40 backdrop-blur-sm">
+                                            <div className="flex flex-col items-center gap-3">
+                                                <Loader2 className="h-7 w-7 text-white/80 animate-spin" />
+                                                <span className="text-xs text-white/80">
+                                                    {insightsStatus === "queued" ? "Starting insights..." : "Updating insights..."}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div className={cn(
+                                        "grid gap-4 lg:grid-cols-2",
+                                        (isProcessingInsights || isRefreshingInsights || isInsightsFetching) && "blur-sm"
+                                    )}>
                                     <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
                                         <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
                                             <CardTitle className="flex items-center gap-2 text-white">
@@ -558,6 +564,7 @@ export default function BoardDetailPage() {
                                             </div>
                                         </CardContent>
                                     </Card>
+                                    </div>
                                 </div>
                             )}
                         </div>

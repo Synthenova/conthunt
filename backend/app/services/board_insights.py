@@ -42,6 +42,7 @@ def _format_analysis_entry(media_asset_id: UUID, analysis: dict) -> str:
 
 async def _ensure_video_analyses(
     user_id: UUID,
+    user_role: str,
     media_asset_ids: list[UUID],
 ) -> list[dict]:
     """
@@ -51,19 +52,12 @@ async def _ensure_video_analyses(
     CRITICAL: Now charges credits for each missing video analysis via AnalysisService.
     If user runs out of credits, those specific videos will fail to analyze.
     """
-    from app.db.queries.users import get_user_by_uuid
     from app.services.analysis_service import analysis_service
 
-    # 1. Fetch User details for credit tracking
     async with get_db_connection() as conn:
-        user = await get_user_by_uuid(conn, user_id)
         analyses = await queries.get_video_analyses_by_media_assets(conn, media_asset_ids)
 
-    if not user:
-        logger.error(f"[INSIGHTS] User {user_id} not found, cannot trigger analyses")
-        return analyses 
-
-    role = user["role"]
+    role = user_role
 
     analyses_by_id = {row["media_asset_id"]: row for row in analyses}
     
@@ -126,6 +120,7 @@ async def _ensure_video_analyses(
 async def execute_board_insights(
     board_id: UUID,
     user_id: UUID,
+    user_role: str,
 ) -> None:
     """
     Build board-level insights based on cached video analyses.
@@ -177,7 +172,11 @@ async def execute_board_insights(
         return
 
     media_asset_ids = [row["media_asset_id"] for row in media_assets]
-    analyses = await _ensure_video_analyses(user_id, media_asset_ids) # Pass user_id for credit check
+    analyses = await _ensure_video_analyses(
+        user_id,
+        user_role,
+        media_asset_ids,
+    )
 
     completed_analyses = [
         row for row in analyses
