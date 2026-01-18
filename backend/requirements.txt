@@ -114,6 +114,7 @@ protobuf==6.33.2
 psycopg==3.3.2
 psycopg-binary==3.3.2
 psycopg-pool==3.3.0
+psycopg2-binary
 pyarrow==22.0.0
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
