@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     QUEUE_GEMINI: str = "gemini-queue"
     QUEUE_RAW_ARCHIVE: str = "raw-archive-queue"
     QUEUE_MEDIA_DOWNLOAD_PRIORITY: str = "media-download-priority"
+    QUEUE_SEARCH_WORKER: str = "search-worker-queue"
+    QUEUE_CHAT_STREAM: str = "chat-stream-queue"
 
 
     # ScrapeCreators API

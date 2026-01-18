@@ -10,7 +10,7 @@ import uuid
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Header, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, Header, UploadFile, File
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as redis
 from pydantic import BaseModel
@@ -26,6 +26,7 @@ from app.db import get_db_connection, set_rls_user, queries
 from app.storage import async_gcs_client
 from app.services.cdn_signer import generate_signed_url
 from app.agent.runtime import create_agent_graph
+from app.services.cloud_tasks import cloud_tasks
 from app.schemas.chats import (
     Chat, 
     CreateChatRequest, 
@@ -479,7 +480,6 @@ async def delete_chat_tag(
 @router.post("/{chat_id}/send")
 async def send_message(
     chat_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     req_obj: Request,
     user: dict = Depends(get_current_user),
 ):
@@ -488,7 +488,7 @@ async def send_message(
     if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
-    # Extract auth token from header
+    # Extract auth token from header for tool access
     auth_header = req_obj.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
          raise HTTPException(status_code=401, detail="Missing Bearer token")
@@ -497,9 +497,6 @@ async def send_message(
 
     send_request = SendMessageRequest.model_validate(await req_obj.json())
 
-    # Get graph from app state
-    graph = await _get_agent_graph(req_obj)
-    
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
         
@@ -535,14 +532,8 @@ async def send_message(
         "messages": [user_message],
     }
     
-    # Runtime context (not persisted) - includes auth token for tools
-    context = {
-        "x-auth-token": auth_token,
-    }
-    
     logger.info(
-        "[CHAT] Sending to agent, auth_token present: %s, images: %s",
-        bool(auth_token),
+        "[CHAT] Sending to agent, images: %s",
         bool(image_urls),
     )
 
@@ -553,15 +544,17 @@ async def send_message(
     finally:
         await r.close()
     
-    background_tasks.add_task(
-        stream_generator_to_redis,
-        graph=graph,
-        chat_id=str(chat_id),
-        thread_id=thread_id,
-        inputs=inputs,
-        context=context,
-        model_name=send_request.model,
-        image_urls=image_urls,
+    await cloud_tasks.create_http_task(
+        queue_name=settings.QUEUE_CHAT_STREAM,
+        relative_uri="/v1/tasks/chats/stream",
+        payload={
+            "chat_id": str(chat_id),
+            "thread_id": thread_id,
+            "inputs": inputs,
+            "model_name": send_request.model,
+            "image_urls": image_urls,
+            "auth_token": auth_token,
+        },
     )
     
     return {"ok": True}

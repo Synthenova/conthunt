@@ -224,6 +224,71 @@ class CloudTasksService:
                             conn, insights_id=row["id"], status="failed", error=str(e)
                         )
                         await conn.commit()
+
+        elif uri == "/v1/tasks/search/run":
+            from app.api.v1.search import search_worker
+
+            search_id = UUID(payload["search_id"])
+            user_uuid = UUID(payload["user_uuid"])
+            try:
+                await search_worker(
+                    search_id=search_id,
+                    user_uuid=user_uuid,
+                    query=payload["query"],
+                    inputs=payload["inputs"],
+                )
+            except Exception as e:
+                logger.error(f"[LOCAL] Search worker failed: {e}", exc_info=True)
+
+        elif uri == "/v1/tasks/search/load_more":
+            from app.api.v1.search import load_more_worker
+
+            search_id = UUID(payload["search_id"])
+            user_uuid = UUID(payload["user_uuid"])
+            try:
+                await load_more_worker(
+                    search_id=search_id,
+                    user_uuid=user_uuid,
+                    query=payload["query"],
+                    platform_cursors=payload["platform_cursors"],
+                )
+            except Exception as e:
+                logger.error(f"[LOCAL] Load more worker failed: {e}", exc_info=True)
+
+        elif uri == "/v1/tasks/chats/stream":
+            from app.api.v1.chats import stream_generator_to_redis
+            from app.agent.runtime import create_agent_graph
+            import redis.asyncio as redis
+
+            chat_id = UUID(payload["chat_id"])
+            try:
+                graph, saver_cm = await create_agent_graph(self.settings.DATABASE_URL)
+                try:
+                    await stream_generator_to_redis(
+                        graph=graph,
+                        chat_id=str(chat_id),
+                        thread_id=payload["thread_id"],
+                        inputs=payload["inputs"],
+                        context={"x-auth-token": payload.get("auth_token")} if payload.get("auth_token") else None,
+                        model_name=payload.get("model_name"),
+                        image_urls=payload.get("image_urls") or [],
+                    )
+                finally:
+                    try:
+                        await saver_cm.__aexit__(None, None, None)
+                    except Exception as e:
+                        logger.warning(f"[LOCAL] Failed to close chat saver context: {e}")
+            except Exception as e:
+                logger.error(f"[LOCAL] Chat stream failed: {e}", exc_info=True)
+                r = redis.from_url(self.settings.REDIS_URL, decode_responses=True)
+                try:
+                    await r.xadd(
+                        f"chat:{str(chat_id)}:stream",
+                        {"data": json.dumps({"type": "error", "error": str(e)})},
+                    )
+                    await r.expire(f"chat:{str(chat_id)}:stream", 60)
+                finally:
+                    await r.close()
                 
         else:
             logger.warning(f"[LOCAL] Unknown task URI: {uri}")

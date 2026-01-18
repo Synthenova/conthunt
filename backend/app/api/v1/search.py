@@ -13,7 +13,7 @@ import json
 import redis.asyncio as redis
 from sqlalchemy import text
 from sse_starlette.sse import EventSourceResponse
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
@@ -549,7 +549,6 @@ async def get_redis():
 @router.post("/search")
 async def create_search(
     request: SearchRequest,
-    background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
     """
@@ -606,13 +605,17 @@ async def create_search(
         )
         await conn.commit()
 
-    # Spawn background worker
-    background_tasks.add_task(
-        search_worker,
-        search_id=search_id,
-        user_uuid=user_uuid,
-        query=request.query,
-        inputs=request.inputs,
+    # Spawn background worker via Cloud Tasks
+    settings = get_settings()
+    await cloud_tasks.create_http_task(
+        queue_name=settings.QUEUE_SEARCH_WORKER,
+        relative_uri="/v1/tasks/search/run",
+        payload={
+            "search_id": str(search_id),
+            "user_uuid": str(user_uuid),
+            "query": request.query,
+            "inputs": request.inputs,
+        },
     )
     
     return {"search_id": str(search_id)}
@@ -702,7 +705,6 @@ async def stream_search(
 @router.post("/search/{search_id}/more")
 async def load_more(
     search_id: UUID,
-    background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ):
     """
@@ -765,13 +767,17 @@ async def load_more(
         context={"search_id": str(search_id), "platforms": list(platform_cursors.keys()), "action": "load_more"}
     )
     
-    # Spawn background worker
-    background_tasks.add_task(
-        load_more_worker,
-        search_id=search_id,
-        user_uuid=user_uuid,
-        query=search_data["query"],
-        platform_cursors=platform_cursors,
+    # Spawn background worker via Cloud Tasks
+    settings = get_settings()
+    await cloud_tasks.create_http_task(
+        queue_name=settings.QUEUE_SEARCH_WORKER,
+        relative_uri="/v1/tasks/search/load_more",
+        payload={
+            "search_id": str(search_id),
+            "user_uuid": str(user_uuid),
+            "query": search_data["query"],
+            "platform_cursors": platform_cursors,
+        },
     )
     
     return {"search_id": str(search_id), "platforms": list(platform_cursors.keys())}
