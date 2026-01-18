@@ -29,6 +29,9 @@ import { FadeIn, StaggerContainer, StaggerItem } from "@/components/ui/animation
 import { cn } from "@/lib/utils";
 import { RocketIcon, type RocketIconHandle } from "@/components/ui/rocket";
 import { useProducts } from "@/contexts/ProductsContext";
+import { useStreak } from "@/hooks/useStreak";
+import { StreakMilestone } from "@/components/streak/StreakMilestone";
+import { Flame, CheckCircle2, Circle } from "lucide-react";
 
 // Feature icons mapping
 const featureIcons: Record<string, any> = {
@@ -37,10 +40,33 @@ const featureIcons: Record<string, any> = {
     index_video: FileSearch,
 };
 
+// Default milestones for demo/fallback
+const defaultMilestones = [
+    { days_required: 10, reward_description: "500 Credits", icon_name: "gift", completed: false },
+    { days_required: 50, reward_description: "2,000 Credits + T-Shirt", icon_name: "shirt", completed: false },
+    { days_required: 100, reward_description: "5,000 Credits + Hoodie", icon_name: "package", completed: false },
+    { days_required: 365, reward_description: "Exclusive Event Invite", icon_name: "plane", completed: false },
+];
+
 export default function ProfilePage() {
     const { profile, user, subscription, isLoading } = useUser();
     const { getPlanName } = useProducts();
+    const { streak: streakData, isLoading: isStreakLoading } = useStreak();
     const rocketRef = useRef<RocketIconHandle>(null);
+
+    // Use streak data from API or fallback to demo data
+    const streak = streakData ?? {
+        current_streak: 1,
+        longest_streak: 1,
+        last_activity_date: null,
+        next_milestone: defaultMilestones[0],
+        milestones: defaultMilestones,
+        today_complete: false,
+        today_status: {
+            app_opened: true,
+            search_done: false,
+        },
+    };
 
     if (isLoading) {
         return (
@@ -120,6 +146,79 @@ export default function ProfilePage() {
                                 Upgrade Plan
                             </Link>
                         </Button>
+                    )}
+                </div>
+            </FadeIn>
+
+            {/* Streak Section */}
+            <FadeIn delay={0.1}>
+                <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                        <Flame className="h-5 w-5 text-orange-400" />
+                        <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground">
+                            Daily Streak
+                        </h2>
+                    </div>
+
+                    {streak ? (
+                        <>
+                            {/* Today's Progress */}
+                            <GlassPanel className="p-4">
+                                <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">Today's Progress</p>
+                                <div className="flex items-center gap-6">
+                                    <div className="flex items-center gap-2">
+                                        {streak.today_status.app_opened ? (
+                                            <CheckCircle2 className="h-5 w-5 text-green-500" />
+                                        ) : (
+                                            <Circle className="h-5 w-5 text-gray-500" />
+                                        )}
+                                        <span className={cn(
+                                            "text-sm",
+                                            streak.today_status.app_opened ? "text-green-400" : "text-gray-400"
+                                        )}>
+                                            App Opened
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {streak.today_status.search_done ? (
+                                            <CheckCircle2 className="h-5 w-5 text-green-500" />
+                                        ) : (
+                                            <Circle className="h-5 w-5 text-gray-500" />
+                                        )}
+                                        <span className={cn(
+                                            "text-sm",
+                                            streak.today_status.search_done ? "text-green-400" : "text-gray-400"
+                                        )}>
+                                            Search Made
+                                        </span>
+                                    </div>
+                                    {streak.today_complete && (
+                                        <Badge variant="outline" className="ml-auto border-green-500/30 bg-green-500/10 text-green-400">
+                                            Day Complete!
+                                        </Badge>
+                                    )}
+                                </div>
+                            </GlassPanel>
+
+                            {/* Streak Milestone Component */}
+                            <StreakMilestone
+                                currentStreak={streak.current_streak}
+                                nextMilestone={streak.next_milestone}
+                                milestones={streak.milestones}
+                            />
+
+                            {/* Longest Streak */}
+                            {streak.longest_streak > 0 && (
+                                <p className="text-xs text-gray-500 text-center">
+                                    🏆 Longest streak: {streak.longest_streak} {streak.longest_streak === 1 ? 'day' : 'days'}
+                                </p>
+                            )}
+                        </>
+                    ) : (
+                        <GlassPanel className="p-8 text-center">
+                            <Flame className="h-12 w-12 text-orange-400/30 mx-auto mb-4" />
+                            <p className="text-muted-foreground">Start your streak by opening the app and making a search!</p>
+                        </GlassPanel>
                     )}
                 </div>
             </FadeIn>

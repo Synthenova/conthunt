@@ -204,9 +204,14 @@ export function SelectionBar({
     return (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4 duration-300">
             <GlassCard
-                blur="3xl"
-                intensity="high"
-                className="px-4 py-3 flex items-center gap-4 shadow-2xl border border-white/20 rounded-full selection-bar-frost"
+                blur="none"
+                intensity="none"
+                className="px-4 py-3 flex items-center gap-4 shadow-2xl rounded-full"
+                style={{
+                    backgroundColor: '#00000091',
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)'
+                }}
             >
                 {/* Selection Count */}
                 <div className="flex items-center gap-2">
@@ -362,8 +367,8 @@ export function SelectionBar({
 
                 {/* Add to Chat */}
                 <Button
-                    variant="secondary"
-                    className="gap-2 rounded-full text-white cursor-pointer"
+                    variant="default"
+                    className="gap-2 glass-button-white hover:text-black"
                     onClick={handleAddToChat}
                     disabled={count === 0}
                 >
@@ -373,8 +378,8 @@ export function SelectionBar({
 
                 {/* Download Selected */}
                 <Button
-                    variant="secondary"
-                    className="gap-2 rounded-full text-white cursor-pointer"
+                    variant="default"
+                    className="gap-2 glass-button-white hover:text-black"
                     onClick={handleDownloadZip}
                     disabled={downloadDisabled || isDownloading || count === 0}
                     onMouseEnter={() => downloadIconRef.current?.startAnimation()}
@@ -385,7 +390,7 @@ export function SelectionBar({
                     ) : (
                         <DownloadIcon ref={downloadIconRef} size={16} />
                     )}
-                    {downloadDisabled ? "Download after search completes" : "Download ZIP"}
+                    {downloadDisabled ? "Download after search completes" : "Download"}
                 </Button>
 
                 {/* Remove from Board */}

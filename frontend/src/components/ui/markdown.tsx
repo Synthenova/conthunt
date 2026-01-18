@@ -25,6 +25,16 @@ function extractLanguage(className?: string): string {
 }
 
 const INITIAL_COMPONENTS: Partial<Components> = {
+  strong: function StrongComponent({ className, children, ...props }) {
+    return (
+      <strong
+        className={cn("font-semibold tracking-[0.035rem]", className)}
+        {...props}
+      >
+        {children}
+      </strong>
+    )
+  },
   code: function CodeComponent({ className, children, ...props }) {
     const isInline =
       !props.node?.position?.start.line ||
@@ -34,7 +44,7 @@ const INITIAL_COMPONENTS: Partial<Components> = {
       return (
         <span
           className={cn(
-            "bg-muted text-foreground rounded-sm px-1 py-0.5 font-mono text-sm border border-border",
+            "text-foreground rounded-sm px-1.5 py-0.5 font-mono text-sm border inline-block align-middle !bg-[#1a1a1a] !border-[#333333] -mt-0.5",
             className
           )}
           {...props}

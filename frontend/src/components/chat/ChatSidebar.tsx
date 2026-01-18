@@ -165,7 +165,7 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
             {/* Sidebar */}
             <aside
                 className={cn(
-                    "flex flex-col bg-background/95 backdrop-blur-lg border-l border-white/5",
+                    "flex flex-col bg-background/95 backdrop-blur-lg border-l border-white/5 font-nav",
                     "transition-all duration-300 ease-in-out",
                     // Mobile: fixed overlay with full viewport height
                     "fixed inset-y-0 right-0 z-50 w-[90%] max-w-[420px] h-screen",

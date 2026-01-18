@@ -298,8 +298,8 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
                                 markdown={isAi}
                                 className={
                                     !isAi
-                                        ? 'whitespace-pre-wrap' // Human: plain text
-                                        : 'bg-transparent p-0'  // AI: markdown
+                                        ? 'whitespace-pre-wrap !px-4 !py-2.5 text-base leading-[26px] font-light tracking-[0.035rem]' // Human: plain text
+                                        : 'bg-transparent p-0 text-base leading-[26px] font-light tracking-[0.035rem]'  // AI: markdown
                                 }
                             >
                                 {segment.value.trim()}
@@ -591,8 +591,8 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                 <div className="rounded-full bg-secondary p-4 mb-4">
                     <MessageSquare className="h-8 w-8 text-muted-foreground" />
                 </div>
-                <p className="text-sm text-muted-foreground">
-                    Send a message to start chatting
+                <p className="text-base text-muted-foreground leading-[26px] font-light tracking-[0.035rem]">
+                    Send a message
                 </p>
             </div>
         );
@@ -611,7 +611,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                 <Message key={item.id} className="justify-start">
                                     <div className="w-full max-w-[95%] mb-2">
                                         <Collapsible defaultOpen={hasActiveTools}>
-                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
+                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group font-bold tracking-[0.06em]">
                                                 <span>Thinking</span>
                                                 <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
                                             </CollapsibleTrigger>
@@ -634,7 +634,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                     <div
                                         className={
                                             msg.type === 'human'
-                                                ? 'glass max-w-[85%] text-foreground shadow-lg border-primary/20 bg-primary/10 rounded-xl pt-3 px-2 pb-2'
+                                                ? 'glass max-w-[85%] text-foreground shadow-lg border-white/10 bg-[#1A1A1A] rounded-xl !p-0'
                                                 : 'bg-transparent max-w-[95%] text-foreground p-0'
                                         }
                                     >
@@ -655,7 +655,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                         <Message key="streaming-tools" className="justify-start">
                             <div className="w-full max-w-[95%] mb-2">
                                 <Collapsible defaultOpen={true}>
-                                    <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group">
+                                    <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group font-bold tracking-[0.06em]">
                                         <span>Thinking</span>
                                         <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
                                     </CollapsibleTrigger>

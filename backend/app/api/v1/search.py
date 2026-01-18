@@ -592,6 +592,17 @@ async def create_search(
         context={"platforms": list(request.inputs.keys())}
     )
 
+    # Track search for streak system
+    try:
+        from app.db.queries import streaks as streak_queries
+        timezone = request.dict().get("timezone", "UTC") if hasattr(request, "timezone") else "UTC"
+        async with get_db_connection() as conn:
+            await streak_queries.record_search_activity(conn, user_uuid, timezone)
+    except Exception as e:
+        # Don't fail search if streak tracking fails
+        from app.core import logger
+        logger.warning(f"Streak tracking failed for user {user_uuid}: {e}")
+
     # Create search entry
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
@@ -616,6 +627,7 @@ async def create_search(
     )
     
     return {"search_id": str(search_id)}
+
 
 
 @router.get("/search/{search_id}/stream")

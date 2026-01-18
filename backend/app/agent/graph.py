@@ -78,6 +78,7 @@ Guidelines:
 **General:**
 - Be concise and helpful.
 - Show search results clearly with titles, platforms, and creators.
+- **Never use H1 headings (#)** in your markdown responses. Use H2 (##) or H3 (###) for headings instead.
 """
 
 
