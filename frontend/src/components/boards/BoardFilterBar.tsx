@@ -10,6 +10,16 @@ import {
     DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
 import { ArrowUpDown, Calendar, Filter } from "lucide-react";
+import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
+
+function getPlatformIcon(platform: string) {
+    const normalized = platform.toLowerCase();
+    if (normalized.includes("tiktok")) return FaTiktok;
+    if (normalized.includes("instagram")) return FaInstagram;
+    if (normalized.includes("youtube")) return FaYoutube;
+    if (normalized.includes("pinterest")) return FaPinterest;
+    return FaGlobe;
+}
 
 export type ClientSortOption = "default" | "views" | "likes" | "shares" | "comments" | "newest";
 export type ClientDateFilter =
@@ -66,9 +76,8 @@ export function BoardFilterBar({
         <div className="flex items-center gap-2">
             <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="glass-button h-9 px-4 gap-2 text-xs font-medium border border-white/10 hover:border-white/20">
-                        <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="text-muted-foreground">Sort:</span>
+                    <Button variant="ghost" size="sm" className="glass-button h-12 !px-5 gap-2.5 text-sm font-medium border border-white/10 hover:border-white/20">
+                        <ArrowUpDown className="h-4 w-4 text-muted-foreground" />
                         <span className="text-white">{sortLabels[sort]}</span>
                     </Button>
                 </DropdownMenuTrigger>
@@ -89,9 +98,8 @@ export function BoardFilterBar({
 
             <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="glass-button h-9 px-4 gap-2 text-xs font-medium border border-white/10 hover:border-white/20">
-                        <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="text-muted-foreground">Date:</span>
+                    <Button variant="ghost" size="sm" className="glass-button h-12 !px-5 gap-2.5 text-sm font-medium border border-white/10 hover:border-white/20">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
                         <span className="text-white">{filterLabels[dateFilter]}</span>
                     </Button>
                 </DropdownMenuTrigger>
@@ -113,14 +121,24 @@ export function BoardFilterBar({
             {platforms.length > 0 && (
                 <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="glass-button h-9 px-4 gap-2 text-xs font-medium border border-white/10 hover:border-white/20">
-                            <Filter className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span className="text-muted-foreground">Platform:</span>
-                            <span className="text-white">
-                                {selectedPlatforms.length === 0 || selectedPlatforms.length === platforms.length
-                                    ? "All"
-                                    : `${selectedPlatforms.length} selected`}
-                            </span>
+                        <Button variant="ghost" size="sm" className="glass-button h-12 px-7 gap-2.5 text-sm font-medium border border-white/10 hover:border-white/20">
+                            {(!selectedPlatforms || selectedPlatforms.length === 0 || selectedPlatforms.length === platforms.length) ? (
+                                // Show all icons if All or none selected
+                                <div className="flex items-center gap-1.5">
+                                    {platforms.map(p => {
+                                        const Icon = getPlatformIcon(p);
+                                        return <Icon key={p} className="h-3.5 w-3.5 text-white/70" />;
+                                    })}
+                                </div>
+                            ) : (
+                                // Show selected platform icons
+                                <div className="flex items-center gap-1.5">
+                                    {selectedPlatforms.map(p => {
+                                        const Icon = getPlatformIcon(p);
+                                        return <Icon key={p} className="h-3.5 w-3.5 text-white" />;
+                                    })}
+                                </div>
+                            )}
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
@@ -141,8 +159,12 @@ export function BoardFilterBar({
                                     }
                                 }}
                                 onSelect={(e) => e.preventDefault()}
-                                className="capitalize focus:bg-white/10 focus:text-white cursor-pointer"
+                                className="capitalize focus:bg-white/10 focus:text-white cursor-pointer flex items-center gap-2"
                             >
+                                {(() => {
+                                    const Icon = getPlatformIcon(p);
+                                    return <Icon className="h-3.5 w-3.5 text-white/70" />;
+                                })()}
                                 {p.replace('_', ' ')}
                             </DropdownMenuCheckboxItem>
                         ))}

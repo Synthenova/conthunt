@@ -691,7 +691,6 @@ async def create_search(
             context={"platforms": list(request.inputs.keys())},
             conn=conn,
         )
-
         search_id = await queries.insert_search(
             conn=conn,
             user_id=user_uuid,
@@ -716,6 +715,7 @@ async def create_search(
     )
     
     return {"search_id": str(search_id)}
+
 
 
 @router.get("/search/{search_id}/stream")

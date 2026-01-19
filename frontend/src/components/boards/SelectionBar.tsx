@@ -204,9 +204,12 @@ export function SelectionBar({
     return (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4 duration-300">
             <GlassCard
-                blur="3xl"
-                intensity="high"
-                className="px-4 py-3 flex items-center gap-4 shadow-2xl border border-white/20 rounded-full selection-bar-frost"
+                className="px-4 py-3 flex items-center gap-4 shadow-2xl rounded-full"
+                style={{
+                    backgroundColor: '#00000091',
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)'
+                }}
             >
                 {/* Selection Count */}
                 <div className="flex items-center gap-2">
@@ -226,7 +229,7 @@ export function SelectionBar({
                         <PopoverTrigger asChild>
                             <Button
                                 variant="default"
-                                className="gap-2 glass-button-white hover:text-black"
+                                className="gap-1.5 glass-button-white hover:text-black"
                                 disabled={isAddingToBoard}
                             >
                                 {isAddingToBoard ? (
@@ -234,7 +237,7 @@ export function SelectionBar({
                                 ) : (
                                     <FolderPlus className="h-4 w-4" />
                                 )}
-                                Add to Board
+                                <span className="relative bottom-[1px]">Add to Board</span>
                                 <ChevronDown className="h-4 w-4" />
                             </Button>
                         </PopoverTrigger>
@@ -362,19 +365,19 @@ export function SelectionBar({
 
                 {/* Add to Chat */}
                 <Button
-                    variant="secondary"
-                    className="gap-2 rounded-full text-white cursor-pointer"
+                    variant="default"
+                    className="gap-1.5 glass-button-white hover:text-black"
                     onClick={handleAddToChat}
                     disabled={count === 0}
                 >
                     <MessageSquarePlus className="h-4 w-4" />
-                    Add to chat
+                    <span className="relative bottom-[1px]">Add to chat</span>
                 </Button>
 
                 {/* Download Selected */}
                 <Button
-                    variant="secondary"
-                    className="gap-2 rounded-full text-white cursor-pointer"
+                    variant="default"
+                    className="gap-1.5 glass-button-white hover:text-black"
                     onClick={handleDownloadZip}
                     disabled={downloadDisabled || isDownloading || count === 0}
                     onMouseEnter={() => downloadIconRef.current?.startAnimation()}
@@ -385,7 +388,7 @@ export function SelectionBar({
                     ) : (
                         <DownloadIcon ref={downloadIconRef} size={16} />
                     )}
-                    {downloadDisabled ? "Download after search completes" : "Download ZIP"}
+                    <span className="relative bottom-[1px]">{downloadDisabled ? "Download after search completes" : "Download"}</span>
                 </Button>
 
                 {/* Remove from Board */}
