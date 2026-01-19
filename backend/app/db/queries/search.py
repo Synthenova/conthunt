@@ -242,6 +242,7 @@ async def upsert_content_items_batch(
         unique_items[(item.platform, item.external_id)] = item
     
     item_list = list(unique_items.values())
+    item_list.sort(key=lambda item: (item.platform, item.external_id))
     prepared_items = []
     
     for item in item_list:
@@ -290,6 +291,7 @@ async def upsert_content_items_batch(
                     author_id text, author_name text, author_url text, author_image_url text,
                     metrics text, payload text
                 )
+                ORDER BY platform, external_id
                 ON CONFLICT (platform, external_id) DO UPDATE SET
                     metrics = EXCLUDED.metrics,
                     updated_at = now(),

@@ -12,6 +12,7 @@ import httpx
 import json
 import redis.asyncio as redis
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sse_starlette.sse import EventSourceResponse
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 
@@ -33,6 +34,15 @@ from app.services.cloud_tasks import cloud_tasks
 from app.realtime.stream_hub import stream_id_gt
 
 router = APIRouter()
+
+def _is_deadlock_error(err: Exception) -> bool:
+    if isinstance(err, DBAPIError):
+        orig = err.orig
+        if getattr(orig, "sqlstate", None) == "40P01":
+            return True
+    if getattr(err, "sqlstate", None) == "40P01":
+        return True
+    return "deadlock detected" in str(err).lower()
 
 
 @trace_span("search.call_platform")
@@ -196,120 +206,145 @@ async def search_worker(
         
         # ========== DB WORK (happens after frontend is done) ==========
         assets_to_download = []
-        upload_tasks = []  # For fire-and-forget GCS uploads
-        
-        async with get_db_connection() as conn:
-            await set_rls_user(conn, user_uuid)
-            pass
-            
-            # Prepare batch data
-            platform_calls_batch = []
-            all_content_items = []
-            items_with_rank = []  # List of (item, rank)
-            rank = 0
-            
-            for result in collected_results:
-                slug = result.platform
-                
-                # Collect platform call
-                platform_calls_batch.append({
-                    "search_id": search_id,
-                    "platform": slug,
-                    "request_params": result.request_params,
-                    "success": result.success,
-                    "http_status": result.http_status,
-                    "error": result.error,
-                    "duration_ms": result.duration_ms,
-                    "next_cursor": result.parsed.next_cursor if result.parsed else None,
-                    "response_gcs_uri": None,
-                    "response_meta": result.parsed.response_meta if result.parsed else {},
+        raw_archive_tasks = []
+
+        for result in collected_results:
+            if result.success and result.parsed:
+                raw_json_bytes = json.dumps(result.parsed.raw_response).encode("utf-8")
+                compressed = gzip.compress(raw_json_bytes)
+                compressed_b64 = base64.b64encode(compressed).decode("ascii")
+                raw_archive_tasks.append({
+                    "platform": result.platform,
+                    "search_id": str(search_id),
+                    "raw_json_compressed": compressed_b64,
                 })
-                
-                # Queue GCS upload as task (one per platform)
-                if result.success and result.parsed:
-                    # Compress raw JSON to stay under Cloud Tasks' 100KB limit
-                    raw_json_bytes = json.dumps(result.parsed.raw_response).encode('utf-8')
-                    compressed = gzip.compress(raw_json_bytes)
-                    compressed_b64 = base64.b64encode(compressed).decode('ascii')
+        
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            assets_to_download = []
+            try:
+                async with get_db_connection() as conn:
+                    await set_rls_user(conn, user_uuid)
+                    pass
                     
+                    # Prepare batch data
+                    platform_calls_batch = []
+                    all_content_items = []
+                    items_with_rank = []  # List of (item, rank)
+                    rank = 0
+                    
+                    for result in collected_results:
+                        slug = result.platform
+                        
+                        # Collect platform call
+                        platform_calls_batch.append({
+                            "search_id": search_id,
+                            "platform": slug,
+                            "request_params": result.request_params,
+                            "success": result.success,
+                            "http_status": result.http_status,
+                            "error": result.error,
+                            "duration_ms": result.duration_ms,
+                            "next_cursor": result.parsed.next_cursor if result.parsed else None,
+                            "response_gcs_uri": None,
+                            "response_meta": result.parsed.response_meta if result.parsed else {},
+                        })
+                        
+                        # Collect items
+                        if result.success and result.parsed:
+                            for item in result.parsed.items:
+                                rank += 1
+                                all_content_items.append(item)
+                                items_with_rank.append((item, rank))
+                    
+                    # Batch Operations
+                    
+                    # 1. Insert platform calls
+                    if platform_calls_batch:
+                        await queries.insert_platform_calls_batch(conn, platform_calls_batch)
+                    
+                    # 2. Upsert content items
+                    # Returns map: (platform, external_id) -> (content_item_id, was_inserted)
+                    item_id_map = await queries.upsert_content_items_batch(conn, all_content_items)
+                    
+                    # 3. Prepare search results and media assets
+                    search_results_batch = []
+                    media_assets_batch = []
+                    
+                    for item, item_rank in items_with_rank:
+                        key = (item.platform, item.external_id)
+                        if key not in item_id_map:
+                            continue
+                            
+                        content_item_id, was_inserted = item_id_map[key]
+                        
+                        search_results_batch.append({
+                            "search_id": search_id,
+                            "content_item_id": content_item_id,
+                            "platform": item.platform,
+                            "rank": item_rank,
+                        })
+                        
+                        # Only insert assets if item was newly inserted
+                        if was_inserted:
+                            # Deterministic Content ID (re-calculate to ensure seed match)
+                            det_content_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
+                            
+                            for media_url in item.media_urls:
+                                # Deterministic Asset ID
+                                asset_seed = f"{det_content_id}:{media_url.asset_type.value}:{media_url.source_url}"
+                                asset_id = uuid.uuid5(uuid.NAMESPACE_URL, asset_seed)
+                                media_assets_batch.append({
+                                    "id": asset_id,
+                                    "content_item_id": content_item_id,
+                                    "asset_type": media_url.asset_type.value,
+                                    "source_url": media_url.source_url,
+                                    "source_url_list": media_url.source_url_list,
+                                })
+                                assets_to_download.append({
+                                    "id": str(asset_id),
+                                    "platform": item.platform,
+                                    "external_id": item.external_id,
+                                })
+
+                    # 4. Insert search results and media assets
+                    if search_results_batch:
+                        await queries.insert_search_results_batch(conn, search_results_batch)
+                    
+                    if media_assets_batch:
+                        await queries.insert_media_assets_batch(conn, media_assets_batch)
+                    
+                    # Update status to completed
+                    await queries.update_search_status(conn, search_id, "completed")
+                    await conn.commit()
+                    logger.info(f"Saved search {search_id} with {rank} results (batch mode)")
+                break
+            except Exception as e:
+                if _is_deadlock_error(e) and attempt < max_attempts - 1:
+                    logger.warning(
+                        "Deadlock detected for search %s, retrying (%s/%s)",
+                        search_id,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    await asyncio.sleep(0.2 * (attempt + 1))
+                    continue
+                raise
+
+        if raw_archive_tasks:
+            for payload in raw_archive_tasks:
+                try:
                     await cloud_tasks.create_http_task(
                         queue_name=settings.QUEUE_RAW_ARCHIVE,
                         relative_uri="/v1/tasks/raw/archive",
-                        payload={
-                            "platform": slug,
-                            "search_id": str(search_id),
-                            "raw_json_compressed": compressed_b64
-                        }
+                        payload=payload,
                     )
-                
-                # Collect items
-                if result.success and result.parsed:
-                    for item in result.parsed.items:
-                        rank += 1
-                        all_content_items.append(item)
-                        items_with_rank.append((item, rank))
-            
-            # Batch Operations
-            
-            # 1. Insert platform calls
-            if platform_calls_batch:
-                await queries.insert_platform_calls_batch(conn, platform_calls_batch)
-            
-            # 2. Upsert content items
-            # Returns map: (platform, external_id) -> (content_item_id, was_inserted)
-            item_id_map = await queries.upsert_content_items_batch(conn, all_content_items)
-            
-            # 3. Prepare search results and media assets
-            search_results_batch = []
-            media_assets_batch = []
-            
-            for item, item_rank in items_with_rank:
-                key = (item.platform, item.external_id)
-                if key not in item_id_map:
-                    continue
-                    
-                content_item_id, was_inserted = item_id_map[key]
-                
-                search_results_batch.append({
-                    "search_id": search_id,
-                    "content_item_id": content_item_id,
-                    "platform": item.platform,
-                    "rank": item_rank,
-                })
-                
-                # Only insert assets if item was newly inserted
-                if was_inserted:
-                    # Deterministic Content ID (re-calculate to ensure seed match)
-                    det_content_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
-                    
-                    for media_url in item.media_urls:
-                        # Deterministic Asset ID
-                        asset_seed = f"{det_content_id}:{media_url.asset_type.value}:{media_url.source_url}"
-                        asset_id = uuid.uuid5(uuid.NAMESPACE_URL, asset_seed)
-                        media_assets_batch.append({
-                            "id": asset_id,
-                            "content_item_id": content_item_id,
-                            "asset_type": media_url.asset_type.value,
-                            "source_url": media_url.source_url,
-                            "source_url_list": media_url.source_url_list,
-                        })
-                        assets_to_download.append({
-                            "id": str(asset_id),
-                            "platform": item.platform,
-                            "external_id": item.external_id,
-                        })
-
-            # 4. Insert search results and media assets
-            if search_results_batch:
-                await queries.insert_search_results_batch(conn, search_results_batch)
-            
-            if media_assets_batch:
-                await queries.insert_media_assets_batch(conn, media_assets_batch)
-            
-            # Update status to completed
-            await queries.update_search_status(conn, search_id, "completed")
-            await conn.commit()
-            logger.info(f"Saved search {search_id} with {rank} results (batch mode)")
+                except Exception as task_err:
+                    logger.warning(
+                        "Failed to enqueue raw archive task for %s: %s",
+                        payload.get("platform"),
+                        task_err,
+                    )
 
         # ========== FINISH STREAMING ==========
         # Push done event - frontend stops loading here
@@ -419,113 +454,140 @@ async def load_more_worker(
         
         # ========== DB WORK ==========
         assets_to_download = []
-        
-        async with get_db_connection() as conn:
-            await set_rls_user(conn, user_uuid)
-            
-            # Get current max rank for this search
-            rank_result = await conn.execute(
-                text("SELECT COALESCE(MAX(rank), 0) FROM search_results WHERE search_id = :search_id"),
-                {"search_id": search_id}
-            )
-            current_max_rank = rank_result.scalar() or 0
-            
-            # Prepare batch data
-            platform_calls_batch = []
-            all_content_items = []
-            items_with_rank = []
-            rank = current_max_rank
-            
-            for result in collected_results:
-                slug = result.platform
-                
-                # Collect platform call (new call with updated cursor)
-                platform_calls_batch.append({
-                    "search_id": search_id,
-                    "platform": slug,
-                    "request_params": result.request_params,
-                    "success": result.success,
-                    "http_status": result.http_status,
-                    "error": result.error,
-                    "duration_ms": result.duration_ms,
-                    "next_cursor": result.parsed.next_cursor if result.parsed else None,
-                    "response_gcs_uri": None,
-                    "response_meta": result.parsed.response_meta if result.parsed else {},
+        raw_archive_tasks = []
+
+        for result in collected_results:
+            if result.success and result.parsed:
+                raw_json_bytes = json.dumps(result.parsed.raw_response).encode("utf-8")
+                compressed = gzip.compress(raw_json_bytes)
+                compressed_b64 = base64.b64encode(compressed).decode("ascii")
+                raw_archive_tasks.append({
+                    "platform": result.platform,
+                    "search_id": str(search_id),
+                    "raw_json_compressed": compressed_b64,
                 })
-                
-                # Queue GCS upload as task
-                if result.success and result.parsed:
-                    raw_json_bytes = json.dumps(result.parsed.raw_response).encode('utf-8')
-                    compressed = gzip.compress(raw_json_bytes)
-                    compressed_b64 = base64.b64encode(compressed).decode('ascii')
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            assets_to_download = []
+            try:
+                async with get_db_connection() as conn:
+                    await set_rls_user(conn, user_uuid)
                     
+                    # Get current max rank for this search
+                    rank_result = await conn.execute(
+                        text("SELECT COALESCE(MAX(rank), 0) FROM search_results WHERE search_id = :search_id"),
+                        {"search_id": search_id}
+                    )
+                    current_max_rank = rank_result.scalar() or 0
+                    
+                    # Prepare batch data
+                    platform_calls_batch = []
+                    all_content_items = []
+                    items_with_rank = []
+                    rank = current_max_rank
+                    
+                    for result in collected_results:
+                        slug = result.platform
+                        
+                        # Collect platform call (new call with updated cursor)
+                        platform_calls_batch.append({
+                            "search_id": search_id,
+                            "platform": slug,
+                            "request_params": result.request_params,
+                            "success": result.success,
+                            "http_status": result.http_status,
+                            "error": result.error,
+                            "duration_ms": result.duration_ms,
+                            "next_cursor": result.parsed.next_cursor if result.parsed else None,
+                            "response_gcs_uri": None,
+                            "response_meta": result.parsed.response_meta if result.parsed else {},
+                        })
+                        
+                        # Collect items
+                        if result.success and result.parsed:
+                            for item in result.parsed.items:
+                                rank += 1
+                                all_content_items.append(item)
+                                items_with_rank.append((item, rank))
+                    
+                    # Batch Operations
+                    if platform_calls_batch:
+                        await queries.insert_platform_calls_batch(conn, platform_calls_batch)
+                    
+                    item_id_map = await queries.upsert_content_items_batch(conn, all_content_items)
+                    
+                    search_results_batch = []
+                    media_assets_batch = []
+                    
+                    for item, item_rank in items_with_rank:
+                        key = (item.platform, item.external_id)
+                        if key not in item_id_map:
+                            continue
+                            
+                        content_item_id, was_inserted = item_id_map[key]
+                        
+                        search_results_batch.append({
+                            "search_id": search_id,
+                            "content_item_id": content_item_id,
+                            "platform": item.platform,
+                            "rank": item_rank,
+                        })
+                        
+                        if was_inserted:
+                            det_content_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
+                            
+                            for media_url in item.media_urls:
+                                asset_seed = f"{det_content_id}:{media_url.asset_type.value}:{media_url.source_url}"
+                                asset_id = uuid.uuid5(uuid.NAMESPACE_URL, asset_seed)
+                                media_assets_batch.append({
+                                    "id": asset_id,
+                                    "content_item_id": content_item_id,
+                                    "asset_type": media_url.asset_type.value,
+                                    "source_url": media_url.source_url,
+                                    "source_url_list": media_url.source_url_list,
+                                })
+                                assets_to_download.append({
+                                    "id": str(asset_id),
+                                    "platform": item.platform,
+                                    "external_id": item.external_id,
+                                })
+
+                    if search_results_batch:
+                        await queries.insert_search_results_batch(conn, search_results_batch)
+                    
+                    if media_assets_batch:
+                        await queries.insert_media_assets_batch(conn, media_assets_batch)
+                    
+                    await conn.commit()
+                    logger.info(f"Load more for search {search_id}: added {len(items_with_rank)} results")
+                break
+            except Exception as e:
+                if _is_deadlock_error(e) and attempt < max_attempts - 1:
+                    logger.warning(
+                        "Deadlock detected for load more %s, retrying (%s/%s)",
+                        search_id,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    await asyncio.sleep(0.2 * (attempt + 1))
+                    continue
+                raise
+
+        if raw_archive_tasks:
+            for payload in raw_archive_tasks:
+                try:
                     await cloud_tasks.create_http_task(
                         queue_name=settings.QUEUE_RAW_ARCHIVE,
                         relative_uri="/v1/tasks/raw/archive",
-                        payload={
-                            "platform": slug,
-                            "search_id": str(search_id),
-                            "raw_json_compressed": compressed_b64
-                        }
+                        payload=payload,
                     )
-                
-                # Collect items
-                if result.success and result.parsed:
-                    for item in result.parsed.items:
-                        rank += 1
-                        all_content_items.append(item)
-                        items_with_rank.append((item, rank))
-            
-            # Batch Operations
-            if platform_calls_batch:
-                await queries.insert_platform_calls_batch(conn, platform_calls_batch)
-            
-            item_id_map = await queries.upsert_content_items_batch(conn, all_content_items)
-            
-            search_results_batch = []
-            media_assets_batch = []
-            
-            for item, item_rank in items_with_rank:
-                key = (item.platform, item.external_id)
-                if key not in item_id_map:
-                    continue
-                    
-                content_item_id, was_inserted = item_id_map[key]
-                
-                search_results_batch.append({
-                    "search_id": search_id,
-                    "content_item_id": content_item_id,
-                    "platform": item.platform,
-                    "rank": item_rank,
-                })
-                
-                if was_inserted:
-                    det_content_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{item.platform}:{item.external_id}"))
-                    
-                    for media_url in item.media_urls:
-                        asset_seed = f"{det_content_id}:{media_url.asset_type.value}:{media_url.source_url}"
-                        asset_id = uuid.uuid5(uuid.NAMESPACE_URL, asset_seed)
-                        media_assets_batch.append({
-                            "id": asset_id,
-                            "content_item_id": content_item_id,
-                            "asset_type": media_url.asset_type.value,
-                            "source_url": media_url.source_url,
-                            "source_url_list": media_url.source_url_list,
-                        })
-                        assets_to_download.append({
-                            "id": str(asset_id),
-                            "platform": item.platform,
-                            "external_id": item.external_id,
-                        })
-
-            if search_results_batch:
-                await queries.insert_search_results_batch(conn, search_results_batch)
-            
-            if media_assets_batch:
-                await queries.insert_media_assets_batch(conn, media_assets_batch)
-            
-            await conn.commit()
-            logger.info(f"Load more for search {search_id}: added {len(items_with_rank)} results")
+                except Exception as task_err:
+                    logger.warning(
+                        "Failed to enqueue raw archive task for %s: %s",
+                        payload.get("platform"),
+                        task_err,
+                    )
 
         # ========== FINISH STREAMING ==========
         await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
@@ -818,13 +880,13 @@ async def load_more(
                 # Merge original params with cursor
                 params = {**original_inputs[platform], **cursor}
                 platform_cursors[platform] = params
-        
+    
         if not platform_cursors:
             raise HTTPException(
                 status_code=400, 
                 detail="No more results available (no platforms have pagination cursors)"
             )
-    
+
         # Check and charge credits
         from app.services.credit_tracker import credit_tracker
         from sqlalchemy import text
@@ -835,7 +897,7 @@ async def load_more(
         )
         row = result.fetchone()
         period_start = row[0] if row else None
-    
+
         await credit_tracker.check(
             user_id=user_uuid,
             role=user.get("role", "free"),
