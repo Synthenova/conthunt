@@ -143,19 +143,13 @@ async def get_board_items(
         if not board:
             raise HTTPException(status_code=404, detail="Board not found")
             
-        t_start_query = time.time()
-        items = await queries.get_board_items(conn, board_id)
-        t_end_query = time.time()
-        logger.info(f"[TIMING] get_board_items query took: {t_end_query - t_start_query:.4f}s")
+        items = await queries.get_board_items(conn, board_id)        
         
-        # Sign URLs for stored assets
-        t_start_sign = time.time()
+        # Sign URLs for stored assets        
         for item in items:
             for asset in item.get("assets", []):
                 if asset.get("status") in ("stored", "downloaded") and asset.get("gcs_uri"):
-                    asset["source_url"] = generate_signed_url(asset["gcs_uri"])
-        t_end_sign = time.time()
-        logger.info(f"[TIMING] signing URLs took: {t_end_sign - t_start_sign:.4f}s for {len(items)} items")
+                    asset["source_url"] = generate_signed_url(asset["gcs_uri"])        
 
         return items
 
@@ -166,7 +160,7 @@ async def get_board_items_summary(
     user: dict = Depends(get_current_user),
 ):
     """Get board items summary for agent - minimal text data + media_asset_id only."""
-    logger.info(f"[BOARD_SUMMARY] Request for board_id={board_id}")
+    logger.debug(f"[BOARD_SUMMARY] Request for board_id={board_id}")
     user_uuid = user["db_user_id"]
     if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
@@ -181,7 +175,7 @@ async def get_board_items_summary(
             raise HTTPException(status_code=404, detail="Board not found")
         
         result = await queries.get_board_items_summary(conn, board_id)
-        logger.info(f"[BOARD_SUMMARY] Returning {len(result) if result else 0} items")
+        logger.debug(f"[BOARD_SUMMARY] Returning {len(result) if result else 0} items")
         return result
 
 
@@ -262,6 +256,7 @@ async def refresh_board_insights(
         payload={
             "board_id": str(board_id),
             "user_id": str(user_uuid),
+            "user_role": user.get("role"),
         },
     )
 

@@ -386,7 +386,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                         onRemoveImageChip={handleRemoveImageChip}
                     />
                     <PromptInputTextarea
-                        placeholder="Message agent..."
+                        placeholder="Send a message"
                         className="text-sm min-h-[40px] text-foreground"
                     />
                     <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">

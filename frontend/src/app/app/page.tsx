@@ -73,17 +73,10 @@ export default function HomePage() {
 
             <div className="w-full max-w-2xl px-4 flex flex-col items-center gap-8">
                 {/* Hero Text */}
-                <div className="text-center space-y-3">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full glass border-primary/20 text-primary text-sm animate-in fade-in slide-in-from-bottom-4 duration-1000">
-                        <Sparkles className="h-4 w-4" />
-                        AI-Powered Content Discovery
-                    </div>
-                    <h1 className="text-4xl font-bold text-white">
+                <div className="text-center space-y-4 pt-8">
+                    <h1 className="text-3xl md:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
                         Where should we begin?
                     </h1>
-                    <p className="text-muted-foreground max-w-md mx-auto">
-                        Search for content across TikTok, Instagram, YouTube and more. Just describe what you&apos;re looking for.
-                    </p>
                 </div>
 
                 {/* Chat Input */}

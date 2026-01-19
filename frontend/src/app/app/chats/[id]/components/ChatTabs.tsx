@@ -1,5 +1,6 @@
 
 import { useRef, useCallback, useState } from "react";
+import { motion } from "framer-motion";
 import { Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -68,7 +69,7 @@ export function ChatTabs({
         <div className="min-w-0 flex justify-start overflow-hidden flex-shrink">
             <div
                 ref={tabsScrollRef}
-                className="flex p-1 bg-white/5 glass-nav rounded-xl relative h-10 items-center max-w-full overflow-x-auto scrollbar-hide cursor-grab"
+                className="flex p-1.5 bg-white/5 glass-nav rounded-xl relative h-14 items-center max-w-full overflow-x-auto scrollbar-hide cursor-grab"
                 style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
                 onMouseDown={handleTabsMouseDown}
                 onMouseMove={handleTabsMouseMove}
@@ -92,12 +93,17 @@ export function ChatTabs({
                             e.currentTarget.style.width = '';
                         }}
                         className={cn(
-                            "relative px-4 h-8 flex items-center justify-center text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0 group/tab",
+                            "relative px-5 h-11 flex items-center justify-center text-[12px] font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0 group/tab",
                             activeSearchId === search.id ? "text-white" : "text-gray-500 hover:text-gray-300"
                         )}
+                        aria-label={search.label}
                     >
                         {activeSearchId === search.id && (
-                            <div className="absolute inset-0 rounded-lg glass-pill" />
+                            <motion.div
+                                layoutId="active-pill"
+                                className="absolute inset-0 rounded-lg glass-pill"
+                                transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                            />
                         )}
                         <span
                             className={cn(

@@ -5,6 +5,7 @@ from google.cloud import tasks_v2
 from google.protobuf import timestamp_pb2
 
 from app.core import get_settings, logger
+from app.core.telemetry import trace_span
 from app.db.session import get_db_connection
 
 class CloudTasksService:
@@ -19,6 +20,7 @@ class CloudTasksService:
             queue_name
         )
 
+    @trace_span("cloud_tasks.create_http_task")
     async def create_http_task(
         self,
         queue_name: str,
@@ -29,9 +31,7 @@ class CloudTasksService:
         """
         Create a secure HTTP task on Cloud Tasks.
         """
-        if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:
-            # Local development: Dispatch directly to background function
-            # logger.info(f"[LOCAL] Dispatching background task for {relative_uri} in queue {queue_name}")
+        if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:            
             import asyncio
             asyncio.create_task(self._run_local_task(relative_uri, payload))
             return "local-task-id"
@@ -60,12 +60,13 @@ class CloudTasksService:
 
         try:
             response = self.client.create_task(request={"parent": parent, "task": task})
-            logger.info(f"Created task {response.name} for {relative_uri} in {queue_name}")
+            logger.debug(f"Created task {response.name} for {relative_uri} in {queue_name}")
             return response.name
         except Exception as e:
             logger.error(f"Failed to create cloud task: {e}")
             raise e
 
+    @trace_span("cloud_tasks.run_local_task")
     async def _run_local_task(self, uri: str, payload: dict | None):
         """
         Execute task logic locally (mirroring app/api/v1/tasks.py).
@@ -106,7 +107,7 @@ class CloudTasksService:
                             break
                         if status == "failed":
                             raise Exception("Video download failed")
-                        logger.info(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/18")
+                        logger.debug(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/18")
                         await asyncio.sleep(10)
                     else:
                         raise Exception("Video not ready after 3 min timeout")
@@ -204,6 +205,7 @@ class CloudTasksService:
             
             board_id = UUID(payload["board_id"])
             user_id = UUID(payload["user_id"])
+            user_role = payload.get("user_role", "free")
             try:
                 # Mark as processing on pickup
                 async with get_db_connection() as conn:
@@ -213,7 +215,11 @@ class CloudTasksService:
                         await update_board_insights_status(conn, insights_id=row["id"], status="processing")
                         await conn.commit()
                 
-                await execute_board_insights(board_id=board_id, user_id=user_id)
+                await execute_board_insights(
+                    board_id=board_id,
+                    user_id=user_id,
+                    user_role=user_role,
+                )
             except Exception as e:
                 logger.error(f"[LOCAL] Board insights failed: {e}", exc_info=True)
                 async with get_db_connection() as conn:
@@ -224,6 +230,76 @@ class CloudTasksService:
                             conn, insights_id=row["id"], status="failed", error=str(e)
                         )
                         await conn.commit()
+
+        elif uri == "/v1/tasks/search/run":
+            from app.api.v1.search import search_worker
+
+            search_id = UUID(payload["search_id"])
+            user_uuid = UUID(payload["user_uuid"])
+            try:
+                await search_worker(
+                    search_id=search_id,
+                    user_uuid=user_uuid,
+                    query=payload["query"],
+                    inputs=payload["inputs"],
+                )
+            except Exception as e:
+                logger.error(f"[LOCAL] Search worker failed: {e}", exc_info=True)
+
+        elif uri == "/v1/tasks/search/load_more":
+            from app.api.v1.search import load_more_worker
+
+            search_id = UUID(payload["search_id"])
+            user_uuid = UUID(payload["user_uuid"])
+            try:
+                await load_more_worker(
+                    search_id=search_id,
+                    user_uuid=user_uuid,
+                    query=payload["query"],
+                    platform_cursors=payload["platform_cursors"],
+                )
+            except Exception as e:
+                logger.error(f"[LOCAL] Load more worker failed: {e}", exc_info=True)
+
+        elif uri == "/v1/tasks/chats/stream":
+            from app.api.v1.chats import stream_generator_to_redis
+            from app.agent.runtime import create_agent_graph
+            import redis.asyncio as redis
+
+            chat_id = UUID(payload["chat_id"])
+            try:
+                graph, saver_cm = await create_agent_graph(self.settings.DATABASE_URL)
+                try:
+                    await stream_generator_to_redis(
+                        graph=graph,
+                        chat_id=str(chat_id),
+                        thread_id=payload["thread_id"],
+                        inputs=payload["inputs"],
+                        context={"x-auth-token": payload.get("auth_token")} if payload.get("auth_token") else None,
+                        model_name=payload.get("model_name"),
+                        image_urls=payload.get("image_urls") or [],
+                    )
+                finally:
+                    try:
+                        await saver_cm.__aexit__(None, None, None)
+                    except Exception as e:
+                        logger.warning(f"[LOCAL] Failed to close chat saver context: {e}")
+            except Exception as e:
+                logger.error(f"[LOCAL] Chat stream failed: {e}", exc_info=True)
+                r = redis.from_url(
+                    self.settings.REDIS_URL,
+                    decode_responses=True,
+                    socket_keepalive=True,
+                    health_check_interval=30,
+                )
+                try:
+                    await r.xadd(
+                        f"chat:{str(chat_id)}:stream",
+                        {"data": json.dumps({"type": "error", "error": str(e)})},
+                    )
+                    await r.expire(f"chat:{str(chat_id)}:stream", 60)
+                finally:
+                    await r.close()
                 
         else:
             logger.warning(f"[LOCAL] Unknown task URI: {uri}")

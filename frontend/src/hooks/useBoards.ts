@@ -124,6 +124,16 @@ export function useBoards({ checkItemId }: { checkItemId?: string } = {}) {
                 method: "POST",
             }),
         onSuccess: (_, boardId) => {
+            queryClient.setQueryData<BoardInsights | undefined>(
+                ["boardInsights", boardId],
+                (prev) => ({
+                    ...prev,
+                    board_id: prev?.board_id ?? boardId,
+                    status: "queued",
+                    insights: prev?.insights ?? null,
+                    progress: prev?.progress ?? null,
+                })
+            );
             queryClient.invalidateQueries({ queryKey: ["boardInsights", boardId] });
         },
     });

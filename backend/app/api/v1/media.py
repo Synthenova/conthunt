@@ -81,7 +81,7 @@ async def get_media_view(
     if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user token")
     
-    logger.info(f"[MEDIA_VIEW] Starting request for asset_id={asset_id}")
+    logger.debug(f"[MEDIA_VIEW] Starting request for asset_id={asset_id}")
     
     async with get_db_connection() as conn:                
         await set_rls_user(conn, user_uuid)

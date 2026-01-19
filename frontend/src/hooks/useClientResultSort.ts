@@ -53,13 +53,7 @@ export function useClientResultSort(rawResults: any[], options: UseClientResultS
             yesterdayStart.setDate(yesterdayStart.getDate() - 1);
             const yesterdayEnd = new Date(todayStart); // Yesterday ends at today 00:00:00
 
-            // Start of this week (assuming Monday start)
-            const currentDay = todayStart.getDay(); // 0 is Sunday
-            const distanceToMonday = currentDay === 0 ? 6 : currentDay - 1;
-            const thisWeekStart = new Date(todayStart);
-            thisWeekStart.setDate(todayStart.getDate() - distanceToMonday);
 
-            const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
             results = results.filter(item => {
                 if (!item.published_at) return false;
@@ -76,13 +70,11 @@ export function useClientResultSort(rawResults: any[], options: UseClientResultS
                     case "week":
                         // Rolling 7 days
                         return diffTime < sevenDays && diffTime >= 0;
-                    case "this_week":
-                        return date >= thisWeekStart;
+
                     case "month":
                         // Rolling 30 days
                         return diffTime < thirtyDays && diffTime >= 0;
-                    case "this_month":
-                        return date >= thisMonthStart;
+
                     case "three_months":
                         return diffTime < ninetyDays && diffTime >= 0;
                     case "six_months":

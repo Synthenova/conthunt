@@ -10,7 +10,7 @@ import uuid
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Header, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, Header, UploadFile, File
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as redis
 from pydantic import BaseModel
@@ -26,6 +26,7 @@ from app.db import get_db_connection, set_rls_user, queries
 from app.storage import async_gcs_client
 from app.services.cdn_signer import generate_signed_url
 from app.agent.runtime import create_agent_graph
+from app.services.cloud_tasks import cloud_tasks
 from app.schemas.chats import (
     Chat, 
     CreateChatRequest, 
@@ -35,6 +36,7 @@ from app.schemas.chats import (
     RenameChatRequest,
     ChatTag,
 )
+from app.realtime.stream_hub import stream_id_gt
 
 router = APIRouter()
 settings = get_settings()
@@ -47,9 +49,19 @@ class UpdateTagOrdersRequest(BaseModel):
 
 # --- Dependencies ---
 
-async def get_redis():
+async def get_redis(request: Request):
     """Get Redis client instance."""
-    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    client = getattr(request.app.state, "redis", None)
+    if client is not None:
+        yield client
+        return
+
+    client = redis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
     try:
         yield client
     finally:
@@ -144,6 +156,7 @@ async def stream_generator_to_redis(
     context: dict | None = None,
     model_name: str | None = None,
     image_urls: list[str] | None = None,
+    redis_client: redis.Redis | None = None,
 ):
     """
     Background task:
@@ -154,7 +167,16 @@ async def stream_generator_to_redis(
     """
     logger.info(f"Starting background stream for chat {chat_id}")
     
-    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    r = redis_client
+    owns_client = False
+    if r is None:
+        r = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_keepalive=True,
+            health_check_interval=30,
+        )
+        owns_client = True
     stream_key = f"chat:{chat_id}:stream"
 
     try:
@@ -251,7 +273,8 @@ async def stream_generator_to_redis(
         
     finally:
         await r.expire(stream_key, 60)
-        await r.close()
+        if owns_client:
+            await r.close()
         logger.info(f"Background stream finished for {chat_id}")
 
 
@@ -479,8 +502,8 @@ async def delete_chat_tag(
 @router.post("/{chat_id}/send")
 async def send_message(
     chat_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     req_obj: Request,
+    redis_client: redis.Redis = Depends(get_redis),
     user: dict = Depends(get_current_user),
 ):
     """Send a message (triggers background stream)."""
@@ -488,7 +511,7 @@ async def send_message(
     if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
-    # Extract auth token from header
+    # Extract auth token from header for tool access
     auth_header = req_obj.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
          raise HTTPException(status_code=401, detail="Missing Bearer token")
@@ -497,9 +520,6 @@ async def send_message(
 
     send_request = SendMessageRequest.model_validate(await req_obj.json())
 
-    # Get graph from app state
-    graph = await _get_agent_graph(req_obj)
-    
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
         
@@ -535,33 +555,25 @@ async def send_message(
         "messages": [user_message],
     }
     
-    # Runtime context (not persisted) - includes auth token for tools
-    context = {
-        "x-auth-token": auth_token,
-    }
-    
     logger.info(
-        "[CHAT] Sending to agent, auth_token present: %s, images: %s",
-        bool(auth_token),
+        "[CHAT] Sending to agent, images: %s",
         bool(image_urls),
     )
 
     # Clear previous stream data to prevent replaying old messages within 60s window
-    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    try:
-        await r.delete(f"chat:{str(chat_id)}:stream")
-    finally:
-        await r.close()
+    await redis_client.delete(f"chat:{str(chat_id)}:stream")
     
-    background_tasks.add_task(
-        stream_generator_to_redis,
-        graph=graph,
-        chat_id=str(chat_id),
-        thread_id=thread_id,
-        inputs=inputs,
-        context=context,
-        model_name=send_request.model,
-        image_urls=image_urls,
+    await cloud_tasks.create_http_task(
+        queue_name=settings.QUEUE_CHAT_STREAM,
+        relative_uri="/v1/tasks/chats/stream",
+        payload={
+            "chat_id": str(chat_id),
+            "thread_id": thread_id,
+            "inputs": inputs,
+            "model_name": send_request.model,
+            "image_urls": image_urls,
+            "auth_token": auth_token,
+        },
     )
     
     return {"ok": True}
@@ -634,39 +646,76 @@ async def stream_chat(
 
     stream_key = f"chat:{str(chat_id)}:stream"
 
+    hub = getattr(request.app.state, "stream_hub", None)
+
     async def event_generator():
-        last_id = last_event_id or "0-0"
-        
+        if hub is None:
+            last_id = last_event_id or "0-0"
+            try:
+                while True:
+                    streams = await redis_client.xread(
+                        {stream_key: last_id},
+                        count=50,
+                        block=10000,
+                    )
+                    if not streams:
+                        yield {"event": "ping", "data": ""}
+                        continue
+                    for _, messages in streams:
+                        for msg_id, data_map in messages:
+                            last_id = msg_id
+                            payload_str = data_map.get("data")
+                            yield {
+                                "id": msg_id,
+                                "event": "message",
+                                "data": payload_str,
+                            }
+                            if payload_str and '"type": "done"' in payload_str:
+                                return
+            except asyncio.CancelledError:
+                pass
+            return
+
+        queue = await hub.subscribe(stream_key)
+        last_sent_id = last_event_id or "0-0"
         try:
+            min_id = "-" if not last_event_id else f"({last_event_id}"
+            history = await redis_client.xrange(stream_key, min=min_id, max="+")
+            for msg_id, data_map in history:
+                payload_str = data_map.get("data")
+                if payload_str is None:
+                    continue
+                last_sent_id = msg_id
+                yield {
+                    "id": msg_id,
+                    "event": "message",
+                    "data": payload_str,
+                }
+                if payload_str and '"type": "done"' in payload_str:
+                    return
+
             while True:
-                if await request.is_disconnected():
-                    break
-                    
-                streams = await redis_client.xread(
-                    {stream_key: last_id}, 
-                    count=50, 
-                    block=10000 
-                )
-                
-                if not streams:
+                try:
+                    msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
+                except asyncio.TimeoutError:
                     yield {"event": "ping", "data": ""}
                     continue
-                    
-                for _, messages in streams:
-                    for msg_id, data_map in messages:
-                        last_id = msg_id
-                        payload_str = data_map.get("data")
-                        yield {
-                            "id": msg_id,
-                            "event": "message",
-                            "data": payload_str
-                        }
-                        
-                        # Check if done to close stream
-                        if payload_str and '"type": "done"' in payload_str:
-                             return
+                if not payload_str:
+                    continue
+                if not stream_id_gt(msg_id, last_sent_id):
+                    continue
+                last_sent_id = msg_id
+                yield {
+                    "id": msg_id,
+                    "event": "message",
+                    "data": payload_str,
+                }
+                if payload_str and '"type": "done"' in payload_str:
+                    return
         except asyncio.CancelledError:
             pass
+        finally:
+            await hub.unsubscribe(stream_key, queue)
 
     return EventSourceResponse(event_generator())
 

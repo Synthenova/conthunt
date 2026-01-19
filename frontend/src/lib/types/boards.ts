@@ -73,7 +73,7 @@ export interface BoardInsightsProgress {
 export interface BoardInsights {
     id?: string;
     board_id: string;
-    status: "empty" | "processing" | "completed" | "failed";
+    status: "empty" | "queued" | "processing" | "completed" | "failed";
     insights?: BoardInsightsResult | null;
     progress?: BoardInsightsProgress | null;
     error?: string | null;

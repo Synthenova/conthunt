@@ -27,7 +27,9 @@ steps:
       - '--region=us-central1'
       - '--platform=managed'
       - '--allow-unauthenticated'
-      - '--add-cloudsql-instances=conthunt-prod:us-central1:conthunt-prod'
+      - '--network=default'
+      - '--subnet=default'
+      - '--vpc-egress=private-ranges-only'
 
       # --set-secrets maps Secret Manager keys to Environment Variables in the container
       # Format: ENV_VAR=SECRET_NAME:VERSION
@@ -65,6 +67,8 @@ steps:
       - '--set-secrets=MEDIA_HTTP_TIMEOUT_S=MEDIA_HTTP_TIMEOUT_S:latest'
       - '--set-secrets=RAW_UPLOAD_ENABLED=RAW_UPLOAD_ENABLED:latest'
       - '--set-secrets=FRONTEND_RETURN_URL=FRONTEND_RETURN_URL:latest'
+      - '--set-secrets=OTEL_SERVICE_NAME=OTEL_SERVICE_NAME:latest'
+      - '--set-secrets=OTEL_RESOURCE_ATTRIBUTES=OTEL_RESOURCE_ATTRIBUTES:latest'
       # Standard Env vars we might want explicit
       - '--set-env-vars=GCP_PROJECT=$PROJECT_ID,GCLOUD_PROJECT=$PROJECT_ID'
 

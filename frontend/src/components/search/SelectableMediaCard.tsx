@@ -135,7 +135,6 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
             data-media-id={item.id}
             data-media-asset-id={videoAssetId}
             className="relative group/select"
-            style={{ contain: 'content' }}
             draggable
             onDragStart={handleDragStart}
             onClick={() => {

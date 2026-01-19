@@ -8,10 +8,14 @@ import httpx
 from app.services.task_executor import CloudTaskExecutor
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
+import redis.asyncio as redis
 
 from app.core import get_settings, logger
 from app.db.session import get_db_connection
 from app.api.v1.analysis import _execute_gemini_analysis
+from app.api.v1.search import search_worker, load_more_worker
+from app.api.v1.chats import stream_generator_to_redis
+from app.agent.runtime import create_agent_graph
 from app.services.board_insights import execute_board_insights
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.media.downloader import download_asset_with_claim, update_asset_failed
@@ -21,6 +25,19 @@ from app.db.queries.content import get_media_asset_by_id
 
 router = APIRouter()
 settings = get_settings()
+
+
+def _get_request_redis(request: Request) -> tuple[redis.Redis, bool]:
+    """Return request-scoped Redis client and whether it should be closed."""
+    client = getattr(request.app.state, "redis", None)
+    if client is not None:
+        return client, False
+    return redis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_keepalive=True,
+        health_check_interval=30,
+    ), True
 
 class AnalysisTaskPayload(BaseModel):
     analysis_id: UUID
@@ -43,6 +60,27 @@ class RawArchiveTaskPayload(BaseModel):
 class BoardInsightsTaskPayload(BaseModel):
     board_id: UUID
     user_id: UUID
+    user_role: str
+
+class SearchTaskPayload(BaseModel):
+    search_id: UUID
+    user_uuid: UUID
+    query: str
+    inputs: dict
+
+class LoadMoreTaskPayload(BaseModel):
+    search_id: UUID
+    user_uuid: UUID
+    query: str
+    platform_cursors: dict
+
+class ChatStreamTaskPayload(BaseModel):
+    chat_id: UUID
+    thread_id: str
+    inputs: dict
+    model_name: str | None = None
+    image_urls: list[str] | None = None
+    auth_token: str | None = None
 
 @router.post("/gemini/analyze")
 async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Request):
@@ -182,7 +220,7 @@ async def handle_media_download_task(payload: MediaDownloadTaskPayload, request:
     """
     Handle background media download task (one asset) with retries.
     """
-    logger.info(f"Received media download task for {payload.asset_id}")
+    logger.debug(f"Received media download task for {payload.asset_id}")
     executor = CloudTaskExecutor(request)
 
     async def _on_fail(e: Exception):
@@ -205,7 +243,7 @@ async def handle_raw_archive_task(payload: RawArchiveTaskPayload, request: Reque
     Handle background raw archive task with retries.
     """
     from app.storage.raw_archive import upload_raw_compressed
-    logger.info(f"Received raw archive task for search {payload.search_id} platform {payload.platform}")
+    logger.debug(f"Received raw archive task for search {payload.search_id} platform {payload.platform}")
     executor = CloudTaskExecutor(request)
     
     # Decode base64 to get compressed bytes (already gzipped)
@@ -264,4 +302,93 @@ async def handle_board_insights_task(payload: BoardInsightsTaskPayload, request:
         on_fail=_on_fail,
         board_id=payload.board_id,
         user_id=payload.user_id,
+        user_role=payload.user_role,
+    )
+
+@router.post("/search/run")
+async def handle_search_task(payload: SearchTaskPayload, request: Request):
+    """
+    Handle background search task with retries.
+    """
+    logger.info(f"Received search task for {payload.search_id}")
+    executor = CloudTaskExecutor(request)
+
+    async def _on_fail(e: Exception):
+        logger.error(f"Search task permanently failed for {payload.search_id}: {e}")
+
+    return await executor.run(
+        handler=search_worker,
+        on_fail=_on_fail,
+        search_id=payload.search_id,
+        user_uuid=payload.user_uuid,
+        query=payload.query,
+        inputs=payload.inputs,
+        redis_client=getattr(request.app.state, "redis", None),
+    )
+
+@router.post("/search/load_more")
+async def handle_load_more_task(payload: LoadMoreTaskPayload, request: Request):
+    """
+    Handle background load-more task with retries.
+    """
+    logger.info(f"Received load_more task for {payload.search_id}")
+    executor = CloudTaskExecutor(request)
+
+    async def _on_fail(e: Exception):
+        logger.error(f"Load more task permanently failed for {payload.search_id}: {e}")
+
+    return await executor.run(
+        handler=load_more_worker,
+        on_fail=_on_fail,
+        search_id=payload.search_id,
+        user_uuid=payload.user_uuid,
+        query=payload.query,
+        platform_cursors=payload.platform_cursors,
+        redis_client=getattr(request.app.state, "redis", None),
+    )
+
+@router.post("/chats/stream")
+async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Request):
+    """
+    Handle background chat stream task with retries.
+    """
+    logger.info(f"Received chat stream task for {payload.chat_id}")
+    executor = CloudTaskExecutor(request)
+
+    async def _on_fail(e: Exception):
+        logger.error(f"Chat stream task permanently failed for {payload.chat_id}: {e}")
+        r, owns_client = _get_request_redis(request)
+        try:
+            await r.xadd(
+                f"chat:{str(payload.chat_id)}:stream",
+                {"data": json.dumps({"type": "error", "error": str(e)})},
+            )
+            await r.expire(f"chat:{str(payload.chat_id)}:stream", 60)
+        finally:
+            if owns_client:
+                await r.close()
+
+    async def _run_chat_stream():
+        graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
+        try:
+            redis_client = getattr(request.app.state, "redis", None)
+            await stream_generator_to_redis(
+                graph=graph,
+                chat_id=str(payload.chat_id),
+                thread_id=payload.thread_id,
+                inputs=payload.inputs,
+                context={"x-auth-token": payload.auth_token} if payload.auth_token else None,
+                model_name=payload.model_name,
+                image_urls=payload.image_urls or [],
+                redis_client=redis_client,
+            )
+        finally:
+            try:
+                await saver_cm.__aexit__(None, None, None)
+            except Exception as e:
+                logger.warning(f"Failed to close chat saver context: {e}")
+
+    return await executor.run(
+        handler=_run_chat_stream,
+        on_fail=_on_fail,
     )

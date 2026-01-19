@@ -10,12 +10,12 @@ def log_query_timing(func):
     async def wrapper(*args, **kwargs):
         func_name = func.__name__
         start_time = time.time()
-        logger.info(f"Starting SQL operation: {func_name}")
+        logger.debug(f"Starting SQL operation: {func_name}")
         
         try:
             result = await func(*args, **kwargs)
             duration = time.time() - start_time
-            logger.info(f"Completed SQL operation: {func_name} in {duration:.4f}s")
+            logger.debug(f"Completed SQL operation: {func_name} in {duration:.4f}s")
             return result
         except Exception as e:
             duration = time.time() - start_time
