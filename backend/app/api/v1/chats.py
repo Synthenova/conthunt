@@ -48,8 +48,13 @@ class UpdateTagOrdersRequest(BaseModel):
 
 # --- Dependencies ---
 
-async def get_redis():
+async def get_redis(request: Request):
     """Get Redis client instance."""
+    client = getattr(request.app.state, "redis", None)
+    if client is not None:
+        yield client
+        return
+
     client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
         yield client
@@ -145,6 +150,7 @@ async def stream_generator_to_redis(
     context: dict | None = None,
     model_name: str | None = None,
     image_urls: list[str] | None = None,
+    redis_client: redis.Redis | None = None,
 ):
     """
     Background task:
@@ -155,7 +161,11 @@ async def stream_generator_to_redis(
     """
     logger.info(f"Starting background stream for chat {chat_id}")
     
-    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    r = redis_client
+    owns_client = False
+    if r is None:
+        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        owns_client = True
     stream_key = f"chat:{chat_id}:stream"
 
     try:
@@ -252,7 +262,8 @@ async def stream_generator_to_redis(
         
     finally:
         await r.expire(stream_key, 60)
-        await r.close()
+        if owns_client:
+            await r.close()
         logger.info(f"Background stream finished for {chat_id}")
 
 
@@ -481,6 +492,7 @@ async def delete_chat_tag(
 async def send_message(
     chat_id: uuid.UUID,
     req_obj: Request,
+    redis_client: redis.Redis = Depends(get_redis),
     user: dict = Depends(get_current_user),
 ):
     """Send a message (triggers background stream)."""
@@ -538,11 +550,7 @@ async def send_message(
     )
 
     # Clear previous stream data to prevent replaying old messages within 60s window
-    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    try:
-        await r.delete(f"chat:{str(chat_id)}:stream")
-    finally:
-        await r.close()
+    await redis_client.delete(f"chat:{str(chat_id)}:stream")
     
     await cloud_tasks.create_http_task(
         queue_name=settings.QUEUE_CHAT_STREAM,

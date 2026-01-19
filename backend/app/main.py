@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 # from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 
+import redis.asyncio as redis
+
 from app.core import get_settings, logger
 from app.core.logging import setup_logging, get_log_level
 from app.core.telemetry import setup_telemetry
@@ -29,6 +31,12 @@ async def lifespan(app: FastAPI):
     try:
         await init_db()
         logger.debug("Database connection verified")
+        app.state.redis = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=25,
+        )
+        logger.debug("Redis client initialized")
         
         # Initialize agent graph with Postgres checkpointer
         graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
@@ -43,6 +51,9 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.debug("Shutting down Conthunt backend...")
+    if hasattr(app.state, "redis"):
+        await app.state.redis.close()
+        logger.debug("Redis client closed")
     if hasattr(app.state, '_agent_saver_cm'):
         await app.state._agent_saver_cm.__aexit__(None, None, None)
         logger.debug("Agent checkpointer closed")

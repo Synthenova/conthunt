@@ -26,6 +26,14 @@ from app.db.queries.content import get_media_asset_by_id
 router = APIRouter()
 settings = get_settings()
 
+
+def _get_request_redis(request: Request) -> tuple[redis.Redis, bool]:
+    """Return request-scoped Redis client and whether it should be closed."""
+    client = getattr(request.app.state, "redis", None)
+    if client is not None:
+        return client, False
+    return redis.from_url(settings.REDIS_URL, decode_responses=True), True
+
 class AnalysisTaskPayload(BaseModel):
     analysis_id: UUID
     media_asset_id: UUID
@@ -310,6 +318,7 @@ async def handle_search_task(payload: SearchTaskPayload, request: Request):
         user_uuid=payload.user_uuid,
         query=payload.query,
         inputs=payload.inputs,
+        redis_client=getattr(request.app.state, "redis", None),
     )
 
 @router.post("/search/load_more")
@@ -330,6 +339,7 @@ async def handle_load_more_task(payload: LoadMoreTaskPayload, request: Request):
         user_uuid=payload.user_uuid,
         query=payload.query,
         platform_cursors=payload.platform_cursors,
+        redis_client=getattr(request.app.state, "redis", None),
     )
 
 @router.post("/chats/stream")
@@ -342,7 +352,7 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
 
     async def _on_fail(e: Exception):
         logger.error(f"Chat stream task permanently failed for {payload.chat_id}: {e}")
-        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        r, owns_client = _get_request_redis(request)
         try:
             await r.xadd(
                 f"chat:{str(payload.chat_id)}:stream",
@@ -350,11 +360,13 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
             )
             await r.expire(f"chat:{str(payload.chat_id)}:stream", 60)
         finally:
-            await r.close()
+            if owns_client:
+                await r.close()
 
     async def _run_chat_stream():
         graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
         try:
+            redis_client = getattr(request.app.state, "redis", None)
             await stream_generator_to_redis(
                 graph=graph,
                 chat_id=str(payload.chat_id),
@@ -363,6 +375,7 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
                 context={"x-auth-token": payload.auth_token} if payload.auth_token else None,
                 model_name=payload.model_name,
                 image_urls=payload.image_urls or [],
+                redis_client=redis_client,
             )
         finally:
             try:

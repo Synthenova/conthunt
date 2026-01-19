@@ -145,6 +145,7 @@ async def search_worker(
     user_uuid: UUID,
     query: str,
     inputs: dict,
+    redis_client: redis.Redis | None = None,
 ):
     """
     Background worker that:
@@ -154,7 +155,11 @@ async def search_worker(
     4. Fire-and-forget: uploads and media downloads
     """
     settings = get_settings()
-    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    r = redis_client
+    owns_client = False
+    if r is None:
+        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        owns_client = True
     stream_key = f"search:{search_id}:stream"
     
     collected_results: List[PlatformCallResult] = []
@@ -337,12 +342,13 @@ async def search_worker(
         
         # Try to push error to Redis (may already be closed)
         try:
-            r2 = redis.from_url(settings.REDIS_URL, decode_responses=True)
-            await r2.xadd(stream_key, {"data": json.dumps({"type": "error", "error": str(e)})})
-            await r2.expire(stream_key, 300)
-            await r2.close()
-        except:
+            await r.xadd(stream_key, {"data": json.dumps({"type": "error", "error": str(e)})})
+            await r.expire(stream_key, 300)
+        except Exception:
             pass
+    finally:
+        if owns_client:
+            await r.close()
 
 
 @trace_span("search.load_more_worker")
@@ -351,6 +357,7 @@ async def load_more_worker(
     user_uuid: UUID,
     query: str,
     platform_cursors: dict,
+    redis_client: redis.Redis | None = None,
 ):
     """
     Background worker for "load more" pagination.
@@ -363,7 +370,11 @@ async def load_more_worker(
     }
     """
     settings = get_settings()
-    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    r = redis_client
+    owns_client = False
+    if r is None:
+        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        owns_client = True
     stream_key = f"search:{search_id}:more:stream"
     
     # Clear old stream messages from previous load more requests
@@ -529,18 +540,24 @@ async def load_more_worker(
         logger.error(f"Load more worker failed for {search_id}: {e}", exc_info=True)
         
         try:
-            r2 = redis.from_url(settings.REDIS_URL, decode_responses=True)
-            await r2.xadd(stream_key, {"data": json.dumps({"type": "error", "error": str(e)})})
-            await r2.expire(stream_key, 300)
-            await r2.close()
-        except:
+            await r.xadd(stream_key, {"data": json.dumps({"type": "error", "error": str(e)})})
+            await r.expire(stream_key, 300)
+        except Exception:
             pass
+    finally:
+        if owns_client:
+            await r.close()
 
 
 # --- Redis Dependency ---
 
-async def get_redis():
+async def get_redis(request: Request):
     """Get Redis client instance."""
+    client = getattr(request.app.state, "redis", None)
+    if client is not None:
+        yield client
+        return
+
     settings = get_settings()
     client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
