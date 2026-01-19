@@ -55,7 +55,12 @@ async def get_redis(request: Request):
         yield client
         return
 
-    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+client = redis.from_url(
+    settings.REDIS_URL,
+    decode_responses=True,
+    socket_keepalive=True,
+    health_check_interval=30,
+)
     try:
         yield client
     finally:
@@ -164,7 +169,12 @@ async def stream_generator_to_redis(
     r = redis_client
     owns_client = False
     if r is None:
-        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        r = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_keepalive=True,
+            health_check_interval=30,
+        )
         owns_client = True
     stream_key = f"chat:{chat_id}:stream"
 

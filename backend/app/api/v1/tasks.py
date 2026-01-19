@@ -32,7 +32,12 @@ def _get_request_redis(request: Request) -> tuple[redis.Redis, bool]:
     client = getattr(request.app.state, "redis", None)
     if client is not None:
         return client, False
-    return redis.from_url(settings.REDIS_URL, decode_responses=True), True
+    return redis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_keepalive=True,
+        health_check_interval=30,
+    ), True
 
 class AnalysisTaskPayload(BaseModel):
     analysis_id: UUID

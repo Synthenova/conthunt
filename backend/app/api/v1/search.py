@@ -158,7 +158,12 @@ async def search_worker(
     r = redis_client
     owns_client = False
     if r is None:
-        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        r = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_keepalive=True,
+            health_check_interval=30,
+        )
         owns_client = True
     stream_key = f"search:{search_id}:stream"
     
@@ -310,7 +315,6 @@ async def search_worker(
         await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
         # Expire stream 5 minutes from now
         await r.expire(stream_key, 300)
-        await r.close()
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         # GCS uploads handled via Cloud Tasks above
@@ -373,7 +377,12 @@ async def load_more_worker(
     r = redis_client
     owns_client = False
     if r is None:
-        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        r = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_keepalive=True,
+            health_check_interval=30,
+        )
         owns_client = True
     stream_key = f"search:{search_id}:more:stream"
     
@@ -520,7 +529,6 @@ async def load_more_worker(
         # ========== FINISH STREAMING ==========
         await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
         await r.expire(stream_key, 300)
-        await r.close()
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         if assets_to_download:
@@ -559,7 +567,12 @@ async def get_redis(request: Request):
         return
 
     settings = get_settings()
-    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    client = redis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
     try:
         yield client
     finally:

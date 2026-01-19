@@ -286,7 +286,12 @@ class CloudTasksService:
                         logger.warning(f"[LOCAL] Failed to close chat saver context: {e}")
             except Exception as e:
                 logger.error(f"[LOCAL] Chat stream failed: {e}", exc_info=True)
-                r = redis.from_url(self.settings.REDIS_URL, decode_responses=True)
+                r = redis.from_url(
+                    self.settings.REDIS_URL,
+                    decode_responses=True,
+                    socket_keepalive=True,
+                    health_check_interval=30,
+                )
                 try:
                     await r.xadd(
                         f"chat:{str(chat_id)}:stream",
