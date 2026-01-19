@@ -682,7 +682,7 @@ async def create_search(
         row = result.fetchone()
         period_start = row[0] if row else None
 
-        await credit_tracker.check(
+        credit_result = await credit_tracker.check(
             user_id=user_uuid,
             role=user.get("role", "free"),
             feature="search_query",
@@ -691,6 +691,8 @@ async def create_search(
             context={"platforms": list(request.inputs.keys())},
             conn=conn,
         )
+        if not credit_result["allowed"]:
+            raise HTTPException(status_code=402, detail="Credit limit exceeded")
         search_id = await queries.insert_search(
             conn=conn,
             user_id=user_uuid,
@@ -898,7 +900,7 @@ async def load_more(
         row = result.fetchone()
         period_start = row[0] if row else None
 
-        await credit_tracker.check(
+        credit_result = await credit_tracker.check(
             user_id=user_uuid,
             role=user.get("role", "free"),
             feature="search_query",
@@ -907,6 +909,8 @@ async def load_more(
             context={"search_id": str(search_id), "platforms": list(platform_cursors.keys()), "action": "load_more"},
             conn=conn,
         )
+        if not credit_result["allowed"]:
+            raise HTTPException(status_code=402, detail="Credit limit exceeded")
         await conn.commit()
     
     # Spawn background worker via Cloud Tasks

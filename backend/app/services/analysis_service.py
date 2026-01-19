@@ -2,7 +2,7 @@
 from uuid import UUID
 from typing import Dict, Any, Optional
 
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import text
 
 from app.core import logger
@@ -54,7 +54,7 @@ class AnalysisService:
         
             if not already_accessed:
                 # First access - check and charge credits
-                await credit_tracker.check(
+                credit_result = await credit_tracker.check(
                     user_id=user_id,
                     role=user_role,
                     feature="video_analysis",
@@ -63,6 +63,8 @@ class AnalysisService:
                     context={"media_asset_id": str(media_asset_id), "source": context_source},
                     conn=conn,
                 )
+                if not credit_result["allowed"]:
+                    raise HTTPException(status_code=402, detail="Credit limit exceeded")
                 
                 # Record access for future free re-views
                 await record_user_analysis_access(conn, user_id, media_asset_id)

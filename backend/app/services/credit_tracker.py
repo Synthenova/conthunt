@@ -177,21 +177,42 @@ class CreditTracker:
         conn: Optional[AsyncConnection] = None,
     ) -> dict:
         """
-        Check and record usage. Always returns allowed=True (no enforcement).
+        Check and optionally record usage against credit limits.
         """
         credit_cost = FEATURE_CREDITS.get(feature, 1)
         total_credits = ROLE_CREDITS.get(role, 50)
-        
-        # Record usage if requested
-        if record:
-            await self.record_usage(user_id, feature, context, conn=conn)
-        
-        # Return credit info (no enforcement, just tracking)
-        return {
-            "allowed": True,
-            "credits_remaining": total_credits,
-            "feature_uses_remaining": None,
-        }
+
+        async def _ensure_period_start(active_conn: AsyncConnection) -> datetime:
+            period_start = await self._get_credit_period_start(active_conn, user_id)
+            if not period_start:
+                period_start = current_period_start or datetime.utcnow()
+            else:
+                period_start = await self._advance_credit_period_if_needed(
+                    active_conn, user_id, period_start
+                )
+            return period_start
+
+        async def _check_with_conn(active_conn: AsyncConnection) -> dict:
+            await set_rls_user(active_conn, user_id)
+            period_start = await _ensure_period_start(active_conn)
+            used = await self.get_credits_used(active_conn, user_id, period_start)
+            remaining_before = max(0, total_credits - used)
+            allowed = remaining_before >= credit_cost
+            if allowed and record:
+                await self.record_usage(user_id, feature, context, conn=active_conn)
+            return {
+                "allowed": allowed,
+                "credits_remaining": max(
+                    0, remaining_before - (credit_cost if allowed and record else 0)
+                ),
+                "feature_uses_remaining": None,
+            }
+
+        if conn is None:
+            async with get_db_connection() as local_conn:
+                return await _check_with_conn(local_conn)
+
+        return await _check_with_conn(conn)
 
     async def get_usage_summary(
         self,
