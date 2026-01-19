@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from 'react';
+import React from 'react';
 import { LogoutIcon, type LogoutIconHandle } from '@/components/ui/logout';
 import { cn } from '@/lib/utils';
 import { LogoutButton } from "@/components/logout-button";
@@ -20,9 +20,6 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
     const { getPlanName, loading: productsLoading } = useProducts();
     const { streak: streakData } = useStreak();
 
-    // Fallback demo data for development
-    const streak = streakData ?? { current_streak: 1 };
-
     const planDisplayName = profile?.role
         ? getPlanName(profile.role)
         : (productsLoading ? "Loading..." : "Free");
@@ -37,17 +34,17 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
                 )}
             >
                 {/* Streak Icon - Collapsed View */}
-                {isCollapsed && streak && streak.current_streak > 0 && (
+                {isCollapsed && streakData && streakData.current_streak > 0 && (
                     <div className="relative">
                         <Flame className="h-5 w-5 text-orange-400" />
                         <span className="absolute -top-1 -right-1 text-[8px] font-bold text-orange-400">
-                            {streak.current_streak}
+                            {streakData.current_streak}
                         </span>
                     </div>
                 )}
 
                 {/* User Avatar - Collapsed shows avatar if no streak */}
-                {(isCollapsed && (!streak || streak.current_streak === 0)) && (
+                {(isCollapsed && (!streakData || streakData.current_streak === 0)) && (
                     <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-xs text-primary font-bold shrink-0">
                         {user?.email?.[0].toUpperCase() || "U"}
                     </div>
@@ -69,11 +66,11 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
                         </div>
 
                         {/* Streak Badge */}
-                        {streak && streak.current_streak > 0 && (
+                        {streakData && streakData.current_streak > 0 && (
                             <div className="flex items-center gap-1 px-2 py-1 bg-orange-500/10 border border-orange-500/20 rounded-full shrink-0">
                                 <Flame className="h-3 w-3 text-orange-400" />
                                 <span className="text-[10px] font-bold text-orange-400">
-                                    {streak.current_streak}
+                                    {streakData.current_streak}
                                 </span>
                             </div>
                         )}

@@ -676,11 +676,12 @@ async def create_search(
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
         result = await conn.execute(
-            text("SELECT current_period_start FROM users WHERE id = :id"),
+            text("SELECT current_period_start, timezone FROM users WHERE id = :id"),
             {"id": user_uuid}
         )
         row = result.fetchone()
         period_start = row[0] if row else None
+        timezone = row[1] if row and row[1] else "UTC"
 
         credit_result = await credit_tracker.check(
             user_id=user_uuid,
@@ -701,6 +702,8 @@ async def create_search(
             mode="live",
             status="running",
         )
+        from app.db.queries import streaks as streak_queries
+        await streak_queries.record_activity(conn, user_uuid, "search", timezone=timezone)
         await conn.commit()
 
     # Spawn background worker via Cloud Tasks
@@ -894,11 +897,12 @@ async def load_more(
         from sqlalchemy import text
         
         result = await conn.execute(
-            text("SELECT current_period_start FROM users WHERE id = :id"),
+            text("SELECT current_period_start, timezone FROM users WHERE id = :id"),
             {"id": user_uuid}
         )
         row = result.fetchone()
         period_start = row[0] if row else None
+        timezone = row[1] if row and row[1] else "UTC"
 
         credit_result = await credit_tracker.check(
             user_id=user_uuid,
@@ -911,6 +915,8 @@ async def load_more(
         )
         if not credit_result["allowed"]:
             raise HTTPException(status_code=402, detail="Credit limit exceeded")
+        from app.db.queries import streaks as streak_queries
+        await streak_queries.record_activity(conn, user_uuid, "search", timezone=timezone)
         await conn.commit()
     
     # Spawn background worker via Cloud Tasks

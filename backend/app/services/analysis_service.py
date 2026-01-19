@@ -43,11 +43,12 @@ class AnalysisService:
         async with get_db_connection() as conn:
             await set_rls_user(conn, user_id)
             result = await conn.execute(
-                text("SELECT current_period_start FROM users WHERE id = :id"),
+                text("SELECT current_period_start, timezone FROM users WHERE id = :id"),
                 {"id": user_id}
             )
             row = result.fetchone()
             period_start = row[0] if row else None
+            timezone = row[1] if row and row[1] else "UTC"
             
             # Check if already accessed (free re-view)
             already_accessed = await has_user_accessed_analysis(conn, user_id, media_asset_id)
@@ -68,11 +69,14 @@ class AnalysisService:
                 
                 # Record access for future free re-views
                 await record_user_analysis_access(conn, user_id, media_asset_id)
-                await conn.commit()
                 
                 logger.info(f"Charged credit for analysis: user={user_id}, asset={media_asset_id}")
             else:
                 logger.info(f"Free re-access: user={user_id} already analyzed asset={media_asset_id}")
+
+            from app.db.queries import streaks as streak_queries
+            await streak_queries.record_activity(conn, user_id, "analysis", timezone=timezone)
+            await conn.commit()
         
         # Trigger unified analysis flow (handles priority downloads, race conditions, etc.)
         logger.info(f"[{context_source}] Triggering unified analysis for {media_asset_id}")
