@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
         app.state.redis = redis.from_url(
             settings.REDIS_URL,
             decode_responses=True,
-            max_connections=25,
+            max_connections=8,
             socket_keepalive=True,
             health_check_interval=30,
         )
