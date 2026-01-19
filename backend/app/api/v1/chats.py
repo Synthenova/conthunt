@@ -55,12 +55,12 @@ async def get_redis(request: Request):
         yield client
         return
 
-client = redis.from_url(
-    settings.REDIS_URL,
-    decode_responses=True,
-    socket_keepalive=True,
-    health_check_interval=30,
-)
+    client = redis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
     try:
         yield client
     finally:
