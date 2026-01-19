@@ -1,25 +1,21 @@
 "use client";
 
-import { LayoutDashboard, Search, ImagePlus, Loader2, X } from 'lucide-react';
-import type { ContextChip, ImageChip, ChatChip } from './types';
+import { LayoutDashboard, Search } from 'lucide-react';
+import type { ContextChip, ChatChip } from './types';
 import { truncateText, getPlatformIcon } from './utils';
 import { CHIP_TITLE_LIMIT } from './constants';
 
 interface ChipListProps {
     chips: ContextChip[];
-    imageChips: ImageChip[];
     onRemoveChip: (chip: ContextChip) => void;
-    onRemoveImageChip: (chipId: string) => void;
 }
 
-export function ChipList({ chips, imageChips, onRemoveChip, onRemoveImageChip }: ChipListProps) {
-    const allChips: ChatChip[] = [...chips, ...imageChips];
-
-    if (allChips.length === 0) return null;
+export function ChipList({ chips, onRemoveChip }: ChipListProps) {
+    if (chips.length === 0) return null;
 
     return (
         <div className="flex flex-nowrap overflow-x-auto scrollbar-none gap-2 px-2 pt-2">
-            {allChips.map((chip) => {
+            {chips.map((chip) => {
                 const PlatformIcon = chip.type === 'media' ? getPlatformIcon(chip.platform) : null;
                 return (
                     <span
@@ -44,25 +40,6 @@ export function ChipList({ chips, imageChips, onRemoveChip, onRemoveImageChip }:
                                 <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
                             </>
                         )}
-                        {chip.type === 'image' && (
-                            <div className="relative h-4 w-4 shrink-0 rounded overflow-hidden">
-                                {chip.status === 'uploading' ? (
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                                    </div>
-                                ) : chip.url ? (
-                                    <img
-                                        src={chip.url}
-                                        alt={chip.fileName}
-                                        className="h-full w-full object-cover"
-                                    />
-                                ) : (
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <ImagePlus className="h-4 w-4 text-muted-foreground" />
-                                    </div>
-                                )}
-                            </div>
-                        )}
                         {chip.type === 'media' && PlatformIcon && (
                             <>
                                 <PlatformIcon className="text-[12px]" />
@@ -71,16 +48,7 @@ export function ChipList({ chips, imageChips, onRemoveChip, onRemoveImageChip }:
                                 </span>
                             </>
                         )}
-                        {chip.type === 'image' ? (
-                            <button
-                                type="button"
-                                onClick={() => onRemoveImageChip(chip.id)}
-                                className="rounded-full hover:text-foreground"
-                                aria-label={`Remove ${chip.fileName}`}
-                            >
-                                <X className="h-3 w-3" />
-                            </button>
-                        ) : !chip.locked && (
+                        {!chip.locked && (
                             <button
                                 type="button"
                                 onClick={() => onRemoveChip(chip)}
@@ -96,3 +64,8 @@ export function ChipList({ chips, imageChips, onRemoveChip, onRemoveImageChip }:
         </div>
     );
 }
+
+// Helper X icon was missing in previous import if we removed ImagePlus etc.
+// Re-adding X to imports if it wasn't there, but it was.
+// Cleaned up imports.
+import { X } from 'lucide-react';

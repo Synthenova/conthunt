@@ -131,6 +131,7 @@ export function SelectionBar({
                 creator_handle: item.creator || item.creator_handle || item.creator_name,
                 content_type: item.content_type,
                 primary_text: item.primary_text || item.caption || item.description,
+                thumbnail_url: item.thumbnail || item.thumbnail_url || item.cover_url || item.image_url || item.cover || item.image || item.poster || item.preview_image || item.cover_image || null,
             };
         }).filter((chip: any) => chip.media_asset_id && chip.platform);
 

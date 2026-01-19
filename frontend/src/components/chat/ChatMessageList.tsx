@@ -1,4 +1,5 @@
 "use client";
+import { StackedMediaChips } from './StackedMediaChips';
 
 import { useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
@@ -76,17 +77,19 @@ function parseChipLabel(label: string) {
     if (!type || !id) return { text: label };
 
     if (type === "media") {
-        const platform = parts[3] ? parts[2] : ""; // Format: media|id|platform|title or media|id|title (if no platform, rare)
-        // Wait, format is media | id | platform | title
+        // Format: media | id | platform | title | thumbnail_url
+        // Parts indices: 0=media, 1=id, 2=platform, 3=title, 4=thumb
+        const platform = parts[3] ? parts[2] : "";
         const title = parts[3] || parts[2] || "Media";
-        const plat = parts[2] || "";
+        const thumb = parts[4] || "";
 
         return {
             type: "media",
             id,
             text: title,
-            Icon: plat ? getPlatformIcon(plat) : undefined,
-            platform: plat
+            Icon: platform ? getPlatformIcon(platform) : undefined,
+            platform: platform,
+            thumbnail_url: thumb
         };
     }
 
@@ -153,6 +156,29 @@ function extractImageAttachments(content: string | Array<any>) {
         }
         return acc;
     }, []);
+}
+
+function extractMediaChipsFromContent(content: string) {
+    const chips: any[] = [];
+    // We run the regex to find all chips
+    const CHIP_RE = /```chip\s+([\s\S]*?)```/g;
+
+    // We replace media chips with empty string to remove them from display text
+    const cleanedContent = content.replace(CHIP_RE, (match, label) => {
+        const meta = parseChipLabel(label);
+        if (meta.type === 'media') {
+            chips.push({
+                id: meta.id!,
+                title: meta.text || 'Media',
+                platform: meta.platform || '',
+                thumbnail_url: (meta as any).thumbnail_url
+            });
+            return '';
+        }
+        return match;
+    });
+
+    return { chips, cleanedContent };
 }
 
 function buildContentString(content: string | Array<any>) {
@@ -274,19 +300,19 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
                         <button
                             type="button"
                             onClick={() => handleChipClick(label, chipMeta.type, chipMeta.id)}
-                            className="inline-flex items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
+                            className="inline-flex items-center gap-2 rounded-lg glass border-white/20 bg-white/5 px-3 py-1.5 text-sm font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
                         >
                             {chipMeta.icon === "board" && (
-                                <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
                             )}
                             {chipMeta.icon === "search" && (
-                                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                <Search className="h-4 w-4 text-muted-foreground" />
                             )}
                             {chipMeta.icon === "image" && (
-                                <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                <ImagePlus className="h-4 w-4 text-muted-foreground" />
                             )}
                             {chipMeta.Icon && (
-                                <chipMeta.Icon className="text-[12px]" />
+                                <chipMeta.Icon className="text-[14px]" />
                             )}
                             <span className="truncate max-w-[200px]" title={chipMeta.text}>
                                 {truncateLabel(chipMeta.text || '')}
@@ -303,19 +329,32 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
 
     if (!isAi) {
         // Human message: Plain text, just strip context
-        const cleaned = contentStr.replace(CONTEXT_FENCE_RE, '');
-        if (!cleaned.trim()) return null;
+        const { chips: mediaChips, cleanedContent: contentStrCleaned } = extractMediaChipsFromContent(contentStr);
+        const cleaned = contentStrCleaned.replace(CONTEXT_FENCE_RE, '');
+
+        // If message is empty after stripping chips (just chips sent), don't return null if we have chips
+        if (!cleaned.trim() && mediaChips.length === 0 && imageAttachments.length === 0) return null;
 
         return (
-            <div className="flex flex-col gap-2">
-                <div className="w-full">
-                    <MessageContent
-                        markdown={false}
-                        className='whitespace-pre-wrap !px-4 !py-2.5 text-base leading-[26px] font-light tracking-[0.035rem]'
-                    >
-                        {cleaned.trim()}
-                    </MessageContent>
-                </div>
+            <div className="flex flex-col gap-2 items-end">
+                {/* Stacked Media Chips (Right Aligned) */}
+                {mediaChips.length > 0 && (
+                    <StackedMediaChips
+                        chips={mediaChips}
+                        onChipClick={(id, platform) => handleChipClick('media', 'media', id)}
+                    />
+                )}
+
+                {cleaned.trim() && (
+                    <div className="w-full glass text-foreground shadow-lg border-white/10 bg-[#1A1A1A] rounded-xl overflow-hidden">
+                        <MessageContent
+                            markdown={false}
+                            className='whitespace-pre-wrap !px-4 !py-2.5 text-base leading-[26px] font-light tracking-[0.035rem]'
+                        >
+                            {cleaned.trim()}
+                        </MessageContent>
+                    </div>
+                )}
                 {/* Image Attachments */}
                 {imageAttachments.length > 0 && (
                     <div className="flex overflow-x-auto scrollbar-none gap-2 mt-2 pb-1">
@@ -344,6 +383,7 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
             </div>
         );
     }
+
 
     // AI Message: enhanced markdown
     const withoutContext = contentStr.replace(CONTEXT_FENCE_RE, '');
@@ -660,7 +700,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                     <div
                                         className={
                                             msg.type === 'human'
-                                                ? 'glass max-w-[85%] text-foreground shadow-lg border-white/10 bg-[#1A1A1A] rounded-xl !p-0'
+                                                ? 'max-w-[85%] !p-0'
                                                 : 'bg-transparent max-w-[95%] text-foreground p-0'
                                         }
                                     >

@@ -13,8 +13,9 @@ export function truncateText(value: string, limit: number) {
 
 export function formatChipFence(chip: ChatChip) {
     if (chip.type === 'media') {
-        // Format: media | id | platform | title
-        return `media | ${chip.media_asset_id} | ${chip.platform} | ${chip.title}`;
+        // Format: media | id | platform | title | thumbnail_url
+        const thumb = (chip as any).thumbnail_url || '';
+        return `media | ${chip.media_asset_id} | ${chip.platform} | ${chip.title} | ${thumb}`;
     }
     if (chip.type === 'image') {
         // Format: image | id | label
