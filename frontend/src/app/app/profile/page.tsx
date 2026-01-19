@@ -41,7 +41,7 @@ const featureIcons: Record<string, any> = {
 };
 
 export default function ProfilePage() {
-    const { profile, user, subscription, isLoading } = useUser();
+    const { profile, user, subscription, isLoading } = useUser({ refreshOnMount: true });
     const { getPlanName } = useProducts();
     const { streak: streakData } = useStreak();
     const rocketRef = useRef<RocketIconHandle>(null);

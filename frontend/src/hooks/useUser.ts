@@ -74,8 +74,13 @@ async function fetchSubscription(): Promise<UserSubscription | null> {
     }
 }
 
-export function useUser() {
+type UseUserOptions = {
+    refreshOnMount?: boolean;
+};
+
+export function useUser(options: UseUserOptions = {}) {
     const [isAuthReady, setIsAuthReady] = useState(false);
+    const { refreshOnMount = false } = options;
 
     useEffect(() => {
         if (!auth) return;
@@ -99,6 +104,18 @@ export function useUser() {
         staleTime: 60 * 1000,
     });
 
+    const refreshUser = async () => {
+        if (!auth?.currentUser) return;
+        await auth.currentUser.getIdToken(true);
+        await Promise.all([profileQuery.refetch(), subscriptionQuery.refetch()]);
+    };
+
+    useEffect(() => {
+        if (refreshOnMount && isAuthReady && auth?.currentUser) {
+            void refreshUser();
+        }
+    }, [refreshOnMount, isAuthReady]);
+
     return {
         ...profileQuery,
         user: auth ? auth.currentUser : null,
@@ -106,6 +123,6 @@ export function useUser() {
         subscription: subscriptionQuery.data,
         isAuthLoading: !isAuthReady,
         isLoading: profileQuery.isLoading || subscriptionQuery.isLoading,
+        refreshUser,
     };
 }
-

@@ -99,7 +99,7 @@ class CloudTasksService:
                 
                 # Wait for video to be ready (max 3 min) - non-YouTube only
                 if not is_youtube:
-                    for attempt in range(18):
+                    for attempt in range(5):
                         async with get_db_connection() as conn:
                             asset = await get_media_asset_by_id(conn, media_asset_id)
                         status = asset.get("status", "") if asset else ""

@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic';
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import "./pricing.css";
 import { useBilling } from "./hooks/useBilling";
@@ -11,6 +11,7 @@ import { CancelConfirmModal } from "./components/CancelConfirmModal";
 import { roleOrder, Product } from "./types";
 import AppHomeLoading from "../../loading";
 import { FadeIn } from "@/components/ui/animations";
+import { useSearchParams } from "next/navigation";
 
 function PricingSection() {
     const {
@@ -33,10 +34,53 @@ function PricingSection() {
         undoCancel,
         confirmPlanChange,
         clearPreviewError,
-        clearPreviewData
-    } = useBilling();
+        clearPreviewData,
+        refreshUser
+    } = useBilling({ refreshOnMount: true });
 
     const [isAnnual, setIsAnnual] = useState(false);
+    const [returnLoading, setReturnLoading] = useState(false);
+    const searchParams = useSearchParams();
+
+    useEffect(() => {
+        const subscriptionId = searchParams?.get("subscription_id");
+        const status = searchParams?.get("status");
+
+        if (!subscriptionId) return;
+
+        let isMounted = true;
+        let attempts = 0;
+        const maxAttempts = 10;
+        const pollIntervalMs = 3000;
+        const shouldPoll = status === "pending";
+
+        const poll = async () => {
+            if (!isMounted) return;
+            attempts += 1;
+            await refreshUser();
+
+            const latestStatus = subscription?.status;
+            const isPending = latestStatus === "pending";
+            const shouldStop = !isPending || attempts >= maxAttempts;
+            if (shouldStop) {
+                setReturnLoading(false);
+                return;
+            }
+            setReturnLoading(true);
+            setTimeout(poll, pollIntervalMs);
+        };
+
+        setReturnLoading(shouldPoll);
+        if (shouldPoll) {
+            void poll();
+        } else {
+            void refreshUser();
+        }
+
+        return () => {
+            isMounted = false;
+        };
+    }, [refreshUser, searchParams, subscription?.status]);
 
     // Helpers to find products
     const getProduct = (role: string, annual: boolean): Product | undefined => {
@@ -214,6 +258,12 @@ function PricingSection() {
                     <div className="text-center mb-16">
                         <h2 className="text-3xl font-medium text-white mb-4">Transparent Pricing</h2>
                         <p className="text-neutral-400 mb-8">Lock in Beta pricing today. Prices increase after V1.0 launch.</p>
+                        {returnLoading && (
+                            <div className="inline-flex items-center gap-2 text-sm text-amber-300/90">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Updating your plan...
+                            </div>
+                        )}
 
                         <div className="flex items-center justify-center gap-3 mb-10">
                             <span
