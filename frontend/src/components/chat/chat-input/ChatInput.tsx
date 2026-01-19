@@ -34,6 +34,7 @@ import { ChipList } from './ChipList';
 import { ModelSelector } from './ModelSelector';
 import { ActionButtons } from './ActionButtons';
 import { ImageChipList } from './ImageChipList';
+import { GlassPanel } from '@/components/ui/glass-card';
 
 export function ChatInput({ context, isDragActive }: ChatInputProps) {
     const [message, setMessage] = useState('');
@@ -391,27 +392,31 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                     onRemoveChip={handleRemoveFloatingChip}
                 />
 
-                <PromptInput
-                    value={message}
-                    onValueChange={handleMessageChange}
-                    onSubmit={handleSend}
-                    isLoading={isStreaming}
-                    disabled={createChat.isPending}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
+                <GlassPanel
+                    intensity="medium"
                     className={cn(
-                        "bg-[#1A1A1A]/80 border-white/20 backdrop-blur-md",
+                        "backdrop-blur-none",
                         (isDragOver || isDragActive) && "ring-1 ring-primary/60 border-primary/60"
                     )}
                 >
+                    <PromptInput
+                        value={message}
+                        onValueChange={handleMessageChange}
+                        onSubmit={handleSend}
+                        isLoading={isStreaming}
+                        disabled={createChat.isPending}
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        className="border-none bg-transparent"
+                    >
                     <ChipList
                         chips={chips}
                         onRemoveChip={handleRemoveChip}
                     />
                     <PromptInputTextarea
                         placeholder="Send a message"
-                        className="text-sm min-h-[40px] text-foreground"
+                        className="text-sm min-h-[40px] text-foreground leading-[34px]"
                     />
                     <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">
                         <div className="flex items-center gap-2">
@@ -442,6 +447,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                         </div>
                     </PromptInputActions>
                 </PromptInput>
+                </GlassPanel>
             </div>
         </FileUpload>
     );

@@ -1,7 +1,7 @@
 """API v1 router - aggregates all v1 endpoints."""
 from fastapi import APIRouter
 
-from app.api.v1 import search, history, media, boards, twelvelabs, chats, analysis, tasks, user, waitlist, auth, billing, webhooks, streak
+from app.api.v1 import search, history, media, boards, twelvelabs, chats, analysis, tasks, user, waitlist, auth, billing, webhooks, streak, trending
 
 router = APIRouter(prefix="/v1")
 router.include_router(auth.router, tags=["auth"])  # Auth sync - no auth required
@@ -18,5 +18,6 @@ router.include_router(waitlist.router, tags=["waitlist"])
 router.include_router(billing.router, tags=["billing"])
 router.include_router(webhooks.router, tags=["webhooks"])
 router.include_router(streak.router, tags=["streak"])
+router.include_router(trending.router, tags=["trending"])
 
 

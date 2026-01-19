@@ -20,29 +20,29 @@ export function ChipList({ chips, onRemoveChip }: ChipListProps) {
                 return (
                     <span
                         key={`${chip.type}-${chip.id}`}
-                        className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background/60 px-2.5 py-1 text-xs font-medium text-foreground/90 ring-1 ring-white/10"
+                        className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#b7b7b7] px-2.5 py-1 text-xs font-medium text-black ring-1 ring-white/10 -translate-y-0.5"
                     >
                         {chip.type === 'board' && (
                             <>
-                                <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                <LayoutDashboard className="h-3.5 w-3.5 text-black/60" />
                                 <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
                             </>
                         )}
                         {chip.type === 'chat' && (
                             <>
-                                <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                <LayoutDashboard className="h-3.5 w-3.5 text-black/60" />
                                 <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
                             </>
                         )}
                         {chip.type === 'search' && (
                             <>
-                                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                <Search className="h-3.5 w-3.5 text-black/60" />
                                 <span className="truncate">{truncateText(chip.label, CHIP_TITLE_LIMIT)}</span>
                             </>
                         )}
                         {chip.type === 'media' && PlatformIcon && (
                             <>
-                                <PlatformIcon className="text-[12px]" />
+                                <PlatformIcon className="text-[12px] text-black/60" />
                                 <span className="truncate" title={chip.title}>
                                     {truncateText(chip.title, CHIP_TITLE_LIMIT)}
                                 </span>
@@ -52,10 +52,10 @@ export function ChipList({ chips, onRemoveChip }: ChipListProps) {
                             <button
                                 type="button"
                                 onClick={() => onRemoveChip(chip)}
-                                className="rounded-full hover:text-foreground"
+                                className="rounded-full hover:text-black"
                                 aria-label={`Remove ${chip.label}`}
                             >
-                                <X className="h-3 w-3" />
+                                <X className="h-3 w-3 text-black/60" />
                             </button>
                         )}
                     </span>

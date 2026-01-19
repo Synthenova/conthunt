@@ -57,6 +57,16 @@
         }
     }
 
+    @keyframes marquee {
+        0% {
+            transform: translateX(0);
+        }
+
+        100% {
+            transform: translateX(-50%);
+        }
+    }
+
     --animate-typing: typing 1s infinite;
 
     @keyframes typing {
@@ -71,6 +81,12 @@
             transform: translateY(-25%);
             opacity: 1;
         }
+    }
+}
+
+@layer utilities {
+    .animate-marquee {
+        animation: marquee 40s linear infinite;
     }
 }
 

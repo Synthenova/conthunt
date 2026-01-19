@@ -60,6 +60,7 @@ export function MediaCard({
 
     // Platform-specific field mapping
     const title = item.title || item.caption || item.description || "No Title";
+    const PlatformIcon = getPlatformIcon(platform);
     const thumbnail = item.thumbnail_url || item.cover_url || item.image_url;
     const videoUrl = item.video_url || item.media_url;
     const link = item.url || item.link || item.web_url;
@@ -338,8 +339,8 @@ export function MediaCard({
                             </div>
                         )}
 
-                        {/* Gradient Overlay (Bottom) */}
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
+                        {/* Gradient Overlay (Bottom) - Enhanced for readability */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 via-40% to-transparent pointer-events-none" />
 
                         {/* Mute Toggle */}
                         <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
@@ -357,89 +358,65 @@ export function MediaCard({
                             </Button>
                         </div>
 
-                        {/* Right Side Stats Bar */}
-                        <div className="absolute bottom-4 right-2 flex flex-col gap-4 items-center z-10">
-                            {likes > 0 && (
-                                <div className="flex flex-col items-center gap-1">
-                                    <Heart className="h-6 w-6 text-white drop-shadow-md" />
-                                    <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(likes)}</span>
-                                </div>
-                            )}
-
-                            {comments > 0 && (
-                                <div className="flex flex-col items-center gap-1">
-                                    <MessageCircle className="h-6 w-6 text-white drop-shadow-md" />
-                                    <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(comments)}</span>
-                                </div>
-                            )}
-
-                            {shares > 0 && (
-                                <div className="flex flex-col items-center gap-1">
-                                    <Share2 className="h-6 w-6 text-white drop-shadow-md" />
-                                    <span className="text-[10px] font-medium text-white drop-shadow-md">{formatNumber(shares)}</span>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Bottom Info Section (Creator + Caption) */}
-                        <div className="absolute bottom-0 left-0 right-12 p-3 flex flex-col gap-2 z-10">
-                            {/* Creator Profile */}
+                        {/* Bottom Info Section (Redesigned) */}
+                        <div className="absolute bottom-0 left-0 right-0 p-4 flex flex-col gap-3 z-10">
+                            {/* Creator Name */}
                             <div className="flex items-center gap-2">
-                                <div className="h-8 w-8 rounded-full bg-zinc-800 border-2 border-white/20 overflow-hidden flex-shrink-0">
-                                    {creatorImage ? (
-                                        <AsyncImage
-                                            src={creatorImage}
-                                            alt={creatorName}
-                                            className="h-full w-full object-cover"
-                                        />
-                                    ) : (
-                                        <div className="h-full w-full flex items-center justify-center text-white/50 font-bold text-xs bg-black">
-                                            {creatorName.substring(0, 1).toUpperCase()}
-                                        </div>
-                                    )}
-                                </div>
-                                <span className="text-sm font-semibold text-white drop-shadow-md truncate max-w-[120px]">
+                                <span className="text-base font-bold text-white drop-shadow-md truncate max-w-[200px]">
                                     {creatorName}
                                 </span>
-                                {/* Platform Name Link */}
-                                {link && (
-                                    <>
-                                        <span className="text-white/50 text-[10px]">•</span>
-                                        <a
-                                            href={link}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-xs text-white/90 hover:text-white underline drop-shadow-md truncate max-w-[100px] uppercase font-medium"
-                                            onClick={(e) => e.stopPropagation()}
-                                        >
-                                            {platformLabel}
-                                        </a>
-                                    </>
-                                )}
+                                <PlatformIcon className="h-3.5 w-3.5 text-white/90 drop-shadow-md" />
                             </div>
 
                             {/* Caption */}
                             <div
-                                className="text-xs text-white/90 drop-shadow-sm cursor-pointer"
+                                className="text-sm text-white/90 drop-shadow-sm font-normal leading-snug cursor-pointer -mt-1"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     setIsCaptionExpanded(!isCaptionExpanded);
                                 }}
                             >
                                 <p className={cn(
-                                    "leading-relaxed transition-all duration-300",
-                                    isCaptionExpanded ? "" : "line-clamp-1"
+                                    "transition-all duration-300",
+                                    isCaptionExpanded ? "" : "line-clamp-2"
                                 )}>
                                     {title}
                                 </p>
-                                {!isCaptionExpanded && title && title.length > 50 && (
-                                    <span className="text-[10px] text-white/70">more</span>
-                                )}
                             </div>
 
-                            {/* Views display */}
-                            <div className="flex items-center gap-1 text-[10px] text-white/70">
-                                <Play className="h-3 w-3 fill-white/70" /> {formatNumber(views)} views
+                            {/* Horizontal Stats Row */}
+                            <div className="flex items-center justify-between pt-1">
+                                {/* Views */}
+                                <div className="flex items-center gap-1.5">
+                                    <Play className="h-4 w-4 fill-white text-white drop-shadow-md" />
+                                    <span className="text-sm font-medium text-white drop-shadow-md">{formatNumber(views)}</span>
+                                </div>
+
+                                {/* Likes */}
+                                <div className="flex items-center gap-1.5">
+                                    <Heart className="h-4 w-4 fill-white text-white drop-shadow-md" />
+                                    <span className="text-sm font-medium text-white drop-shadow-md">{formatNumber(likes)}</span>
+                                </div>
+
+                                {/* Comments/Shares (using a 'Hand' visual equivalent or generic interaction) */}
+                                <div className="flex items-center gap-1.5">
+                                    <Share2 className="h-4 w-4 fill-white text-white drop-shadow-md" />
+                                    <span className="text-sm font-medium text-white drop-shadow-md">{formatNumber(shares || comments)}</span>
+                                </div>
+
+                                {/* Engagement Rate (Mocked or Real) - Visual matching 'Chart' icon */}
+                                <div className="flex items-center gap-1.5">
+                                    <div className="h-4 w-4 flex items-center justify-center">
+                                        {/* Using a simple chart icon to match the '2.1%' visual */}
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white drop-shadow-md">
+                                            <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+                                            <polyline points="17 6 23 6 23 12"></polyline>
+                                        </svg>
+                                    </div>
+                                    <span className="text-sm font-medium text-white drop-shadow-md">
+                                        {((likes + comments + shares) / (views || 1) * 100).toFixed(1)}%
+                                    </span>
+                                </div>
                             </div>
                         </div>
 

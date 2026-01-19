@@ -28,6 +28,7 @@ import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown,
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 
 const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
+const CHIP_TITLE_LIMIT = 10;
 const CONTEXT_FENCE_RE = /```context[\s\S]*?```/g;
 const CHIP_LABEL_LIMIT = 20;
 
@@ -130,6 +131,11 @@ function parseChipLabel(label: string) {
 function truncateLabel(value: string) {
     if (value.length <= CHIP_LABEL_LIMIT) return value;
     return value.slice(0, CHIP_LABEL_LIMIT - 1).trimEnd() + "…";
+}
+
+function truncateText(value: string, limit: number) {
+    if (value.length <= limit) return value;
+    return value.slice(0, limit - 1).trimEnd() + "…";
 }
 
 
@@ -296,26 +302,26 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
                 if (chipMeta.icon === "image") return null;
 
                 return (
-                    <span className="inline-flex align-middle mx-1">
+                    <span className="inline-flex align-middle mx-1 -translate-y-0.5">
                         <button
                             type="button"
                             onClick={() => handleChipClick(label, chipMeta.type, chipMeta.id)}
-                            className="inline-flex items-center gap-2 rounded-lg glass border-white/20 bg-white/5 px-3 py-1.5 text-sm font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
+                            className="inline-flex items-center gap-1 rounded-full bg-[#b7b7b7] px-2.5 py-1 text-xs font-medium text-black ring-1 ring-white/10 transition-colors hover:bg-[#c5c5c5] cursor-pointer"
                         >
                             {chipMeta.icon === "board" && (
-                                <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
+                                <LayoutDashboard className="h-3.5 w-3.5 text-black/60" />
                             )}
                             {chipMeta.icon === "search" && (
-                                <Search className="h-4 w-4 text-muted-foreground" />
+                                <Search className="h-3.5 w-3.5 text-black/60" />
                             )}
                             {chipMeta.icon === "image" && (
-                                <ImagePlus className="h-4 w-4 text-muted-foreground" />
+                                <ImagePlus className="h-3.5 w-3.5 text-black/60" />
                             )}
                             {chipMeta.Icon && (
-                                <chipMeta.Icon className="text-[14px]" />
+                                <chipMeta.Icon className="text-[12px] text-black/60" />
                             )}
-                            <span className="truncate max-w-[200px]" title={chipMeta.text}>
-                                {truncateLabel(chipMeta.text || '')}
+                            <span className="truncate" title={chipMeta.text}>
+                                {truncateText(chipMeta.text || '', CHIP_TITLE_LIMIT)}
                             </span>
                         </button>
                     </span>
@@ -349,7 +355,7 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
                     <div className="w-full glass text-foreground shadow-lg border-white/10 bg-[#1A1A1A] rounded-xl overflow-hidden">
                         <MessageContent
                             markdown={false}
-                            className='whitespace-pre-wrap !px-4 !py-2.5 text-base leading-[26px] font-light tracking-[0.035rem]'
+                            className='whitespace-pre-wrap !px-4 !py-2.5 text-base leading-[34px] font-light tracking-[0.035rem]'
                         >
                             {cleaned.trim()}
                         </MessageContent>
@@ -398,7 +404,7 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
             <div className="w-full">
                 <MessageContent
                     markdown={true}
-                    className="bg-transparent p-0 text-base leading-[26px] font-light tracking-[0.035rem]"
+                    className="bg-transparent p-0 text-base leading-[34px] font-light tracking-[0.035rem]"
                     components={components}
                 >
                     {processedContent}
@@ -657,7 +663,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                 <div className="rounded-full bg-secondary p-4 mb-4">
                     <MessageSquare className="h-8 w-8 text-muted-foreground" />
                 </div>
-                <p className="text-base text-muted-foreground leading-[26px] font-light tracking-[0.035rem]">
+                <p className="text-base text-muted-foreground leading-[34px] font-light tracking-[0.035rem]">
                     Send a message
                 </p>
             </div>
