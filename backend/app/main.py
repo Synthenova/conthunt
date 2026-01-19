@@ -16,6 +16,7 @@ from app.core import get_settings, logger
 from app.core.logging import setup_logging, get_log_level
 from app.core.telemetry import setup_telemetry
 from app.db import init_db, close_db
+from app.realtime.stream_hub import StreamFanoutHub
 from app.api import v1_router
 from app.agent.runtime import create_agent_graph
 
@@ -39,6 +40,9 @@ async def lifespan(app: FastAPI):
             health_check_interval=30,
         )
         logger.debug("Redis client initialized")
+        app.state.stream_hub = StreamFanoutHub(app.state.redis, logger)
+        await app.state.stream_hub.start()
+        logger.debug("Stream hub initialized")
         
         # Initialize agent graph with Postgres checkpointer
         graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
@@ -53,6 +57,9 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.debug("Shutting down Conthunt backend...")
+    if hasattr(app.state, "stream_hub"):
+        await app.state.stream_hub.stop()
+        logger.debug("Stream hub stopped")
     if hasattr(app.state, "redis"):
         await app.state.redis.close()
         logger.debug("Redis client closed")

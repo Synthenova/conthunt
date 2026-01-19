@@ -36,6 +36,7 @@ from app.schemas.chats import (
     RenameChatRequest,
     ChatTag,
 )
+from app.realtime.stream_hub import stream_id_gt
 
 router = APIRouter()
 settings = get_settings()
@@ -645,39 +646,76 @@ async def stream_chat(
 
     stream_key = f"chat:{str(chat_id)}:stream"
 
+    hub = getattr(request.app.state, "stream_hub", None)
+
     async def event_generator():
-        last_id = last_event_id or "0-0"
-        
+        if hub is None:
+            last_id = last_event_id or "0-0"
+            try:
+                while True:
+                    streams = await redis_client.xread(
+                        {stream_key: last_id},
+                        count=50,
+                        block=10000,
+                    )
+                    if not streams:
+                        yield {"event": "ping", "data": ""}
+                        continue
+                    for _, messages in streams:
+                        for msg_id, data_map in messages:
+                            last_id = msg_id
+                            payload_str = data_map.get("data")
+                            yield {
+                                "id": msg_id,
+                                "event": "message",
+                                "data": payload_str,
+                            }
+                            if payload_str and '"type": "done"' in payload_str:
+                                return
+            except asyncio.CancelledError:
+                pass
+            return
+
+        queue = await hub.subscribe(stream_key)
+        last_sent_id = last_event_id or "0-0"
         try:
+            min_id = "-" if not last_event_id else f"({last_event_id}"
+            history = await redis_client.xrange(stream_key, min=min_id, max="+")
+            for msg_id, data_map in history:
+                payload_str = data_map.get("data")
+                if payload_str is None:
+                    continue
+                last_sent_id = msg_id
+                yield {
+                    "id": msg_id,
+                    "event": "message",
+                    "data": payload_str,
+                }
+                if payload_str and '"type": "done"' in payload_str:
+                    return
+
             while True:
-                if await request.is_disconnected():
-                    break
-                    
-                streams = await redis_client.xread(
-                    {stream_key: last_id}, 
-                    count=50, 
-                    block=10000 
-                )
-                
-                if not streams:
+                try:
+                    msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
+                except asyncio.TimeoutError:
                     yield {"event": "ping", "data": ""}
                     continue
-                    
-                for _, messages in streams:
-                    for msg_id, data_map in messages:
-                        last_id = msg_id
-                        payload_str = data_map.get("data")
-                        yield {
-                            "id": msg_id,
-                            "event": "message",
-                            "data": payload_str
-                        }
-                        
-                        # Check if done to close stream
-                        if payload_str and '"type": "done"' in payload_str:
-                             return
+                if not payload_str:
+                    continue
+                if not stream_id_gt(msg_id, last_sent_id):
+                    continue
+                last_sent_id = msg_id
+                yield {
+                    "id": msg_id,
+                    "event": "message",
+                    "data": payload_str,
+                }
+                if payload_str and '"type": "done"' in payload_str:
+                    return
         except asyncio.CancelledError:
             pass
+        finally:
+            await hub.unsubscribe(stream_key, queue)
 
     return EventSourceResponse(event_generator())
 
