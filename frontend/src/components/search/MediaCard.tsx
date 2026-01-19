@@ -274,6 +274,7 @@ export function MediaCard({
             <GlassCard
                 className="group relative overflow-hidden h-full flex flex-col border-0 bg-surface/80 shadow-xl shadow-black/20"
                 hoverEffect={false}
+                data-tutorial="video_card"
             >
                 <div className="relative w-full h-full">
                     <AspectRatio ratio={9 / 16} className="h-full">

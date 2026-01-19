@@ -69,6 +69,7 @@ async def get_me(user: AuthUser = Depends(get_current_user)):
         "role": role,
         "usage": usage_list,
         "credits": summary["credits"],
+        "reward_balances": summary.get("reward_balances", {}),
         "period_start": summary["period_start"],
         "next_reset": summary.get("next_reset"),
     }

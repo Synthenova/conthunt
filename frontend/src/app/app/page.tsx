@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCreateChat, useSendMessage } from "@/hooks/useChat";
+import { useTutorialAutoStart } from "@/hooks/useTutorialAutoStart";
 import {
     PromptInput,
     PromptInputTextarea,
@@ -18,6 +19,9 @@ export default function HomePage() {
     const router = useRouter();
     const createChat = useCreateChat();
     const { sendMessage } = useSendMessage();
+
+    // Auto-start home tutorial on first visit
+    useTutorialAutoStart({ flowId: "home_tour" });
 
     const handleSubmit = async () => {
         if (!message.trim() || createChat.isPending || isSubmitting) return;
@@ -86,6 +90,7 @@ export default function HomePage() {
                     onSubmit={handleSubmit}
                     isLoading={createChat.isPending || isSubmitting}
                     className="w-full glass border-glass-border shadow-2xl shadow-primary/5"
+                    data-tutorial="search_input"
                 >
                     <PromptInputTextarea
                         placeholder="Find me viral cooking videos..."
@@ -100,6 +105,7 @@ export default function HomePage() {
                                 className="h-8 w-8 rounded-full bg-foreground text-background hover:bg-foreground/90"
                                 onClick={handleSubmit}
                                 disabled={!message.trim() || createChat.isPending || isSubmitting}
+                                data-tutorial="send_button"
                             >
                                 <ArrowUp className="h-4 w-4" />
                             </Button>

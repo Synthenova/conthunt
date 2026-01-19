@@ -506,3 +506,28 @@ header {
         box-shadow: 0 0 0 0px hsl(var(--primary) / 0);
     }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Tutorial Tooltip Styles
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.tutorial-tooltip {
+    background: linear-gradient(136.19deg, rgba(20, 20, 20, 0.95) 47.93%, rgba(30, 30, 30, 0.9) 100%);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tutorial-tooltip::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(170deg, rgba(255, 255, 255, 0.15) 0%, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0) 60%, rgba(255, 255, 255, 0.08) 100%);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+}

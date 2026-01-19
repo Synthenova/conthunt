@@ -2,6 +2,8 @@ import { useCallback, useState } from "react";
 import { auth } from "@/lib/firebaseClient";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { BACKEND_URL } from "@/lib/api";
+import { mapClientFiltersToPlatformInputs } from "@/lib/clientFilters";
+import type { ClientFilters } from "@/lib/clientFilters";
 
 interface LoadMoreResult {
     items: any[];
@@ -14,7 +16,8 @@ export function useLoadMore(searchId: string | null) {
 
     const loadMore = useCallback(async (
         onNewResults: (items: any[]) => void,
-        onNewCursors: (cursors: Record<string, any>) => void
+        onNewCursors: (cursors: Record<string, any>) => void,
+        filters?: ClientFilters
     ): Promise<void> => {
         if (!searchId) return;
 
@@ -31,12 +34,18 @@ export function useLoadMore(searchId: string | null) {
             const token = await user.getIdToken();
 
             // POST to trigger the load_more worker
+            const payload = filters
+                ? {
+                    inputs: mapClientFiltersToPlatformInputs(filters),
+                }
+                : null;
             const res = await fetch(`${BACKEND_URL}/v1/search/${searchId}/more`, {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${token}`,
                     "Content-Type": "application/json",
                 },
+                body: payload ? JSON.stringify(payload) : undefined,
             });
 
             if (!res.ok) {

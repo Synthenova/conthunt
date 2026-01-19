@@ -62,6 +62,11 @@ Guidelines:
 - If user mentions a board with @BoardName, call `get_board_items(board_id)` to get its contents.
 - If user mentions a search with @SearchName, call `get_search_items(search_id)` to get its results.
 
+**Filters from the canvas:**
+- The latest human message may include a `filters` fence like: ```filters | tiktok_top.publish_time=this-week | tiktok_keyword.sort_by=most-liked | platforms=tiktok,youtube```.
+- Treat these as authoritative defaults unless the user explicitly asks for different filters in the same message.
+- Apply `publish_time/date_posted` and `sort_by` for TikTok, and keep YouTube in shorts-only mode.
+
 **Video Analysis:**
 - When analyzing multiple videos, call `get_video_analysis` in PARALLEL for efficiency.
 

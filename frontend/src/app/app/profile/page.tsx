@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useUser } from "@/hooks/useUser";
 import { GlassPanel } from "@/components/ui/glass-card";
@@ -32,6 +32,9 @@ import { useProducts } from "@/contexts/ProductsContext";
 import { useStreak } from "@/hooks/useStreak";
 import { StreakMilestone } from "@/components/streak/StreakMilestone";
 import { Flame, CheckCircle2, Circle } from "lucide-react";
+import { useTutorialAutoStart } from "@/hooks/useTutorialAutoStart";
+import { TutorialReplayDropdown } from "@/components/tutorial";
+import { useIsFetching } from "@tanstack/react-query";
 
 // Feature icons mapping
 const featureIcons: Record<string, any> = {
@@ -43,8 +46,21 @@ const featureIcons: Record<string, any> = {
 export default function ProfilePage() {
     const { profile, user, subscription, isLoading } = useUser({ refreshOnMount: true });
     const { getPlanName } = useProducts();
-    const { streak: streakData } = useStreak();
+    const { streak: openStreak, claimReward, isClaiming } = useStreak({ type: "open" });
     const rocketRef = useRef<RocketIconHandle>(null);
+    const [isClaimSyncing, setIsClaimSyncing] = useState(false);
+    const meFetching = useIsFetching({ queryKey: ["userMe"] });
+    const streakFetching = useIsFetching({ queryKey: ["userStreak"] });
+
+    useEffect(() => {
+        if (!isClaimSyncing) return;
+        if (isClaiming) return;
+        if (meFetching > 0 || streakFetching > 0) return;
+        setIsClaimSyncing(false);
+    }, [isClaimSyncing, isClaiming, meFetching, streakFetching]);
+
+    // Auto-start profile tutorial on first visit
+    useTutorialAutoStart({ flowId: "profile_tour" });
 
     if (isLoading) {
         return (
@@ -117,20 +133,23 @@ export default function ProfilePage() {
                         </p>
                     </div>
 
-                    {profile?.role !== "pro_research" && (
-                        <Button size="lg" asChild className="rounded-full px-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_20px_rgba(255,255,255,0.1)]">
-                            <Link href="/app/billing/return">
-                                <Sparkles className="h-4 w-4 mr-2" />
-                                Upgrade Plan
-                            </Link>
-                        </Button>
-                    )}
+                    <div className="flex items-center gap-3">
+                        <TutorialReplayDropdown />
+                        {profile?.role !== "pro_research" && (
+                            <Button size="lg" asChild className="rounded-full px-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_20px_rgba(255,255,255,0.1)]">
+                                <Link href="/app/billing/return">
+                                    <Sparkles className="h-4 w-4 mr-2" />
+                                    Upgrade Plan
+                                </Link>
+                            </Button>
+                        )}
+                    </div>
                 </div>
             </FadeIn>
 
             {/* Streak Section */}
             <FadeIn delay={0.1}>
-                <div className="space-y-4">
+                <div className="space-y-4" data-tutorial="streak_section">
                     <div className="flex items-center gap-2">
                         <Flame className="h-5 w-5 text-orange-400" />
                         <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground">
@@ -138,26 +157,26 @@ export default function ProfilePage() {
                         </h2>
                     </div>
 
-                    {streakData ? (
+                    {openStreak ? (
                         <>
                             {/* Today's Progress */}
                             <GlassPanel className="p-4">
                                 <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">Today's Progress</p>
                                 <div className="flex items-center gap-6">
                                     <div className="flex items-center gap-2">
-                                        {streakData.today_complete ? (
+                                        {openStreak.today_complete ? (
                                             <CheckCircle2 className="h-5 w-5 text-green-500" />
                                         ) : (
                                             <Circle className="h-5 w-5 text-gray-500" />
                                         )}
                                         <span className={cn(
                                             "text-sm",
-                                            streakData.today_complete ? "text-green-400" : "text-gray-400"
+                                            openStreak.today_complete ? "text-green-400" : "text-gray-400"
                                         )}>
                                             App Opened
                                         </span>
                                     </div>
-                                    {streakData.today_complete && (
+                                    {openStreak.today_complete && (
                                         <Badge variant="outline" className="ml-auto border-green-500/30 bg-green-500/10 text-green-400">
                                             Day Complete!
                                         </Badge>
@@ -167,15 +186,20 @@ export default function ProfilePage() {
 
                             {/* Streak Milestone Component */}
                             <StreakMilestone
-                                currentStreak={streakData.current_streak}
-                                nextMilestone={streakData.next_milestone}
-                                milestones={streakData.milestones}
+                                currentStreak={openStreak.current_streak}
+                                nextMilestone={openStreak.next_milestone}
+                                milestones={openStreak.milestones}
+                                onClaim={(daysRequired) => {
+                                    setIsClaimSyncing(true);
+                                    void claimReward({ type: "open", daysRequired });
+                                }}
+                                isClaiming={isClaiming || isClaimSyncing}
                             />
 
                             {/* Longest Streak */}
-                            {streakData.longest_streak > 0 && (
+                            {openStreak.longest_streak > 0 && (
                                 <p className="text-xs text-gray-500 text-center">
-                                    🏆 Longest streak: {streakData.longest_streak} {streakData.longest_streak === 1 ? 'day' : 'days'}
+                                    🏆 Longest streak: {openStreak.longest_streak} {openStreak.longest_streak === 1 ? 'day' : 'days'}
                                 </p>
                             )}
                         </>

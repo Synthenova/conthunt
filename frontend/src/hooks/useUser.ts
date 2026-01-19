@@ -38,8 +38,10 @@ export interface UserProfile {
     credits?: {
         total: number;
         used: number;
+        bonus?: number;
         remaining: number;
     };
+    reward_balances?: Record<string, number>;
     period_start?: string;
     next_reset?: string;
 }

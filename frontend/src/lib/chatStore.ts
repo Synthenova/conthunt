@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { ClientFilters } from '@/lib/clientFilters';
 
 export interface ToolCallInfo {
     name: string;
@@ -97,6 +98,10 @@ interface ChatState {
     canvasActiveSearchId: string | null;
     setCanvasResultsMap: (resultsMap: Record<string, any[]>) => void;
     setCanvasActiveSearchId: (searchId: string | null) => void;
+
+    // Client filters (for chat canvas)
+    clientFilters: ClientFilters;
+    setClientFilters: (filters: ClientFilters) => void;
 
     // Board items for media chip scroll-to-video on board pages
     canvasBoardItems: any[];
@@ -284,6 +289,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({ canvasActiveSearchId: searchId });
         }
     },
+
+    clientFilters: { sort: "default", dateFilter: "all", platforms: [] },
+    setClientFilters: (filters) => set({ clientFilters: filters }),
 
     // Board items for media chip scroll-to-video on board pages
     canvasBoardItems: [],

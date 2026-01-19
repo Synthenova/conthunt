@@ -1,6 +1,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { FlatMediaItem } from "@/lib/transformers";
+import type { ClientFilters } from "@/lib/clientFilters";
 import { useLoadMore } from "@/hooks/useLoadMore";
 import { transformSearchResults } from "@/lib/transformers";
 
@@ -49,7 +50,7 @@ export function useChatSearchState(activeSearchId: string | null) {
     // Load More hook
     const { loadMore, isLoading: isLoadingMore } = useLoadMore(activeSearchId);
 
-    const handleLoadMore = useCallback(() => {
+    const handleLoadMore = useCallback((filters?: ClientFilters) => {
         if (!activeSearchId) return;
 
         loadMore(
@@ -67,7 +68,8 @@ export function useChatSearchState(activeSearchId: string | null) {
             (newCursors) => {
                 setCursorsMap(prev => ({ ...prev, [activeSearchId]: newCursors }));
                 setHasMoreMap(prev => ({ ...prev, [activeSearchId]: Object.keys(newCursors).length > 0 }));
-            }
+            },
+            filters
         );
     }, [activeSearchId, loadMore]);
 

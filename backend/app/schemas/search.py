@@ -27,6 +27,14 @@ class SearchRequest(BaseModel):
     }
 
 
+class LoadMoreRequest(BaseModel):
+    """Request body for POST /v1/search/{search_id}/more."""
+    inputs: Optional[Dict[str, Dict[str, Any]]] = Field(
+        default=None,
+        description="Platform-specific parameters keyed by platform slug"
+    )
+
+
 class PlatformResult(BaseModel):
     """Result summary for a single platform call."""
     success: bool

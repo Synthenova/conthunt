@@ -17,6 +17,7 @@ import { BoardFilterBar } from "@/components/boards/BoardFilterBar";
 import { SelectableResultsGrid } from "@/components/search/SelectableResultsGrid";
 import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { SelectionBar } from "@/components/boards/SelectionBar";
+import { useTutorialAutoStart } from "@/hooks/useTutorialAutoStart";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -47,6 +48,9 @@ export default function BoardDetailPage() {
     const params = useParams();
     const router = useRouter();
     const boardId = params.id as string;
+
+    // Auto-start board detail tutorial on first visit
+    useTutorialAutoStart({ flowId: "board_detail_tour", delay: 500 });
 
     const {
         getBoard,
@@ -234,6 +238,7 @@ export default function BoardDetailPage() {
                                         "flex-1 h-full flex items-center justify-center text-xs font-bold uppercase tracking-wider rounded-full transition-all relative z-10 px-6",
                                         activeTab === tab ? "text-white" : "text-gray-500 hover:text-gray-300"
                                     )}
+                                    data-tutorial={tab === 'videos' ? 'videos_tab' : 'insights_tab'}
                                 >
                                     {activeTab === tab && (
                                         <motion.div
@@ -335,6 +340,7 @@ export default function BoardDetailPage() {
                                             onClick={handleRefreshInsights}
                                             disabled={isRefreshingInsights || isProcessingInsights}
                                             className="gap-2 glass-button-white hover:text-black"
+                                            data-tutorial="refresh_insights"
                                         >
                                             {isRefreshingInsights || isProcessingInsights ? (
                                                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -428,7 +434,7 @@ export default function BoardDetailPage() {
                                         >
                                             <Sparkles className="h-4 w-4" />
                                             Get insights
-                                            </Button>
+                                        </Button>
                                     )}
                                 </div>
                             ) : (
@@ -447,123 +453,123 @@ export default function BoardDetailPage() {
                                         "grid gap-4 lg:grid-cols-2",
                                         (isProcessingInsights || isRefreshingInsights || isInsightsFetching) && "blur-sm"
                                     )}>
-                                    <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                            <CardTitle className="flex items-center gap-2 text-white">
-                                                <Sparkles className="h-4 w-4 text-amber-300" />
-                                                Top Hooks
-                                            </CardTitle>
-                                        </CardHeader>
-                                        <CardContent className="space-y-3 pt-4 pb-6">
-                                            {(insights?.insights?.top_hooks || []).map((hook, index) => (
-                                                <div
-                                                    key={`${hook}-${index}`}
-                                                    className="rounded-xl border border-white/10 glass bg-white/5 px-4 py-3 text-sm text-white shadow-inner"
-                                                >
-                                                    "{hook}"
-                                                </div>
-                                            ))}
-                                        </CardContent>
-                                    </Card>
-
-                                    <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                            <CardTitle className="flex items-center gap-2 text-white">
-                                                <Target className="h-4 w-4 text-emerald-300" />
-                                                Common Angles
-                                            </CardTitle>
-                                        </CardHeader>
-                                        <CardContent className="space-y-3 pt-4 pb-6">
-                                            {(insights?.insights?.common_angles || []).map((angle, index) => (
-                                                <div key={`${angle.label}-${index}`} className="space-y-2">
-                                                    <div className="flex items-center justify-between text-sm text-white">
-                                                        <span>{angle.label}</span>
-                                                        <span className="text-muted-foreground text-xs font-mono">{angle.percentage}%</span>
+                                        <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
+                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
+                                                <CardTitle className="flex items-center gap-2 text-white">
+                                                    <Sparkles className="h-4 w-4 text-amber-300" />
+                                                    Top Hooks
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="space-y-3 pt-4 pb-6">
+                                                {(insights?.insights?.top_hooks || []).map((hook, index) => (
+                                                    <div
+                                                        key={`${hook}-${index}`}
+                                                        className="rounded-xl border border-white/10 glass bg-white/5 px-4 py-3 text-sm text-white shadow-inner"
+                                                    >
+                                                        "{hook}"
                                                     </div>
-                                                    <div className="h-1.5 rounded-full glass bg-white/5">
-                                                        <div
-                                                            className="h-full rounded-full bg-emerald-400/70 shadow-[0_0_10px_rgba(52,211,153,0.3)]"
-                                                            style={{ width: `${Math.min(Math.max(angle.percentage, 0), 100)}%` }}
-                                                        />
+                                                ))}
+                                            </CardContent>
+                                        </Card>
+
+                                        <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
+                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
+                                                <CardTitle className="flex items-center gap-2 text-white">
+                                                    <Target className="h-4 w-4 text-emerald-300" />
+                                                    Common Angles
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="space-y-3 pt-4 pb-6">
+                                                {(insights?.insights?.common_angles || []).map((angle, index) => (
+                                                    <div key={`${angle.label}-${index}`} className="space-y-2">
+                                                        <div className="flex items-center justify-between text-sm text-white">
+                                                            <span>{angle.label}</span>
+                                                            <span className="text-muted-foreground text-xs font-mono">{angle.percentage}%</span>
+                                                        </div>
+                                                        <div className="h-1.5 rounded-full glass bg-white/5">
+                                                            <div
+                                                                className="h-full rounded-full bg-emerald-400/70 shadow-[0_0_10px_rgba(52,211,153,0.3)]"
+                                                                style={{ width: `${Math.min(Math.max(angle.percentage, 0), 100)}%` }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </CardContent>
+                                        </Card>
+
+                                        <Card className="glass border-white/10 overflow-hidden lg:col-span-2 gap-0 py-0">
+                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
+                                                <CardTitle className="flex items-center gap-2 text-white">
+                                                    <FileText className="h-4 w-4 text-zinc-300" />
+                                                    Creative Brief
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="grid gap-6 lg:grid-cols-3 text-sm text-white/90 pt-4 pb-6">
+                                                <div className="space-y-2">
+                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Target Audience</p>
+                                                    <p className="leading-relaxed">{insights?.insights?.creative_brief?.target_audience}</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Key Message</p>
+                                                    <p className="leading-relaxed">{insights?.insights?.creative_brief?.key_message}</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Recommended Format</p>
+                                                    <p className="leading-relaxed">{insights?.insights?.creative_brief?.recommended_format}</p>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+
+                                        <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
+                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
+                                                <CardTitle className="flex items-center gap-2 text-white">
+                                                    <PenLine className="h-4 w-4 text-pink-300" />
+                                                    Script Ideas
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="space-y-3 pt-4 pb-6">
+                                                {(insights?.insights?.script_ideas || []).map((idea, index) => (
+                                                    <div
+                                                        key={`${idea}-${index}`}
+                                                        className="rounded-xl border border-dashed border-white/10 glass bg-white/5 px-4 py-3 text-sm text-white"
+                                                    >
+                                                        <span className="text-pink-300/50 font-mono mr-2">{String(index + 1).padStart(2, '0')}</span>
+                                                        {idea}
+                                                    </div>
+                                                ))}
+                                            </CardContent>
+                                        </Card>
+
+                                        <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
+                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
+                                                <CardTitle className="flex items-center gap-2 text-white">
+                                                    <MessageCircle className="h-4 w-4 text-orange-300" />
+                                                    Objections & CTAs
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="space-y-6 text-sm text-white/90 pt-4 pb-6">
+                                                <div className="space-y-3">
+                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Common Objections</p>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {(insights?.insights?.objections || []).map((objection, index) => (
+                                                            <div key={`${objection}-${index}`} className="rounded-full glass border-white/10 px-3 py-1.5 text-xs">
+                                                                {objection}
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 </div>
-                                            ))}
-                                        </CardContent>
-                                    </Card>
-
-                                    <Card className="glass border-white/10 overflow-hidden lg:col-span-2 gap-0 py-0">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                            <CardTitle className="flex items-center gap-2 text-white">
-                                                <FileText className="h-4 w-4 text-zinc-300" />
-                                                Creative Brief
-                                            </CardTitle>
-                                        </CardHeader>
-                                        <CardContent className="grid gap-6 lg:grid-cols-3 text-sm text-white/90 pt-4 pb-6">
-                                            <div className="space-y-2">
-                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Target Audience</p>
-                                                <p className="leading-relaxed">{insights?.insights?.creative_brief?.target_audience}</p>
-                                            </div>
-                                            <div className="space-y-2">
-                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Key Message</p>
-                                                <p className="leading-relaxed">{insights?.insights?.creative_brief?.key_message}</p>
-                                            </div>
-                                            <div className="space-y-2">
-                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Recommended Format</p>
-                                                <p className="leading-relaxed">{insights?.insights?.creative_brief?.recommended_format}</p>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-
-                                    <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                            <CardTitle className="flex items-center gap-2 text-white">
-                                                <PenLine className="h-4 w-4 text-pink-300" />
-                                                Script Ideas
-                                            </CardTitle>
-                                        </CardHeader>
-                                        <CardContent className="space-y-3 pt-4 pb-6">
-                                            {(insights?.insights?.script_ideas || []).map((idea, index) => (
-                                                <div
-                                                    key={`${idea}-${index}`}
-                                                    className="rounded-xl border border-dashed border-white/10 glass bg-white/5 px-4 py-3 text-sm text-white"
-                                                >
-                                                    <span className="text-pink-300/50 font-mono mr-2">{String(index + 1).padStart(2, '0')}</span>
-                                                    {idea}
+                                                <div className="space-y-3">
+                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Effective CTAs</p>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {(insights?.insights?.ctas || []).map((cta, index) => (
+                                                            <div key={`${cta}-${index}`} className="rounded-full glass bg-white/5 border-orange-300/20 px-3 py-1.5 text-xs text-orange-100">
+                                                                {cta}
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 </div>
-                                            ))}
-                                        </CardContent>
-                                    </Card>
-
-                                    <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
-                                        <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                            <CardTitle className="flex items-center gap-2 text-white">
-                                                <MessageCircle className="h-4 w-4 text-orange-300" />
-                                                Objections & CTAs
-                                            </CardTitle>
-                                        </CardHeader>
-                                        <CardContent className="space-y-6 text-sm text-white/90 pt-4 pb-6">
-                                            <div className="space-y-3">
-                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Common Objections</p>
-                                                <div className="flex flex-wrap gap-2">
-                                                    {(insights?.insights?.objections || []).map((objection, index) => (
-                                                        <div key={`${objection}-${index}`} className="rounded-full glass border-white/10 px-3 py-1.5 text-xs">
-                                                            {objection}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                            <div className="space-y-3">
-                                                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Effective CTAs</p>
-                                                <div className="flex flex-wrap gap-2">
-                                                    {(insights?.insights?.ctas || []).map((cta, index) => (
-                                                        <div key={`${cta}-${index}`} className="rounded-full glass bg-white/5 border-orange-300/20 px-3 py-1.5 text-xs text-orange-100">
-                                                            {cta}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
+                                            </CardContent>
+                                        </Card>
                                     </div>
                                 </div>
                             )}

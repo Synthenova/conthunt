@@ -154,6 +154,7 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
             <div className="absolute top-2 left-2 z-20">
                 <button
                     onClick={handleSelect}
+                    data-tutorial="video_checkbox"
                     className={cn(
                         "h-6 w-6 rounded-md border-2 flex items-center justify-center overflow-hidden transition-opacity duration-200",
                         isSelected

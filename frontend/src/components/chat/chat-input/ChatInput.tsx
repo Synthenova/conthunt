@@ -30,6 +30,7 @@ import type {
 } from './types';
 import { MENTION_RE, MEDIA_DRAG_TYPE, CHIP_TITLE_LIMIT, MODEL_OPTIONS } from './constants';
 import { truncateText, formatChipFence } from './utils';
+import { formatFiltersFence } from '@/lib/clientFilters';
 import { ChipList } from './ChipList';
 import { ModelSelector } from './ModelSelector';
 import { ActionButtons } from './ActionButtons';
@@ -56,6 +57,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         queuedMediaChips,
         clearQueuedMediaChips,
         openSidebar,
+        clientFilters,
     } = useChatStore();
     const { sendMessage } = useSendMessage();
     const { uploadChatImage } = useUploadChatImage();
@@ -269,7 +271,8 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
             ? sendChips.map((chip) => `\`\`\`chip ${formatChipFence(chip)}\`\`\``).join(' ')
             : '';
 
-        const fullMessage = [chipFence, messageText].filter(Boolean).join('\n');
+        const filtersFence = formatFiltersFence(clientFilters);
+        const fullMessage = [filtersFence, chipFence, messageText].filter(Boolean).join('\n');
         const tagPayload: { type: 'board' | 'search' | 'media'; id: string; label?: string }[] = chips
             .filter((chip) => chip.type === 'board' || chip.type === 'search' || chip.type === 'media')
             .map((chip) => ({

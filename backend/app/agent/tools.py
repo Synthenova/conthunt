@@ -4,6 +4,7 @@ These tools make authenticated API calls to the backend to fetch
 user data like boards, videos, and analysis.
 """
 import os
+import re
 from uuid import UUID
 from typing import Optional, List, Dict, Any, Annotated
 import httpx
@@ -307,6 +308,80 @@ async def get_video_analysis(
 
 # Available platform slugs for search
 AVAILABLE_PLATFORMS = ["tiktok_top", "tiktok_keyword", "instagram_reels", "youtube"]
+PLATFORM_ALIASES = {
+    "tiktok": ["tiktok_top", "tiktok_keyword"],
+    "instagram": ["instagram_reels"],
+    "youtube": ["youtube"],
+}
+FILTERS_FENCE_RE = re.compile(r"```filters\\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def _normalize_message_content(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text") or block.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _extract_filters_fence(messages: list) -> tuple[dict, list[str] | None]:
+    inputs: dict[str, dict[str, Any]] = {}
+    platform_override: list[str] | None = None
+
+    for message in reversed(messages):
+        if isinstance(message, dict):
+            raw_content = message.get("content", "")
+        else:
+            raw_content = getattr(message, "content", "")
+        content = _normalize_message_content(raw_content)
+        if not content:
+            continue
+        match = FILTERS_FENCE_RE.search(content)
+        if not match:
+            continue
+        body = match.group(1)
+        tokens = [part.strip() for part in body.split("|") if part.strip()]
+        for token in tokens:
+            if token.lower() == "filters":
+                continue
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if key == "platforms":
+                platform_override = [p.strip().lower() for p in value.split(",") if p.strip()]
+                continue
+            if "." not in key:
+                continue
+            platform, param = key.split(".", 1)
+            platform = platform.strip()
+            param = param.strip()
+            if not platform or not param:
+                continue
+            inputs.setdefault(platform, {})[param] = value
+        break
+
+    if platform_override:
+        resolved: list[str] = []
+        for platform in platform_override:
+            if platform in PLATFORM_ALIASES:
+                resolved.extend(PLATFORM_ALIASES[platform])
+            elif platform in AVAILABLE_PLATFORMS:
+                resolved.append(platform)
+        platform_override = list(dict.fromkeys(resolved)) if resolved else None
+
+    return inputs, platform_override
 
 
 @tool
@@ -379,6 +454,7 @@ async def search(
 
         # 2. Extract messages for context
         messages = state.get("messages", [])
+        filter_inputs, platform_override = _extract_filters_fence(messages)
         
         # 3. Generate keywords
         system_msg = SystemMessage(content="""
@@ -411,9 +487,12 @@ async def search(
             if not keyword:
                 return None
 
-            # Always search all available platforms
-            platforms_list = AVAILABLE_PLATFORMS
-            inputs = {platform: {} for platform in platforms_list}
+            # Always search all available platforms unless overridden by filters fence
+            platforms_list = platform_override or AVAILABLE_PLATFORMS
+            inputs = {
+                platform: dict(filter_inputs.get(platform, {}))
+                for platform in platforms_list
+            }
             
             url = f"{_get_api_base_url()}/search"
             payload = {

@@ -1,5 +1,6 @@
 import { AppShell } from "@/components/layout/AppShell";
 import { ProductsProvider } from "@/contexts/ProductsContext";
+import { TutorialProvider, TutorialTooltip } from "@/components/tutorial";
 
 export default function AppLayout({
     children,
@@ -8,7 +9,10 @@ export default function AppLayout({
 }) {
     return (
         <ProductsProvider>
-            <AppShell>{children}</AppShell>
+            <TutorialProvider>
+                <AppShell>{children}</AppShell>
+                <TutorialTooltip />
+            </TutorialProvider>
         </ProductsProvider>
     );
 }

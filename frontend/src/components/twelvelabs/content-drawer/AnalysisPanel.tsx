@@ -29,6 +29,7 @@ export function AnalysisPanel({
                     onClick={onAnalyze}
                     className="w-full glass-button-yellow h-12 text-base"
                     disabled={analysisDisabled}
+                    data-tutorial="analyse_button"
                 >
                     <Sparkles className="mr-2 h-4 w-4" />
                     {analysisDisabled ? "Analyze after search completes" : "Analyze with AI"}

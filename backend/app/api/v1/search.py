@@ -29,7 +29,7 @@ from app.platforms import (
 from app.platforms.registry import normalize_platform_slug
 from app.storage import upload_raw_json_gz
 from app.media import download_assets_batch
-from app.schemas import SearchRequest
+from app.schemas import SearchRequest, LoadMoreRequest
 from app.services.cloud_tasks import cloud_tasks
 from app.realtime.stream_hub import stream_id_gt
 
@@ -852,6 +852,7 @@ async def stream_search(
 async def load_more(
     search_id: UUID,
     user: dict = Depends(get_current_user),
+    payload: LoadMoreRequest | None = None,
 ):
     """
     Load more results for an existing search using pagination cursors.
@@ -877,14 +878,22 @@ async def load_more(
         # Filter out platforms without cursors and Instagram (no pagination support)
         platform_cursors = {}
         original_inputs = search_data.get("inputs", {})
+        input_overrides = (payload.inputs if payload and payload.inputs else {}) or {}
         
         for platform, cursor in cursors.items():
             if platform == "instagram_reels":
+                if platform in input_overrides or platform in original_inputs:
+                    params = {**original_inputs.get(platform, {}), **input_overrides.get(platform, {})}
+                    platform_cursors[platform] = params
                 continue
             if cursor and platform in original_inputs:
                 # Merge original params with cursor
-                params = {**original_inputs[platform], **cursor}
+                params = {**original_inputs[platform], **input_overrides.get(platform, {}), **cursor}
                 platform_cursors[platform] = params
+
+        if "instagram_reels" not in platform_cursors and ("instagram_reels" in input_overrides or "instagram_reels" in original_inputs):
+            params = {**original_inputs.get("instagram_reels", {}), **input_overrides.get("instagram_reels", {})}
+            platform_cursors["instagram_reels"] = params
     
         if not platform_cursors:
             raise HTTPException(

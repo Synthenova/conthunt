@@ -11,14 +11,6 @@ from app.db.session import get_db_connection
 from app.services import dodo_client
 
 
-# Role to credits mapping (matches product metadata)
-ROLE_CREDITS = {
-    "free": 50,
-    "creator": 1000,
-    "pro_research": 3000,
-}
-
-
 async def _sync_firebase_role(user_id: UUID, role: str) -> None:
     """Sync role to Firebase custom claims."""
     try:
@@ -360,50 +352,75 @@ async def apply_subscription_state(
             }
         )
         
+        # Determine if we should update role/periods
+        # Only grant paid role for non-failed states.
+        allowed_role_statuses = {"active", "on_hold", "cancelled"}
+        should_update_role = status in allowed_role_statuses
+
         # Determine if we should reset credit_period_start
         # Reset on: new subscription, plan change (upgrade/downgrade)
-        reset_credit_period = is_new_subscription or is_plan_change
+        reset_credit_period = (is_new_subscription or is_plan_change) and should_update_role
         
-        if reset_credit_period:
-            # Reset credit period to now (credits reset on plan change)
-            await conn.execute(
-                text("""
-                UPDATE users
-                SET role = :role,
-                    current_period_start = :period_start,
-                    credit_period_start = now(),
-                    dodo_customer_id = :customer_id
-                WHERE id = :user_id
-                """),
-                {
-                    "user_id": user_id,
-                    "role": role,
-                    "period_start": current_period_start,
-                    "customer_id": customer_id,
-                }
-            )
-            logger.info(f"Applied subscription state for user {user_id}: role={role}, status={status}, credit_period RESET")
+        if should_update_role:
+            if reset_credit_period:
+                # Reset credit period to now (credits reset on plan change)
+                await conn.execute(
+                    text("""
+                    UPDATE users
+                    SET role = :role,
+                        current_period_start = :period_start,
+                        credit_period_start = now(),
+                        dodo_customer_id = :customer_id
+                    WHERE id = :user_id
+                    """),
+                    {
+                        "user_id": user_id,
+                        "role": role,
+                        "period_start": current_period_start,
+                        "customer_id": customer_id,
+                    }
+                )
+                logger.info(
+                    f"Applied subscription state for user {user_id}: role={role}, status={status}, credit_period RESET"
+                )
+            else:
+                # Just update role and period_start, don't touch credit_period_start
+                await conn.execute(
+                    text("""
+                    UPDATE users
+                    SET role = :role,
+                        current_period_start = :period_start,
+                        dodo_customer_id = :customer_id
+                    WHERE id = :user_id
+                    """),
+                    {
+                        "user_id": user_id,
+                        "role": role,
+                        "period_start": current_period_start,
+                        "customer_id": customer_id,
+                    }
+                )
+                logger.info(f"Applied subscription state for user {user_id}: role={role}, status={status}")
         else:
-            # Just update role and period_start, don't touch credit_period_start
+            # Keep role/periods unchanged for failed/pending states.
             await conn.execute(
                 text("""
                 UPDATE users
-                SET role = :role,
-                    current_period_start = :period_start,
-                    dodo_customer_id = :customer_id
+                SET dodo_customer_id = :customer_id
                 WHERE id = :user_id
                 """),
                 {
                     "user_id": user_id,
-                    "role": role,
-                    "period_start": current_period_start,
                     "customer_id": customer_id,
                 }
             )
-            logger.info(f"Applied subscription state for user {user_id}: role={role}, status={status}")
+            logger.info(
+                f"Applied subscription state for user {user_id}: role unchanged, status={status}"
+            )
     
-    # Sync role to Firebase custom claims
-    await _sync_firebase_role(user_id, role)
+    # Sync role to Firebase custom claims only when role updated
+    if should_update_role:
+        await _sync_firebase_role(user_id, role)
 
 
 async def revert_to_free(user_id: UUID) -> None:

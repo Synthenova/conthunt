@@ -1,13 +1,14 @@
 "use client";
 
-import React from 'react';
+import React, { useState } from 'react';
 import { LogoutIcon, type LogoutIconHandle } from '@/components/ui/logout';
 import { cn } from '@/lib/utils';
 import { LogoutButton } from "@/components/logout-button";
 import { useRouter } from 'next/navigation';
 import { useProducts } from '@/contexts/ProductsContext';
 import { useStreak } from '@/hooks/useStreak';
-import { Flame } from 'lucide-react';
+import { Flame, Bug } from 'lucide-react';
+import { FeedbackModal } from '@/components/modals/FeedbackModal';
 
 interface SidebarUserProps {
     user: any;
@@ -19,13 +20,31 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
     const router = useRouter();
     const { getPlanName, loading: productsLoading } = useProducts();
     const { streak: streakData } = useStreak();
+    const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
     const planDisplayName = profile?.role
         ? getPlanName(profile.role)
         : (productsLoading ? "Loading..." : "Free");
 
     return (
-        <div className="p-4 border-t border-white/5 mt-auto">
+        <div className="p-4 border-t border-white/5 mt-auto space-y-2">
+            {/* Bug Report Button - Placed above the user profile */}
+            <button
+                onClick={() => setIsFeedbackOpen(true)}
+                className={cn(
+                    "flex items-center rounded-xl hover:bg-white/5 cursor-pointer group transition-all text-gray-400 hover:text-orange-400 p-2 border border-transparent hover:border-white/5",
+                    isCollapsed ? "justify-center aspect-square w-full" : "space-x-3 w-full"
+                )}
+                title="Report a bug"
+            >
+                <div className={cn("flex items-center justify-center", isCollapsed ? "" : "w-8")}>
+                    <Bug size={16} />
+                </div>
+                {!isCollapsed && (
+                    <span className="text-xs font-semibold">Report a bug</span>
+                )}
+            </button>
+
             <div
                 onClick={() => router.push('/app/profile')}
                 className={cn(
@@ -81,6 +100,11 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
                     </>
                 )}
             </div>
+
+            <FeedbackModal
+                isOpen={isFeedbackOpen}
+                onClose={() => setIsFeedbackOpen(false)}
+            />
         </div>
     );
 };

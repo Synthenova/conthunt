@@ -228,7 +228,7 @@ async def get_milestones(
     streak_type_id = await get_streak_type_id(conn, streak_type)
     result = await conn.execute(
         text("""
-        SELECT days_required, reward_description, icon_name
+        SELECT days_required, reward_description, icon_name, reward_feature, reward_amount
         FROM streak_milestones
         WHERE role = :role AND streak_type_id = :streak_type_id
         ORDER BY days_required ASC
@@ -241,9 +241,142 @@ async def get_milestones(
             "days_required": row[0],
             "reward_description": row[1],
             "icon_name": row[2],
+            "reward_feature": row[3],
+            "reward_amount": row[4],
         }
         for row in rows
     ]
+
+
+async def get_claimed_days(
+    conn: AsyncConnection,
+    user_id: UUID,
+    role: str,
+    streak_type: str,
+) -> set[int]:
+    """Get days_required values already claimed for this role + type."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    result = await conn.execute(
+        text("""
+        SELECT days_required
+        FROM streak_reward_grants
+        WHERE user_id = :user_id AND role = :role AND streak_type_id = :streak_type_id
+        """),
+        {"user_id": user_id, "role": role, "streak_type_id": streak_type_id},
+    )
+    return {row[0] for row in result.fetchall()}
+
+
+async def get_milestone_for_claim(
+    conn: AsyncConnection,
+    role: str,
+    streak_type: str,
+    days_required: int,
+) -> dict | None:
+    """Fetch a single milestone for claim validation."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    result = await conn.execute(
+        text("""
+        SELECT days_required, reward_description, icon_name, reward_feature, reward_amount
+        FROM streak_milestones
+        WHERE role = :role AND streak_type_id = :streak_type_id AND days_required = :days_required
+        """),
+        {
+            "role": role,
+            "streak_type_id": streak_type_id,
+            "days_required": days_required,
+        },
+    )
+    row = result.fetchone()
+    if not row:
+        return None
+    return {
+        "days_required": row[0],
+        "reward_description": row[1],
+        "icon_name": row[2],
+            "reward_feature": row[3],
+            "reward_amount": row[4],
+        }
+
+
+async def get_reward_balance(
+    conn: AsyncConnection,
+    user_id: UUID,
+    reward_feature: str,
+) -> int:
+    """Get reward balance for a user and type."""
+    result = await conn.execute(
+        text("""
+        SELECT balance
+        FROM reward_balances
+        WHERE user_id = :user_id AND reward_feature = :reward_feature
+        """),
+        {"user_id": user_id, "reward_feature": reward_feature},
+    )
+    row = result.fetchone()
+    return row[0] if row and row[0] is not None else 0
+
+
+async def grant_reward(
+    conn: AsyncConnection,
+    user_id: UUID,
+    role: str,
+    streak_type: str,
+    milestone: dict,
+) -> dict | None:
+    """Grant a reward for a milestone if not already claimed."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    result = await conn.execute(
+        text("""
+        INSERT INTO streak_reward_grants (
+            user_id,
+            streak_type_id,
+            days_required,
+            role,
+            reward_feature,
+            reward_amount
+        )
+        VALUES (
+            :user_id,
+            :streak_type_id,
+            :days_required,
+            :role,
+            :reward_feature,
+            :reward_amount
+        )
+        ON CONFLICT (user_id, streak_type_id, days_required, role) DO NOTHING
+        RETURNING id
+        """),
+        {
+            "user_id": user_id,
+            "streak_type_id": streak_type_id,
+            "days_required": milestone["days_required"],
+            "role": role,
+            "reward_feature": milestone["reward_feature"],
+            "reward_amount": milestone["reward_amount"],
+        },
+    )
+    inserted = result.fetchone() is not None
+    if not inserted:
+        return None
+
+    await conn.execute(
+        text("""
+        INSERT INTO reward_balances (user_id, reward_feature, balance, updated_at)
+        VALUES (:user_id, :reward_feature, :reward_amount, NOW())
+        ON CONFLICT (user_id, reward_feature) DO UPDATE
+        SET balance = reward_balances.balance + EXCLUDED.balance,
+            updated_at = NOW()
+        """),
+        {
+            "user_id": user_id,
+            "reward_feature": milestone["reward_feature"],
+            "reward_amount": milestone["reward_amount"],
+        },
+    )
+
+    new_balance = await get_reward_balance(conn, user_id, milestone["reward_feature"])
+    return {"balance": new_balance}
 
 
 async def get_next_milestone(current_streak: int, milestones: list[dict]) -> dict | None:

@@ -231,6 +231,7 @@ export function SelectionBar({
                                 variant="default"
                                 className="gap-1.5 glass-button-white hover:text-black"
                                 disabled={isAddingToBoard}
+                                data-tutorial="add_to_board"
                             >
                                 {isAddingToBoard ? (
                                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -369,6 +370,7 @@ export function SelectionBar({
                     className="gap-1.5 glass-button-white hover:text-black"
                     onClick={handleAddToChat}
                     disabled={count === 0}
+                    data-tutorial="add_to_chat"
                 >
                     <MessageSquarePlus className="h-4 w-4" />
                     <span className="relative bottom-[1px]">Add to chat</span>
