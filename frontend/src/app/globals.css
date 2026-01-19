@@ -166,12 +166,7 @@
    ========================================= */
 
 /* Glass Utilities (Basic generic fallback) */
-/* Selection Bar Frost (scoped) */
-.selection-bar-frost {
-    background-color: rgba(255, 255, 255, 0.11) !important;
-    backdrop-filter: blur(32px) saturate(160%) brightness(110%) !important;
-    -webkit-backdrop-filter: blur(36px) saturate(160%) brightness(100%) !important;
-}
+
 
 /* Glass Pill - Premium Active Indicator */
 .glass-pill {
@@ -339,13 +334,13 @@
 
 /* Glass Button - White Variant (Primary Action) */
 .glass-button-white {
-    background: linear-gradient(136.19deg, rgba(255, 255, 255, 0.9) 47.93%, rgba(255, 255, 255, 0.7) 100%);
-    color: black;
-    font-weight: 600;
+    background: linear-gradient(136.19deg, #dddddde5 47.93%, #ffffffb3 100%);
+    color: #373737;
+    font-weight: 500;
 }
 
 .glass-button-white::before {
-    background: linear-gradient(170deg, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0) 40%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 1) 100%);
+    content: none;
 }
 
 .glass-button-white:hover {

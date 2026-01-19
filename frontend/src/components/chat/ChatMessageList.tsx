@@ -12,6 +12,7 @@ import {
     ChatContainerScrollAnchor,
 } from '@/components/ui/chat-container';
 import { Message, MessageContent } from '@/components/ui/message';
+import { INITIAL_COMPONENTS } from '@/components/ui/markdown';
 import {
     Collapsible,
     CollapsibleContent,
@@ -28,8 +29,6 @@ import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-ic
 const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
 const CONTEXT_FENCE_RE = /```context[\s\S]*?```/g;
 const CHIP_LABEL_LIMIT = 20;
-
-type MessageSegment = { type: 'text' | 'chip'; value: string };
 
 function getPlatformIcon(platform: string) {
     const normalized = platform.toLowerCase();
@@ -130,31 +129,6 @@ function truncateLabel(value: string) {
     return value.slice(0, CHIP_LABEL_LIMIT - 1).trimEnd() + "…";
 }
 
-function parseMessageSegments(content: string): MessageSegment[] {
-    CHIP_FENCE_RE.lastIndex = 0;
-    CONTEXT_FENCE_RE.lastIndex = 0;
-    const cleaned = content.replace(CONTEXT_FENCE_RE, '');
-    const segments: MessageSegment[] = [];
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = CHIP_FENCE_RE.exec(cleaned)) !== null) {
-        if (match.index > lastIndex) {
-            segments.push({ type: 'text', value: cleaned.slice(lastIndex, match.index) });
-        }
-        const label = match[1]?.trim();
-        if (label) {
-            segments.push({ type: 'chip', value: label });
-        }
-        lastIndex = match.index + match[0].length;
-    }
-
-    if (lastIndex < cleaned.length) {
-        segments.push({ type: 'text', value: cleaned.slice(lastIndex) });
-    }
-
-    return segments;
-}
 
 function getImageLabelFromUrl(url?: string) {
     if (!url) return 'Image';
@@ -282,63 +256,115 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
 }) {
     const isAi = msg.type === 'ai';
     const contentStr = buildContentString(msg.content);
-    const segments = parseMessageSegments(contentStr);
-
-    // Extract images (mainly for user messages, but safety check)
     const imageAttachments = extractImageAttachments(msg.content);
 
-    return (
-        <div className="flex flex-col -gap-2">
-            {segments.map((segment, index) => {
-                if (segment.type === 'text') {
-                    if (!segment.value.trim()) return null;
-                    return (
-                        <div key={index} className="w-full">
-                            <MessageContent
-                                markdown={isAi}
-                                className={
-                                    !isAi
-                                        ? 'whitespace-pre-wrap !px-4 !py-2.5 text-base leading-[26px] font-light tracking-[0.035rem]' // Human: plain text
-                                        : 'bg-transparent p-0 text-base leading-[26px] font-light tracking-[0.035rem]'  // AI: markdown
-                                }
-                            >
-                                {segment.value.trim()}
-                            </MessageContent>
-                        </div>
-                    );
-                } else {
-                    const chipMeta = parseChipLabel(segment.value);
-                    if (chipMeta.icon === "image") return null; // Handled via attachments if needed, or inline
+    // Memoize the components to prevent re-renders
+    const components = useMemo(() => ({
+        ...INITIAL_COMPONENTS,
+        code: ({ className, children, ...props }: any) => {
+            const content = String(children);
+            if (content.startsWith('chip:')) {
+                const label = content.slice(5);
+                const chipMeta = parseChipLabel(label);
 
-                    return (
-                        <div key={index} className="inline-block">
+                if (chipMeta.icon === "image") return null;
+
+                return (
+                    <span className="inline-flex align-middle mx-1">
+                        <button
+                            type="button"
+                            onClick={() => handleChipClick(label, chipMeta.type, chipMeta.id)}
+                            className="inline-flex items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
+                        >
+                            {chipMeta.icon === "board" && (
+                                <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                            )}
+                            {chipMeta.icon === "search" && (
+                                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                            )}
+                            {chipMeta.icon === "image" && (
+                                <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                            )}
+                            {chipMeta.Icon && (
+                                <chipMeta.Icon className="text-[12px]" />
+                            )}
+                            <span className="truncate max-w-[200px]" title={chipMeta.text}>
+                                {truncateLabel(chipMeta.text || '')}
+                            </span>
+                        </button>
+                    </span>
+                );
+            }
+
+            const OriginalCode = INITIAL_COMPONENTS.code as any;
+            return <OriginalCode className={className} {...props}>{children}</OriginalCode>;
+        }
+    }), [handleChipClick]);
+
+    if (!isAi) {
+        // Human message: Plain text, just strip context
+        const cleaned = contentStr.replace(CONTEXT_FENCE_RE, '');
+        if (!cleaned.trim()) return null;
+
+        return (
+            <div className="flex flex-col gap-2">
+                <div className="w-full">
+                    <MessageContent
+                        markdown={false}
+                        className='whitespace-pre-wrap !px-4 !py-2.5 text-base leading-[26px] font-light tracking-[0.035rem]'
+                    >
+                        {cleaned.trim()}
+                    </MessageContent>
+                </div>
+                {/* Image Attachments */}
+                {imageAttachments.length > 0 && (
+                    <div className="flex overflow-x-auto scrollbar-none gap-2 mt-2 pb-1">
+                        {imageAttachments.map((attachment, idx) => (
                             <button
                                 type="button"
-                                onClick={() => handleChipClick(segment.value, chipMeta.type, chipMeta.id)}
-                                className="inline-flex items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
+                                key={`img-${idx}`}
+                                onClick={() => attachment.url && handleImageClick(attachment.url)}
+                                className="shrink-0 h-16 w-16 rounded-lg overflow-hidden bg-muted hover:ring-2 hover:ring-primary/50 transition-all cursor-pointer"
                             >
-                                {chipMeta.icon === "board" && (
-                                    <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                {attachment.url ? (
+                                    <img
+                                        src={attachment.url}
+                                        alt={attachment.label}
+                                        className="h-full w-full object-cover"
+                                    />
+                                ) : (
+                                    <div className="h-full w-full flex items-center justify-center">
+                                        <ImagePlus className="h-6 w-6 text-muted-foreground" />
+                                    </div>
                                 )}
-                                {chipMeta.icon === "search" && (
-                                    <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                                )}
-                                {chipMeta.icon === "image" && (
-                                    <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                                )}
-                                {chipMeta.Icon && (
-                                    <chipMeta.Icon className="text-[12px]" />
-                                )}
-                                <span className="truncate max-w-[200px]" title={chipMeta.text}>
-                                    {truncateLabel(chipMeta.text || '')}
-                                </span>
                             </button>
-                        </div>
-                    );
-                }
-            })}
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    }
 
-            {/* Render Image Attachments as horizontal scrollable row of square boxes */}
+    // AI Message: enhanced markdown
+    const withoutContext = contentStr.replace(CONTEXT_FENCE_RE, '');
+
+    // Pre-process chips to be inline code with "chip:" prefix
+    const processedContent = withoutContext.replace(CHIP_FENCE_RE, (match, label) => {
+        return ` \`chip:${label ? label.trim() : ''}\` `;
+    });
+
+    return (
+        <div className="flex flex-col gap-2">
+            <div className="w-full">
+                <MessageContent
+                    markdown={true}
+                    className="bg-transparent p-0 text-base leading-[26px] font-light tracking-[0.035rem]"
+                    components={components}
+                >
+                    {processedContent}
+                </MessageContent>
+            </div>
+            {/* Image Attachments */}
             {imageAttachments.length > 0 && (
                 <div className="flex overflow-x-auto scrollbar-none gap-2 mt-2 pb-1">
                     {imageAttachments.map((attachment, idx) => (

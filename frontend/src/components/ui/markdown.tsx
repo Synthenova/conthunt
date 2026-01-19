@@ -24,7 +24,7 @@ function extractLanguage(className?: string): string {
   return match ? match[1] : "plaintext"
 }
 
-const INITIAL_COMPONENTS: Partial<Components> = {
+export const INITIAL_COMPONENTS: Partial<Components> = {
   strong: function StrongComponent({ className, children, ...props }) {
     return (
       <strong
