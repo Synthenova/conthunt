@@ -44,6 +44,14 @@ import {
 import { transformToMediaItem } from "@/lib/transformers";
 import { formatDistanceToNow } from "date-fns";
 
+import { useUser } from "@/hooks/useUser";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "@/components/ui/tooltip";
+
 export default function BoardDetailPage() {
     const params = useParams();
     const router = useRouter();
@@ -65,6 +73,7 @@ export default function BoardDetailPage() {
     } = useBoards();
     const { selectedItems, clearSelection } = useSearchStore();
     const { setCanvasBoardItems, setCurrentCanvasPage } = useChatStore();
+    const { profile } = useUser();
 
     const { data: board, isLoading: isBoardLoading, error: boardError } = getBoard(boardId);
     const { data: items, isLoading: isItemsLoading } = getBoardItems(boardId);
@@ -137,6 +146,11 @@ export default function BoardDetailPage() {
     const totalVideos = progress?.total_videos ?? 0;
     const analyzedVideos = progress?.analyzed_videos ?? 0;
     const failedVideos = progress?.failed_videos ?? 0;
+    const allFailed = totalVideos > 0 && failedVideos === totalVideos;
+
+    // Credit check
+    const credits = profile?.credits?.remaining ?? 0;
+    const lowCredits = credits < 2;
 
     const handleDeleteBoard = async () => {
         try {
@@ -327,7 +341,7 @@ export default function BoardDetailPage() {
                                             : "Run insights to summarize patterns across this board."}
                                     </p>
                                 </div>
-                                {hasInsights ? (
+                                {hasInsights || allFailed ? (
                                     <div className="flex flex-wrap items-center gap-2">
                                         {(isProcessingInsights || isRefreshingInsights) && totalVideos > 0 ? (
                                             <Badge variant="outline" className="border-white/10 text-muted-foreground">
@@ -336,19 +350,32 @@ export default function BoardDetailPage() {
                                                     : `Analyzing ${analyzedVideos + failedVideos}/${totalVideos} videos`}
                                             </Badge>
                                         ) : null}
-                                        <Button
-                                            onClick={handleRefreshInsights}
-                                            disabled={isRefreshingInsights || isProcessingInsights}
-                                            className="gap-2 glass-button-white hover:text-black"
-                                            data-tutorial="refresh_insights"
-                                        >
-                                            {isRefreshingInsights || isProcessingInsights ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                            ) : (
-                                                <RefreshCw className="h-4 w-4" />
-                                            )}
-                                            {newVideosCount > 0 ? `Update insights (${newVideosCount} new)` : "Update insights"}
-                                        </Button>
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <span tabIndex={0} className="inline-flex"> {/* Span wrapper for disabled button tooltip */}
+                                                        <Button
+                                                            onClick={handleRefreshInsights}
+                                                            disabled={isRefreshingInsights || isProcessingInsights || lowCredits}
+                                                            className="gap-2 glass-button-white hover:text-black disabled:pointer-events-none" // pointer-events-none unfortunately kills the tooltip on the button itself
+                                                            data-tutorial="refresh_insights"
+                                                        >
+                                                            {isRefreshingInsights || isProcessingInsights ? (
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <RefreshCw className="h-4 w-4" />
+                                                            )}
+                                                            {newVideosCount > 0 ? `Update insights (${newVideosCount} new)` : "Update insights"}
+                                                        </Button>
+                                                    </span>
+                                                </TooltipTrigger>
+                                                {lowCredits && (
+                                                    <TooltipContent>
+                                                        <p>Not enough credits</p>
+                                                    </TooltipContent>
+                                                )}
+                                            </Tooltip>
+                                        </TooltipProvider>
                                     </div>
                                 ) : null}
                             </div>
@@ -386,7 +413,7 @@ export default function BoardDetailPage() {
                                         </Card>
                                     ))}
                                 </div>
-                            ) : !hasInsights ? (
+                            ) : !hasInsights && !allFailed ? (
                                 <div className="min-h-[55vh] flex flex-col items-center justify-center text-center gap-4 py-16">
                                     <div className="h-14 w-14 rounded-full bg-white/5 flex items-center justify-center">
                                         {(isProcessingInsights || isRefreshingInsights) ? (
@@ -427,16 +454,60 @@ export default function BoardDetailPage() {
                                         )}
                                     </div>
                                     {!(isProcessingInsights || isRefreshingInsights) && (
-                                        <Button
-                                            onClick={handleRefreshInsights}
-                                            disabled={isRefreshingInsights || isProcessingInsights}
-                                            className="gap-2 glass-button-white hover:text-black"
-                                        >
-                                            <Sparkles className="h-4 w-4" />
-                                            Get insights
-                                        </Button>
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <span tabIndex={0} className="inline-flex"> {/* Wrapper for disabled state */}
+                                                        <Button
+                                                            onClick={handleRefreshInsights}
+                                                            disabled={isRefreshingInsights || isProcessingInsights || lowCredits}
+                                                            className="gap-2 glass-button-white hover:text-black disabled:pointer-events-none"
+                                                        >
+                                                            <Sparkles className="h-4 w-4" />
+                                                            Get insights
+                                                        </Button>
+                                                    </span>
+                                                </TooltipTrigger>
+                                                {lowCredits && (
+                                                    <TooltipContent>
+                                                        <p>Not enough credits</p>
+                                                    </TooltipContent>
+                                                )}
+                                            </Tooltip>
+                                        </TooltipProvider>
                                     )}
                                 </div>
+                            ) : allFailed ? (
+                                <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4 text-red-200 bg-red-900/10 border-red-900/20">
+                                    <div className="h-16 w-16 rounded-full bg-red-900/20 flex items-center justify-center">
+                                        <Loader2 className="h-8 w-8 text-red-400" />
+                                    </div>
+                                    <h3 className="text-xl font-medium text-red-200">Analysis Failed</h3>
+                                    <p className="text-red-300/70 max-w-md">
+                                        We were unable to analyze the videos in this board. Ensure the videos are publicly accessible and try again.
+                                    </p>
+                                    <TooltipProvider>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <span tabIndex={0} className="inline-flex">
+                                                    <Button
+                                                        onClick={handleRefreshInsights}
+                                                        className="mt-4 gap-2 bg-red-900/30 hover:bg-red-900/50 text-red-100 hover:text-white border border-red-800 disabled:pointer-events-none"
+                                                        disabled={lowCredits}
+                                                    >
+                                                        <RefreshCw className="h-4 w-4" />
+                                                        Try Again
+                                                    </Button>
+                                                </span>
+                                            </TooltipTrigger>
+                                            {lowCredits && (
+                                                <TooltipContent>
+                                                    <p>Not enough credits</p>
+                                                </TooltipContent>
+                                            )}
+                                        </Tooltip>
+                                    </TooltipProvider>
+                                </BoardGlassCard>
                             ) : (
                                 <div className="relative">
                                     {(isProcessingInsights || isRefreshingInsights || isInsightsFetching) && (

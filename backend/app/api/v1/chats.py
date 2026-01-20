@@ -348,6 +348,19 @@ async def create_chat(
             context_type=request.context_type,
             context_id=request.context_id,
         )
+        if request.tags:
+            tags = [
+                {
+                    "type": tag.type,
+                    "tag_id": tag.id,
+                    "label": tag.label,
+                    "source": tag.source or "user",
+                    "sort_order": tag.sort_order,
+                }
+                for tag in request.tags
+            ]
+            await queries.upsert_chat_tags(conn, chat_id, tags)
+
         await conn.commit()
         
         return Chat(

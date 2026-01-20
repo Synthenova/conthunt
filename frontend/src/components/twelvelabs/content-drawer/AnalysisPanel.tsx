@@ -10,6 +10,7 @@ interface AnalysisPanelProps {
     error: string | null;
     loadingMessage: string;
     analysisDisabled?: boolean;
+    analysisDisabledReason?: string;
     onAnalyze: () => void;
 }
 
@@ -20,21 +21,29 @@ export function AnalysisPanel({
     error,
     loadingMessage,
     analysisDisabled = false,
+    analysisDisabledReason,
     onAnalyze,
 }: AnalysisPanelProps) {
     return (
         <div className="space-y-4">
             {!analysisResult && !analyzing && !polling ? (
-                <button
-                    onClick={onAnalyze}
-                    className="w-full glass-button-yellow h-12 text-base"
-                    disabled={analysisDisabled}
-                    data-tutorial="analyse_button"
-                >
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    {analysisDisabled ? "Analyze after search completes" : "Analyze with AI"}
-                    {!analysisDisabled && <span className="ml-2 text-xs opacity-60">(1 credit)</span>}
-                </button>
+                <div className="relative group w-full">
+                    <button
+                        onClick={onAnalyze}
+                        className="w-full glass-button-yellow h-12 text-base disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={analysisDisabled}
+                        data-tutorial="analyse_button"
+                    >
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        {analysisDisabled ? (analysisDisabledReason || "Analyze after search completes") : "Analyze with AI"}
+                        {!analysisDisabled && <span className="ml-2 text-xs opacity-60">(1 credit)</span>}
+                    </button>
+                    {analysisDisabled && analysisDisabledReason && (
+                        <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-zinc-800 border border-white/10 text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                            {analysisDisabledReason}
+                        </div>
+                    )}
+                </div>
             ) : null}
 
             {(analyzing || polling) && (

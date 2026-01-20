@@ -21,7 +21,11 @@ settings = get_settings()
 
 
 def _get_api_base_url() -> str:
-    """Get API base URL - use localhost with correct port for internal calls."""
+    """Get API base URL for internal/external calls."""
+    env_base_url = os.getenv("API_BASE_URL") or settings.API_BASE_URL
+    if env_base_url:
+        return env_base_url.rstrip("/") + "/v1"
+
     # Cloud Run sets PORT env var; default to 8000 for local dev
     port = os.getenv("PORT", "8000")
     return f"http://localhost:{port}/v1"
@@ -434,6 +438,7 @@ async def search(
         
         # 1. Initialize Gemini 3 Pro for intent detection
         llm = init_chat_model("google/gemini-3-pro-preview")
+        llm = llm.bind_tools([{"google_search": {}}])
         structured_llm = llm.with_structured_output(SearchPlan)
 
         # 2. Extract messages for context
@@ -445,7 +450,7 @@ async def search(
         You are a search expert. Analyze the conversation history and user request to understand their intent.
         Generate 3 to 5 distinct, high-quality search queries that will help the user find what they are looking for.
         For each query, provide ONLY the keyword.
-        Focus on finding content related to the user's request.
+        Focus on finding content related to the user's request. Use the google_search if necessary for more details.
 
         If the user explicitly requests filters (date, sort, platforms), include them in `filters`.
         Use platform slugs: tiktok_top, tiktok_keyword.

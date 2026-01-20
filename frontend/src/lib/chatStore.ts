@@ -26,6 +26,14 @@ export interface Chat {
     context_id?: string | null;
 }
 
+export interface ChatTagPayload {
+    type: 'board' | 'search' | 'media';
+    id: string;
+    label?: string | null;
+    source?: 'user' | 'agent';
+    sort_order?: number | null;
+}
+
 export interface MediaChipInput {
     id: string;
     media_asset_id?: string | null;
@@ -53,8 +61,9 @@ interface ChatState {
     // Active chat
     activeChatId: string | null;
     setActiveChatId: (id: string | null) => void;
-    resetToNewChat: () => void;
+    resetToNewChat: (options?: { pendingTags?: ChatTagPayload[] }) => void;
     isNewChatPending: boolean;
+    pendingNewChatTags: ChatTagPayload[];
 
     // Messages for active chat
     messages: ChatMessage[];
@@ -152,16 +161,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
             canvasSearchIds: new Set(),
             canvasSearchKeywords: {},
             isNewChatPending: false,
+            pendingNewChatTags: [],
         };
     }),
-    resetToNewChat: () => set({
+    resetToNewChat: (options) => set({
         activeChatId: null,
         messages: [],
         showHistory: false,
         canvasSearchIds: new Set(),
         canvasSearchKeywords: {},
         isNewChatPending: true,
+        pendingNewChatTags: options?.pendingTags || [],
     }),
+    pendingNewChatTags: [],
 
     // Messages
     messages: [],

@@ -32,11 +32,6 @@ class Chat(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-class CreateChatRequest(BaseModel):
-    title: Optional[str] = None
-    context_type: Optional[Literal["board", "search"]] = None
-    context_id: Optional[UUID] = None
-
 class ChatTag(BaseModel):
     type: Literal["board", "search", "media"]
     id: UUID
@@ -44,6 +39,12 @@ class ChatTag(BaseModel):
     source: Optional[Literal["user", "agent"]] = "user"
     sort_order: Optional[int] = None
     created_at: Optional[datetime] = None
+
+class CreateChatRequest(BaseModel):
+    title: Optional[str] = None
+    context_type: Optional[Literal["board", "search"]] = None
+    context_id: Optional[UUID] = None
+    tags: Optional[List[ChatTag]] = None
 
 class SendMessageRequest(BaseModel):
     message: str

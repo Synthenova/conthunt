@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { usePathname } from 'next/navigation';
 import { useMemo, useEffect, useRef, useState } from 'react';
 import { useChatList } from '@/hooks/useChat';
+import { useChatTags } from '@/hooks/useChatTags';
 
 import { GripVertical } from 'lucide-react';
 
@@ -53,6 +54,19 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
         type: context?.type,
         id: context?.id,
     });
+    const { tagsQuery } = useChatTags(chatIdFromPath);
+    const pendingSearchTags = useMemo(() => {
+        if (!chatIdFromPath) return [];
+        return (tagsQuery.data || [])
+            .filter((tag) => tag.type === 'search')
+            .map((tag) => ({
+                type: tag.type,
+                id: tag.id,
+                label: tag.label ?? undefined,
+                source: tag.source,
+                sort_order: tag.sort_order ?? undefined,
+            }));
+    }, [chatIdFromPath, tagsQuery.data]);
     const contextKey = useMemo(() => {
         return context ? `${context.type}:${context.id}` : 'none';
     }, [context]);
@@ -198,7 +212,7 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                     "flex flex-col h-full w-full max-w-full",
                     !isOpen && "lg:invisible"
                 )}>
-                    <ChatHeader />
+                    <ChatHeader pendingTags={pendingSearchTags} />
                     <div className="relative flex-1 min-h-0 flex flex-col">
                         <ChatHistoryPanel context={context} />
                         <ChatMessageList isContextLoading={!!context && isLoading} />

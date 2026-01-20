@@ -16,8 +16,13 @@ export function useChatSearchState(activeSearchId: string | null) {
     const [allResults, setAllResults] = useState<FlatMediaItem[]>([]);
 
     const handleSearchResults = useCallback((id: string, items: FlatMediaItem[]) => {
+        console.log('[useChatSearchState] handleSearchResults called:', id, 'items:', items.length);
         setResultsMap(prev => {
-            if (JSON.stringify(prev[id]) === JSON.stringify(items)) return prev;
+            if (JSON.stringify(prev[id]) === JSON.stringify(items)) {
+                console.log('[useChatSearchState] No change detected, skipping update');
+                return prev;
+            }
+            console.log('[useChatSearchState] Updating resultsMap for:', id, 'from', prev[id]?.length || 0, 'to', items.length);
             return { ...prev, [id]: items };
         });
     }, []);

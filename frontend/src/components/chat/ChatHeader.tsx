@@ -2,19 +2,20 @@
 
 import { Plus, History, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useChatStore } from '@/lib/chatStore';
+import { useChatStore, ChatTagPayload } from '@/lib/chatStore';
 
 interface ChatHeaderProps {
     title?: string;
+    pendingTags?: ChatTagPayload[];
 }
 
-export function ChatHeader({ title = "Agent" }: ChatHeaderProps) {
+export function ChatHeader({ title = "Agent", pendingTags }: ChatHeaderProps) {
     const { closeSidebar, toggleHistory, showHistory, resetToNewChat } = useChatStore();
 
     const handleNewChat = () => {
         // Just reset to default state - no API call
         // Chat will be created when user sends first message
-        resetToNewChat();
+        resetToNewChat({ pendingTags: pendingTags || [] });
     };
 
     return (
@@ -30,7 +31,7 @@ export function ChatHeader({ title = "Agent" }: ChatHeaderProps) {
                 >
                     <Plus className="h-4 w-4" />
                 </Button>
-{/*                <Button
+                {/*                <Button
                     variant="ghost"
                     size="icon"
                     className={`h-8 w-8 ${showHistory ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}

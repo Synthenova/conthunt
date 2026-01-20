@@ -10,6 +10,7 @@ import { MetricsPanel } from "./content-drawer/MetricsPanel";
 import { AnalysisPanel } from "./content-drawer/AnalysisPanel";
 import { useMediaSizing } from "./content-drawer/useMediaSizing";
 import { useContentAnalysis } from "./content-drawer/useContentAnalysis";
+import { useUser } from "@/hooks/useUser";
 
 interface ContentDrawerProps {
     isOpen: boolean;
@@ -36,6 +37,13 @@ export function ContentDrawer({
     const { boards, isLoadingBoards, createBoard, addToBoard, isAddingToBoard, isCreatingBoard, refetchBoards } = useBoards({
         checkItemId: item?.id,
     });
+
+    const { profile } = useUser();
+    const credits = profile?.credits?.remaining ?? 0;
+    const lowCredits = credits < 2;
+
+    const isAnalysisDisabled = analysisDisabled || lowCredits;
+    const analysisDisabledReason = analysisDisabled ? "Analyze after search completes" : (lowCredits ? "Not enough credits" : undefined);
 
     const handleCreateBoard = useCallback(
         async (name: string) => {
@@ -110,7 +118,8 @@ export function ContentDrawer({
                             polling={polling}
                             error={error}
                             loadingMessage={loadingMessage}
-                            analysisDisabled={analysisDisabled}
+                            analysisDisabled={isAnalysisDisabled}
+                            analysisDisabledReason={analysisDisabledReason}
                             onAnalyze={handleAnalyze}
                         />
                     </div>

@@ -468,7 +468,9 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
 
             // Only attempt scroll if we're on a board or chat page
             if (currentCanvasPage === 'chat') {
-                const match = findMediaInResults(targetId, canvasResultsMap);
+                // Read directly from store to avoid stale closure value
+                const currentResultsMap = useChatStore.getState().canvasResultsMap;
+                const match = findMediaInResults(targetId, currentResultsMap);
 
                 if (match) {
                     // Helper to wait for the scroll function to be registered (handles re-renders/tab switches)
@@ -488,6 +490,9 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                     };
 
                     if (match.searchId !== canvasActiveSearchId) {
+                        // [DISABLED] Tab switching logic - causes timing issues with virtualized grid
+                        // TODO: Re-enable once scroll timing is fully stabilized
+                        /*
                         setCanvasActiveSearchId(match.searchId);
                         // Give a tiny buffer for state update to propagate before polling
                         setTimeout(async () => {
@@ -496,6 +501,9 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                 openContentDrawer(targetId);
                             }
                         }, 50);
+                        */
+                        console.log('[MediaChip] Item is in another tab, opening drawer instead of switching');
+                        openContentDrawer(targetId);
                     } else {
                         const success = await attemptScroll();
                         if (!success) {
@@ -520,7 +528,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                 await openContentDrawer(targetId);
             }
         }
-    }, [router, activeChatId, fetchMediaView, canvasResultsMap, canvasActiveSearchId, setCanvasActiveSearchId, canvasBoardItems, currentCanvasPage]);
+    }, [router, activeChatId, fetchMediaView, canvasActiveSearchId, setCanvasActiveSearchId, canvasBoardItems, currentCanvasPage]);
 
     // Handle image attachment click (opens lightbox)
     const handleImageClick = useCallback((url: string) => {

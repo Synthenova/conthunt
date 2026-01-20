@@ -166,6 +166,7 @@ export default function ChatPage() {
 
     // Sync resultsMap to store for media chip scroll-to-video
     useEffect(() => {
+        console.log('[ChatPage] Syncing resultsMap to store:', Object.keys(resultsMap).map(k => `${k}: ${resultsMap[k]?.length || 0} items`));
         setCanvasResultsMap(resultsMap);
     }, [resultsMap, setCanvasResultsMap]);
 

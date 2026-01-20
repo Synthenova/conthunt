@@ -58,6 +58,8 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         clearQueuedMediaChips,
         openSidebar,
         clientFilters,
+        isNewChatPending,
+        pendingNewChatTags,
     } = useChatStore();
     const { sendMessage } = useSendMessage();
     const { uploadChatImage } = useUploadChatImage();
@@ -168,7 +170,13 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
 
     useEffect(() => {
         setImageChips([]);
-    }, [activeChatId]);
+        // Abort any in-progress stream when switching chats
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+        }
+        resetStreaming();
+    }, [activeChatId, resetStreaming]);
 
     const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         setIsDragOver(false);
@@ -210,10 +218,12 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         let targetChatId = activeChatId;
         if (!targetChatId) {
             try {
+                const pendingTags = isNewChatPending ? pendingNewChatTags : [];
                 const chat = await createChat.mutateAsync({
                     title: message.trim().slice(0, 50) || 'New Chat',
                     contextType: context?.type,
                     contextId: context?.id,
+                    tags: pendingTags.length ? pendingTags : undefined,
                 });
                 targetChatId = chat.id;
             } catch (err) {
@@ -248,7 +258,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                 toast.error('Image upload failed.');
             }
         }));
-    }, [activeChatId, context, createChat, message, uploadChatImage]);
+    }, [activeChatId, context, createChat, isNewChatPending, message, pendingNewChatTags, uploadChatImage]);
 
     const handleSend = useCallback(async () => {
         if (!message.trim() || isStreaming) return;
@@ -284,10 +294,12 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
 
         if (!activeChatId) {
             try {
+                const pendingTags = isNewChatPending ? pendingNewChatTags : [];
                 const chat = await createChat.mutateAsync({
                     title: messageText.slice(0, 50),
                     contextType: context?.type,
                     contextId: context?.id,
+                    tags: pendingTags.length ? pendingTags : undefined,
                 });
                 if (isChatRoute) {
                     router.push(`/app/chats/${chat.id}`);
@@ -310,7 +322,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                 filters: mapClientFiltersToPlatformInputs(clientFilters),
             });
         }
-    }, [message, isStreaming, imageChips, chips, activeChatId, createChat, context, sendMessage, resetStreaming, isChatRoute, router, selectedModel]);
+    }, [message, isStreaming, imageChips, chips, activeChatId, createChat, context, sendMessage, resetStreaming, isChatRoute, router, selectedModel, isNewChatPending, pendingNewChatTags]);
 
     const handleStop = useCallback(() => {
         if (abortControllerRef.current) {

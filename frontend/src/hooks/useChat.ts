@@ -4,7 +4,7 @@ import { useCallback, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { auth } from '@/lib/firebaseClient';
-import { useChatStore, Chat, ChatMessage } from '@/lib/chatStore';
+import { useChatStore, Chat, ChatMessage, ChatTagPayload } from '@/lib/chatStore';
 import type { PlatformInputs } from '@/lib/clientFilters';
 import { BACKEND_URL, authFetch } from '@/lib/api';
 
@@ -64,13 +64,19 @@ export function useCreateChat() {
     const { addChat, setActiveChatId, setMessages, openSidebar } = useChatStore();
 
     return useMutation({
-        mutationFn: async (input?: { title?: string; contextType?: 'board' | 'search'; contextId?: string | null }) => {
+        mutationFn: async (input?: {
+            title?: string;
+            contextType?: 'board' | 'search';
+            contextId?: string | null;
+            tags?: ChatTagPayload[];
+        }) => {
             return fetchWithAuth<Chat>(`${BACKEND_URL}/v1/chats`, {
                 method: 'POST',
                 body: JSON.stringify({
                     title: input?.title || 'New Chat',
                     context_type: input?.contextType,
                     context_id: input?.contextId,
+                    tags: input?.tags,
                 }),
             });
         },
