@@ -138,8 +138,8 @@ export function useStreak(options: UseStreakOptions = {}) {
                 const timezone = getTimezone();
                 const today = getLocalDay(timezone);
                 try {
-                    localStorage.setItem(getOpenDateKey(uid), today);
-                    localStorage.setItem(getOpenTzKey(uid), timezone);
+                    sessionStorage.setItem(getOpenDateKey(uid), today);
+                    sessionStorage.setItem(getOpenTzKey(uid), timezone);
                 } catch {
                     // Ignore storage errors in restricted environments
                 }
@@ -170,8 +170,8 @@ export function useStreak(options: UseStreakOptions = {}) {
         let shouldRecord = true;
 
         try {
-            const lastDate = localStorage.getItem(getOpenDateKey(uid));
-            const lastTz = localStorage.getItem(getOpenTzKey(uid));
+            const lastDate = sessionStorage.getItem(getOpenDateKey(uid));
+            const lastTz = sessionStorage.getItem(getOpenTzKey(uid));
             shouldRecord = lastDate !== today || lastTz !== timezone;
         } catch {
             shouldRecord = true;
