@@ -75,7 +75,7 @@ export type InteractionType = 'click' | 'focus' | 'input' | 'submit' | 'next_but
  */
 export const TUTORIAL_INTERACTIONS: Partial<Record<TutorialTargetKey, InteractionType>> = {
     // Home
-    "home_tour.search_input": "focus", // Or input?
+    "home_tour.search_input": "next_button", // Explicit next button required
     "home_tour.send_button": "click",
 
     // Chat

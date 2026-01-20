@@ -91,12 +91,13 @@ export function TutorialProvider({ children }: TutorialProviderProps) {
     useEffect(() => {
         if (flowData?.progress) {
             const serverStep = flowData.progress.current_step;
-            // If server is ahead (e.g., resuming), use server step
-            if (serverStep > 0 && serverStep !== localStepIndex) {
+            // Only update if server is AHEAD. 
+            // This prevents stale/race-condition queries from reverting our optimistic updates.
+            if (serverStep > localStepIndex) {
                 setLocalStepIndex(serverStep);
             }
         }
-    }, [flowData?.progress?.current_step]);
+    }, [flowData?.progress?.current_step, localStepIndex]);
 
     // Current step derived from flow data
     const currentStep = useMemo(() => {

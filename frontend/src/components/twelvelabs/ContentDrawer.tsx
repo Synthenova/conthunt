@@ -83,7 +83,10 @@ export function ContentDrawer({
 
     return (
         <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <SheetContent className="w-full sm:max-w-md md:max-w-lg lg:max-w-xl p-0 gap-0 overflow-hidden bg-[#0A0A0A] border-l-border flex flex-col h-full" hideCloseButton>
+            <SheetContent
+                className="w-full sm:max-w-md md:max-w-lg lg:max-w-xl p-0 gap-0 overflow-hidden bg-[#0A0A0A] border-l-border flex flex-col h-full"
+                hideCloseButton
+            >
                 <MediaSpotlight
                     item={item}
                     isOpen={isOpen}

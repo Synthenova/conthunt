@@ -5,6 +5,7 @@
 "use client";
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronRight, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -187,46 +188,27 @@ export function TutorialTooltip() {
         setPosition(calculatePosition(targetRect));
     }, [isActive, targetRect]);
 
-    // 5. Fallback: Show Next button if target not found after timeout
-    const [showFallbackNext, setShowFallbackNext] = useState(false);
+    // 5. Strict Waiting: If target is missing but expected, don't show anything
+    // We removed the fallback logic as requested.
 
-    useEffect(() => {
-        if (!isActive) {
-            setShowFallbackNext(false);
-            return;
-        }
-
-        // Reset when step changes
-        setShowFallbackNext(false);
-
-        // If interaction type is 'next_button', we always show it anyway
-        if (interactionType === "next_button") return;
-
-        // If target exists, we're good (user can interact)
-        // If target doesn't exist, we wait a bit and then show the button so they aren't stuck
-        const timer = setTimeout(() => {
-            // We check targetRect (or targetElement) validity
-            // Actually, if useTutorialTarget returns null, we know it failed
-            if (!targetRect) {
-                setShowFallbackNext(true);
-            }
-        }, 3000); // 3 seconds fallback
-
-        return () => clearTimeout(timer);
-    }, [isActive, currentStep, interactionType, targetRect]);
-
-
+    // Check if we are waiting for a target
+    const isWaitingForTarget = !!targetSelector && !targetRect;
     const isLastStep = stepIndex >= totalSteps;
 
     // Determine if we should show the next button
     const shouldShowNext =
         interactionType === "next_button" ||
-        isLastStep ||
-        showFallbackNext;
+        isLastStep;
 
     if (!isActive || !currentStep) return null;
 
-    return (
+    // If we have a selector but no rect, we are strictly waiting. Hide.
+    if (isWaitingForTarget) return null;
+
+    // Portal to body to ensure it's on top of everything (including Drawers/Modals)
+    if (typeof document === 'undefined') return null;
+
+    return createPortal(
         <>
             {/* Spotlight overlay */}
             <SpotlightOverlay targetRect={targetRect} />
@@ -241,7 +223,7 @@ export function TutorialTooltip() {
                     exit={{ opacity: 0, scale: 0.95, y: -10 }}
                     transition={{ duration: 0.25, ease: "easeOut" }}
                     className={cn(
-                        "fixed z-[9999] w-[320px]",
+                        "fixed z-[9999] w-[320px] pointer-events-auto",
                         "tutorial-tooltip",
                         "rounded-2xl p-5",
                         "shadow-2xl shadow-black/50"
@@ -266,12 +248,6 @@ export function TutorialTooltip() {
                             <span className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">
                                 Step {stepIndex} of {totalSteps}
                             </span>
-                            {/* Debug indicator for fallback */}
-                            {showFallbackNext && (
-                                <span className="text-[10px] text-yellow-500/50" title="Target not found, fallback active">
-                                    (Fallback)
-                                </span>
-                            )}
                         </div>
 
                         {/* Title */}
@@ -331,6 +307,7 @@ export function TutorialTooltip() {
                     </div>
                 </motion.div>
             </AnimatePresence>
-        </>
+        </>,
+        document.body
     );
 }

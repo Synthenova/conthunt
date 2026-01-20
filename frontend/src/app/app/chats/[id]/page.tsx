@@ -345,7 +345,10 @@ export default function ChatPage() {
 
                 {/* Canvas (left/center) */}
                 <div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
-                    <div className="w-full py-4 px-4 space-y-6 flex-1 min-h-0 flex flex-col">
+                    <div
+                        className="w-full py-4 px-4 space-y-6 flex-1 min-h-0 flex flex-col"
+                        data-tutorial="chat_canvas"
+                    >
                         {isInitialLoading ? (
                             <ChatEmptyState state="loading" />
                         ) : !hasContent ? (

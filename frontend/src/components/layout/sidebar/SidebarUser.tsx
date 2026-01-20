@@ -7,8 +7,9 @@ import { LogoutButton } from "@/components/logout-button";
 import { useRouter } from 'next/navigation';
 import { useProducts } from '@/contexts/ProductsContext';
 import { useStreak } from '@/hooks/useStreak';
-import { Flame, Bug } from 'lucide-react';
+import { Flame, Bug, Gift } from 'lucide-react';
 import { FeedbackModal } from '@/components/modals/FeedbackModal';
+import { GiftShareModal } from '@/components/modals/GiftShareModal';
 
 interface SidebarUserProps {
     user: any;
@@ -21,6 +22,7 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
     const { getPlanName, loading: productsLoading } = useProducts();
     const { streak: streakData } = useStreak();
     const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+    const [isGiftOpen, setIsGiftOpen] = useState(false);
 
     const planDisplayName = profile?.role
         ? getPlanName(profile.role)
@@ -28,6 +30,22 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
 
     return (
         <div className="p-4 border-t border-white/5 mt-auto space-y-2">
+            <button
+                onClick={() => setIsGiftOpen(true)}
+                className={cn(
+                    "flex items-center rounded-xl hover:bg-white/5 cursor-pointer group transition-all text-gray-300 hover:text-emerald-400 p-2 border border-transparent hover:border-white/5",
+                    isCollapsed ? "justify-center aspect-square w-full" : "space-x-3 w-full"
+                )}
+                title="Share & gift"
+            >
+                <div className={cn("flex items-center justify-center", isCollapsed ? "" : "w-8")}>
+                    <Gift size={16} />
+                </div>
+                {!isCollapsed && (
+                    <span className="text-xs font-semibold">Share & gift</span>
+                )}
+            </button>
+
             {/* Bug Report Button - Placed above the user profile */}
             <button
                 onClick={() => setIsFeedbackOpen(true)}
@@ -104,6 +122,10 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
             <FeedbackModal
                 isOpen={isFeedbackOpen}
                 onClose={() => setIsFeedbackOpen(false)}
+            />
+            <GiftShareModal
+                isOpen={isGiftOpen}
+                onClose={() => setIsGiftOpen(false)}
             />
         </div>
     );
