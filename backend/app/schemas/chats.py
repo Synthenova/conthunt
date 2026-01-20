@@ -51,6 +51,7 @@ class SendMessageRequest(BaseModel):
     tags: Optional[List[ChatTag]] = None
     model: Optional[str] = None
     image_urls: Optional[List[str]] = None
+    filters: Optional[Dict[str, Dict[str, Any]]] = None
 
 class RenameChatRequest(BaseModel):
     title: str

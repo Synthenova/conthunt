@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { auth } from '@/lib/firebaseClient';
 import { useChatStore, Chat, ChatMessage } from '@/lib/chatStore';
+import type { PlatformInputs } from '@/lib/clientFilters';
 import { BACKEND_URL, authFetch } from '@/lib/api';
 
 async function waitForAuth() {
@@ -305,6 +306,7 @@ export function useSendMessage() {
             tags?: Array<{ type: 'board' | 'search' | 'media'; id: string; label?: string }>;
             model?: string;
             imageUrls?: string[];
+            filters?: PlatformInputs;
         }
     ) => {
         // Use passed chatId or fall back to activeChatId from store
@@ -351,6 +353,9 @@ export function useSendMessage() {
             }
             if (options?.imageUrls?.length) {
                 payload.image_urls = options.imageUrls;
+            }
+            if (options?.filters) {
+                payload.filters = options.filters;
             }
 
             // 1. Send message to start background streaming

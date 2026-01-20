@@ -81,6 +81,7 @@ class ChatStreamTaskPayload(BaseModel):
     model_name: str | None = None
     image_urls: list[str] | None = None
     auth_token: str | None = None
+    filters: dict | None = None
 
 @router.post("/gemini/analyze")
 async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Request):
@@ -353,6 +354,7 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
     Handle background chat stream task with retries.
     """
     logger.info(f"Received chat stream task for {payload.chat_id}")
+    logger.info(f"Received chat stream task for {payload.filters}")
     executor = CloudTaskExecutor(request)
 
     async def _on_fail(e: Exception):
@@ -380,6 +382,7 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
                 context={"x-auth-token": payload.auth_token} if payload.auth_token else None,
                 model_name=payload.model_name,
                 image_urls=payload.image_urls or [],
+                filters=payload.filters or {},
                 redis_client=redis_client,
             )
         finally:

@@ -156,6 +156,7 @@ async def stream_generator_to_redis(
     context: dict | None = None,
     model_name: str | None = None,
     image_urls: list[str] | None = None,
+    filters: dict | None = None,
     redis_client: redis.Redis | None = None,
 ):
     """
@@ -165,7 +166,7 @@ async def stream_generator_to_redis(
     3. Push to Redis Stream `chat:{id}:stream`.
     4. Cleanup Redis key on finish.
     """
-    logger.info(f"Starting background stream for chat {chat_id}")
+    logger.info(f"Starting background stream for chat {chat_id} {filters}")
     
     r = redis_client
     owns_client = False
@@ -188,6 +189,7 @@ async def stream_generator_to_redis(
                 "chat_id": chat_id,
                 "model_name": model_name,
                 "image_urls": image_urls or [],
+                "filters": filters or {},
             }
         }
         tool_run_ids = set()
@@ -519,6 +521,7 @@ async def send_message(
     auth_token = auth_header.split(" ")[1]
 
     send_request = SendMessageRequest.model_validate(await req_obj.json())
+    logger.info("send message", send_request.filters)
 
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
@@ -573,6 +576,7 @@ async def send_message(
             "model_name": send_request.model,
             "image_urls": image_urls,
             "auth_token": auth_token,
+            "filters": send_request.filters or {},
         },
     )
     

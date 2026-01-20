@@ -4,17 +4,17 @@ These tools make authenticated API calls to the backend to fetch
 user data like boards, videos, and analysis.
 """
 import os
-import re
 from uuid import UUID
-from typing import Optional, List, Dict, Any, Annotated
+from enum import Enum
+from typing import Optional, List, Dict, Any, Annotated, Literal
 import httpx
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import InjectedState
 
-from app.core import get_settings
+from app.core import get_settings, logger
 from app.agent.model_factory import init_chat_model
 
 settings = get_settings()
@@ -308,80 +308,6 @@ async def get_video_analysis(
 
 # Available platform slugs for search
 AVAILABLE_PLATFORMS = ["tiktok_top", "tiktok_keyword", "instagram_reels", "youtube"]
-PLATFORM_ALIASES = {
-    "tiktok": ["tiktok_top", "tiktok_keyword"],
-    "instagram": ["instagram_reels"],
-    "youtube": ["youtube"],
-}
-FILTERS_FENCE_RE = re.compile(r"```filters\\s*(.*?)```", re.DOTALL | re.IGNORECASE)
-
-
-def _normalize_message_content(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict):
-                text = block.get("text") or block.get("content")
-                if isinstance(text, str):
-                    parts.append(text)
-        return "\n".join(parts)
-    return ""
-
-
-def _extract_filters_fence(messages: list) -> tuple[dict, list[str] | None]:
-    inputs: dict[str, dict[str, Any]] = {}
-    platform_override: list[str] | None = None
-
-    for message in reversed(messages):
-        if isinstance(message, dict):
-            raw_content = message.get("content", "")
-        else:
-            raw_content = getattr(message, "content", "")
-        content = _normalize_message_content(raw_content)
-        if not content:
-            continue
-        match = FILTERS_FENCE_RE.search(content)
-        if not match:
-            continue
-        body = match.group(1)
-        tokens = [part.strip() for part in body.split("|") if part.strip()]
-        for token in tokens:
-            if token.lower() == "filters":
-                continue
-            if "=" not in token:
-                continue
-            key, value = token.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if not key:
-                continue
-            if key == "platforms":
-                platform_override = [p.strip().lower() for p in value.split(",") if p.strip()]
-                continue
-            if "." not in key:
-                continue
-            platform, param = key.split(".", 1)
-            platform = platform.strip()
-            param = param.strip()
-            if not platform or not param:
-                continue
-            inputs.setdefault(platform, {})[param] = value
-        break
-
-    if platform_override:
-        resolved: list[str] = []
-        for platform in platform_override:
-            if platform in PLATFORM_ALIASES:
-                resolved.extend(PLATFORM_ALIASES[platform])
-            elif platform in AVAILABLE_PLATFORMS:
-                resolved.append(platform)
-        platform_override = list(dict.fromkeys(resolved)) if resolved else None
-
-    return inputs, platform_override
 
 
 @tool
@@ -423,8 +349,66 @@ async def get_chat_searches(
 class SearchQuery(BaseModel):
     keyword: str = Field(description="The search keyword")
 
-class SearchKeywords(BaseModel):
+class TikTokSortBy(str, Enum):
+    relevance = "relevance"
+    most_liked = "most-liked"
+    date_posted = "date-posted"
+
+
+class TikTokDateFilter(str, Enum):
+    this_week = "this-week"
+    yesterday = "yesterday"
+    this_month = "this-month"
+    last_3_months = "last-3-months"
+    last_6_months = "last-6-months"
+    all_time = "all-time"
+
+
+class TikTokTopFilters(BaseModel):
+    publish_time: Optional[TikTokDateFilter] = None
+    sort_by: Optional[TikTokSortBy] = None
+
+
+class TikTokKeywordFilters(BaseModel):
+    date_posted: Optional[TikTokDateFilter] = None
+    sort_by: Optional[TikTokSortBy] = None
+
+
+class SearchFilters(BaseModel):
+    platforms: Optional[List[Literal["tiktok_top", "tiktok_keyword"]]] = Field(
+        default=None,
+        description="Optional platform slugs to search.",
+    )
+    tiktok_top: Optional[TikTokTopFilters] = None
+    tiktok_keyword: Optional[TikTokKeywordFilters] = None
+
+
+class SearchPlan(BaseModel):
     queries: List[SearchQuery] = Field(description="List of search queries to execute")
+    filters: Optional[SearchFilters] = None
+
+
+def _llm_filters_to_inputs(filters: SearchFilters) -> dict:
+    inputs: Dict[str, Dict[str, Any]] = {}
+    if filters.tiktok_top:
+        inputs["tiktok_top"] = filters.tiktok_top.model_dump(exclude_none=True, mode="json")
+    if filters.tiktok_keyword:
+        inputs["tiktok_keyword"] = filters.tiktok_keyword.model_dump(exclude_none=True, mode="json")
+    return inputs
+
+
+def _merge_filter_inputs(base: dict, override: dict) -> dict:
+    merged: Dict[str, Dict[str, Any]] = {}
+    base = base or {}
+    override = override or {}
+    for platform in set(base.keys()) | set(override.keys()):
+        merged[platform] = {
+            **(base.get(platform) or {}),
+            **(override.get(platform) or {}),
+        }
+    return merged
+
+
 
 
 @tool
@@ -450,11 +434,11 @@ async def search(
         
         # 1. Initialize Gemini 3 Pro for intent detection
         llm = init_chat_model("google/gemini-3-pro-preview")
-        structured_llm = llm.with_structured_output(SearchKeywords)
+        structured_llm = llm.with_structured_output(SearchPlan)
 
         # 2. Extract messages for context
         messages = state.get("messages", [])
-        filter_inputs, platform_override = _extract_filters_fence(messages)
+        config_filters = configurable.get("filters") or {}
         
         # 3. Generate keywords
         system_msg = SystemMessage(content="""
@@ -462,6 +446,13 @@ async def search(
         Generate 3 to 5 distinct, high-quality search queries that will help the user find what they are looking for.
         For each query, provide ONLY the keyword.
         Focus on finding content related to the user's request.
+
+        If the user explicitly requests filters (date, sort, platforms), include them in `filters`.
+        Use platform slugs: tiktok_top, tiktok_keyword.
+        Leave `platforms` empty to mean "all platforms".
+        Allowed values:
+        - publish_time/date_posted: this-week, yesterday, this-month, last-3-months, last-6-months, all-time
+        - sort_by: relevance, most-liked, date-posted
         """)
         
         # Invoke the model
@@ -475,6 +466,16 @@ async def search(
              return {"error": "Could not generate valid search queries."}
 
         queries = response.queries
+        llm_filters = response.filters
+        llm_filter_inputs = _llm_filters_to_inputs(llm_filters) if llm_filters else {}
+        effective_filters = _merge_filter_inputs(config_filters, llm_filter_inputs)
+        platforms_list = llm_filters.platforms if llm_filters and llm_filters.platforms else AVAILABLE_PLATFORMS
+        logger.info(f"Generated search queries: {queries}")
+        logger.info(f"Generated filters: {llm_filters}")
+        logger.info(f"Config filters: {config_filters}")
+        logger.info(f"Effective filters: {effective_filters}")
+        logger.info(f"Platforms list: {platforms_list}")
+
         search_ids = []
         errors = []
         results_info = []
@@ -487,12 +488,13 @@ async def search(
             if not keyword:
                 return None
 
-            # Always search all available platforms unless overridden by filters fence
-            platforms_list = platform_override or AVAILABLE_PLATFORMS
+            # Always search all available platforms unless explicitly limited by LLM platforms
+            resolved_platforms = platforms_list
             inputs = {
-                platform: dict(filter_inputs.get(platform, {}))
-                for platform in platforms_list
+                platform: dict(effective_filters.get(platform, {}))
+                for platform in resolved_platforms
             }
+            logger.info(f"Executing search using inputs: {inputs}")
             
             url = f"{_get_api_base_url()}/search"
             payload = {

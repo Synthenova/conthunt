@@ -6,7 +6,7 @@ export interface ClientFilters {
     platforms?: string[];
 }
 
-type PlatformInputs = Record<string, Record<string, any>>;
+export type PlatformInputs = Record<string, Record<string, any>>;
 
 const TIKTOK_SORT_MAP: Record<ClientSortOption, string | null> = {
     default: "relevance",
@@ -72,17 +72,4 @@ export function mapClientFiltersToPlatformInputs(filters: ClientFilters): Platfo
     }
 
     return inputs;
-}
-
-export function formatFiltersFence(filters: ClientFilters): string {
-    const tokens: string[] = ["filters"];
-    const inputs = mapClientFiltersToPlatformInputs(filters);
-    Object.entries(inputs).forEach(([platform, params]) => {
-        Object.entries(params).forEach(([key, value]) => {
-            if (value === undefined || value === null || value === "") return;
-            tokens.push(`${platform}.${key}=${value}`);
-        });
-    });
-
-    return `\`\`\`${tokens.join(" | ")}\`\`\``;
 }

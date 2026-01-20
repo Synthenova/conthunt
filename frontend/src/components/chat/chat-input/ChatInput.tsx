@@ -30,7 +30,7 @@ import type {
 } from './types';
 import { MENTION_RE, MEDIA_DRAG_TYPE, CHIP_TITLE_LIMIT, MODEL_OPTIONS } from './constants';
 import { truncateText, formatChipFence } from './utils';
-import { formatFiltersFence } from '@/lib/clientFilters';
+import { mapClientFiltersToPlatformInputs } from '@/lib/clientFilters';
 import { ChipList } from './ChipList';
 import { ModelSelector } from './ModelSelector';
 import { ActionButtons } from './ActionButtons';
@@ -271,8 +271,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
             ? sendChips.map((chip) => `\`\`\`chip ${formatChipFence(chip)}\`\`\``).join(' ')
             : '';
 
-        const filtersFence = formatFiltersFence(clientFilters);
-        const fullMessage = [filtersFence, chipFence, messageText].filter(Boolean).join('\n');
+        const fullMessage = [chipFence, messageText].filter(Boolean).join('\n');
         const tagPayload: { type: 'board' | 'search' | 'media'; id: string; label?: string }[] = chips
             .filter((chip) => chip.type === 'board' || chip.type === 'search' || chip.type === 'media')
             .map((chip) => ({
@@ -297,6 +296,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                     tags: tagPayload,
                     model: selectedModel,
                     imageUrls,
+                    filters: mapClientFiltersToPlatformInputs(clientFilters),
                 });
             } catch (err) {
                 console.error('Failed to create chat:', err);
@@ -307,6 +307,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                 tags: tagPayload,
                 model: selectedModel,
                 imageUrls,
+                filters: mapClientFiltersToPlatformInputs(clientFilters),
             });
         }
     }, [message, isStreaming, imageChips, chips, activeChatId, createChat, context, sendMessage, resetStreaming, isChatRoute, router, selectedModel]);

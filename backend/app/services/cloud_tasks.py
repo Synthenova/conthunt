@@ -278,6 +278,7 @@ class CloudTasksService:
                         context={"x-auth-token": payload.get("auth_token")} if payload.get("auth_token") else None,
                         model_name=payload.get("model_name"),
                         image_urls=payload.get("image_urls") or [],
+                        filters=payload.get("filters") or {},
                     )
                 finally:
                     try:
