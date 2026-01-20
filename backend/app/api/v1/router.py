@@ -3,21 +3,22 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     search,
-    media,
-    tasks,
-    analysis,
     history,
-    auth,
-    webhooks,
-    billing,
-    user,
-    twelvelabs,
+    media,
     boards,
+    twelvelabs,
     chats,
-    onboarding,
-    streak,
+    analysis,
+    tasks,
+    user,
     waitlist,
-    feedback
+    auth,
+    billing,
+    webhooks,
+    streak,
+    onboarding,
+    feedback,
+    trending,
 )
 
 router = APIRouter(prefix="/v1")
@@ -37,3 +38,4 @@ router.include_router(webhooks.router, tags=["webhooks"])
 router.include_router(streak.router, tags=["streak"])
 router.include_router(onboarding.router, tags=["onboarding"])
 router.include_router(feedback.router, tags=["feedback"])
+router.include_router(trending.router, tags=["trending"])

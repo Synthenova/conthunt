@@ -34,11 +34,14 @@ import { mapClientFiltersToPlatformInputs } from '@/lib/clientFilters';
 import { ChipList } from './ChipList';
 import { ModelSelector } from './ModelSelector';
 import { ActionButtons } from './ActionButtons';
+import { ImageChipList } from './ImageChipList';
+import { GlassPanel } from '@/components/ui/glass-card';
 
 export function ChatInput({ context, isDragActive }: ChatInputProps) {
     const [message, setMessage] = useState('');
     const [chips, setChips] = useState<ContextChip[]>([]);
-    const [imageChips, setImageChips] = useState<ImageChip[]>([]);
+    // Floating chips (Images + Media)
+    const [imageChips, setImageChips] = useState<(ImageChip | MediaChip)[]>([]);
     const [mentionQuery, setMentionQuery] = useState<string | null>(null);
     const [isDragOver, setIsDragOver] = useState(false);
     const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].value);
@@ -126,31 +129,37 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                     creator_handle: item.creator_handle,
                     content_type: item.content_type,
                     primary_text: item.primary_text,
+                    thumbnail_url: (item as any).thumbnail_url || (item as any).poster_url || (item.media_asset_id ? `https://img.youtube.com/vi/${item.media_asset_id}/mqdefault.jpg` : undefined)
                 };
             });
 
         if (!nextChips.length) return;
 
-        setChips((prev) => {
-            const existingIds = new Set(
-                prev.filter((chip) => chip.type === 'media').map((chip) => chip.id)
-            );
-            const merged = nextChips.filter((chip) => !existingIds.has(chip.id));
-            return merged.length ? [...prev, ...merged] : prev;
+        // Add to imageChips (as floating media) instead of context chips
+        setImageChips((prev) => {
+            // Note: imageChips is currently typed as ImageChip[], we need to cast or rely on updated typing if we changed state definition.
+            // Wait, we need to update the state type for imageChips first.
+            // Let's assume we modify the state definition in the next chunk.
+
+            // Actually, let's treat media chips as part of the 'imageChips' state which we will rename or simply use as 'floatingChips' conceptually.
+            // But we have a typing conflict if we don't update state type.
+            const existingIds = new Set(prev.map(c => c.id));
+            const distinct = nextChips.filter(c => !existingIds.has(c.id));
+            return [...prev, ...distinct] as any[];
         });
     }, []);
 
     useEffect(() => {
         setChips((prev) => {
             const unlocked = prev.filter((chip) => !chip.locked);
-            if (!context?.id || !contextLabel) {
+            if (!context?.id) {
                 return unlocked;
             }
 
             const baseChip: ContextChip = {
                 type: context.type,
                 id: context.id,
-                label: contextLabel,
+                label: contextLabel || context.id, // Fallback to ID if label not available
                 locked: true,
             };
 
@@ -207,8 +216,8 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         setIsDragOver(false);
     }, []);
 
-    const handleRemoveImageChip = useCallback((chipId: string) => {
-        setImageChips((prev) => prev.filter((chip) => chip.id !== chipId));
+    const handleRemoveFloatingChip = useCallback((chipId: string, type: 'image' | 'media') => {
+        setImageChips((prev) => prev.filter((chip) => !(chip.id === chipId && chip.type === type)));
     }, []);
 
     const handleFilesAdded = useCallback(async (files: File[]) => {
@@ -262,21 +271,22 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
 
     const handleSend = useCallback(async () => {
         if (!message.trim() || isStreaming) return;
-        if (imageChips.some((chip) => chip.status === 'uploading')) {
+        const uploadingImages = imageChips.filter((chip) => chip.type === 'image' && chip.status === 'uploading');
+        if (uploadingImages.length > 0) {
             toast.info('Wait for image uploads to finish.');
             return;
         }
 
         const messageText = message.trim();
         const imageUrls = imageChips
-            .filter((chip) => chip.status === 'ready' && chip.url)
-            .map((chip) => chip.url as string);
+            .filter((chip) => chip.type === 'image' && chip.status === 'ready')
+            .map((chip) => (chip as ImageChip).url as string);
         setMessage('');
         setMentionQuery(null);
         setImageChips([]);
 
         // Only send chips fence, no detailed context block
-        const sendChips = [...chips, ...imageChips.filter((chip) => chip.status === 'ready')];
+        const sendChips = [...chips, ...imageChips.filter((chip) => chip.type === 'image' ? chip.status === 'ready' : true)];
         const chipFence = sendChips.length
             ? sendChips.map((chip) => `\`\`\`chip ${formatChipFence(chip)}\`\`\``).join(' ')
             : '';
@@ -289,6 +299,15 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                 id: chip.id,
                 label: chip.type === 'media' ? (chip as MediaChip).title || chip.label : chip.label,
             }));
+
+        // Add floating media tags
+        (imageChips.filter(c => c.type === 'media') as MediaChip[]).forEach(m => {
+            tagPayload.push({
+                type: 'media',
+                id: m.id,
+                label: m.title || m.label
+            });
+        });
 
         abortControllerRef.current = new AbortController();
 
@@ -351,7 +370,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         (chat.title || '').toLowerCase().includes(mentionFilter)
     );
 
-    const canSend = !!message.trim() && !createChat.isPending && !imageChips.some((chip) => chip.status === 'uploading');
+    const canSend = !!message.trim() && !createChat.isPending && !imageChips.some((chip) => chip.type === 'image' && chip.status === 'uploading');
 
     return (
         <FileUpload
@@ -381,29 +400,39 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                         }}
                     />
                 )}
-                <PromptInput
-                    value={message}
-                    onValueChange={handleMessageChange}
-                    onSubmit={handleSend}
-                    isLoading={isStreaming}
-                    disabled={createChat.isPending}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
+
+
+                {/* Image Chips - Floating above */}
+                <ImageChipList
+                    chips={imageChips}
+                    onRemoveChip={handleRemoveFloatingChip}
+                />
+
+                <GlassPanel
+                    intensity="medium"
                     className={cn(
-                        "bg-secondary/50 border-white/10",
+                        "backdrop-blur-none",
                         (isDragOver || isDragActive) && "ring-1 ring-primary/60 border-primary/60"
                     )}
                 >
+                    <PromptInput
+                        value={message}
+                        onValueChange={handleMessageChange}
+                        onSubmit={handleSend}
+                        isLoading={isStreaming}
+                        disabled={createChat.isPending}
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        className="border-none bg-transparent"
+                    >
                     <ChipList
                         chips={chips}
-                        imageChips={imageChips}
                         onRemoveChip={handleRemoveChip}
-                        onRemoveImageChip={handleRemoveImageChip}
                     />
                     <PromptInputTextarea
                         placeholder="Send a message"
-                        className="text-sm min-h-[40px] text-foreground"
+                        className="text-sm min-h-[40px] text-foreground leading-[34px]"
                     />
                     <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">
                         <div className="flex items-center gap-2">
@@ -434,6 +463,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                         </div>
                     </PromptInputActions>
                 </PromptInput>
+                </GlassPanel>
             </div>
         </FileUpload>
     );

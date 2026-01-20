@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useBoards } from "@/hooks/useBoards";
@@ -40,8 +40,11 @@ import {
     FileText,
     PenLine,
     MessageCircle,
+    BarChart3,
+    Eye,
+    Heart,
 } from "lucide-react";
-import { transformToMediaItem } from "@/lib/transformers";
+import { transformToMediaItem, FlatMediaItem } from "@/lib/transformers";
 import { formatDistanceToNow } from "date-fns";
 
 import { useUser } from "@/hooks/useUser";
@@ -96,16 +99,6 @@ export default function BoardDetailPage() {
         });
     }, [items]);
 
-    // Sync board items to store for media chip scroll-to-video
-    useEffect(() => {
-        setCanvasBoardItems(transformedItems);
-        setCurrentCanvasPage('board');
-        return () => {
-            setCanvasBoardItems([]);
-            setCurrentCanvasPage(null);
-        };
-    }, [transformedItems, setCanvasBoardItems, setCurrentCanvasPage]);
-
     const {
         flatResults,
         clientSort,
@@ -116,6 +109,52 @@ export default function BoardDetailPage() {
         selectedPlatforms,
         setSelectedPlatforms,
     } = useClientResultSort(transformedItems, { resultsAreFlat: true });
+
+    // Scroll detection - hide header on scroll down 30px, show on scroll up
+    const resultsScrollRef = useRef<HTMLDivElement>(null);
+    const [showHeader, setShowHeader] = useState(true);
+    const lastScrollY = useRef(0);
+    const SCROLL_THRESHOLD = 30;
+
+    useEffect(() => {
+        const el = resultsScrollRef.current;
+        if (!el) return;
+
+        const handleScroll = () => {
+            const currentY = el.scrollTop;
+            const delta = currentY - lastScrollY.current;
+
+            // Hide when scrolling down past threshold
+            if (delta > 0 && currentY > SCROLL_THRESHOLD) {
+                setShowHeader(false);
+            }
+            // Show when scrolling up
+            else if (delta < 0) {
+                setShowHeader(true);
+            }
+            // Always show at top
+            if (currentY <= 0) {
+                setShowHeader(true);
+            }
+
+            lastScrollY.current = currentY;
+        };
+
+        el.addEventListener("scroll", handleScroll, { passive: true });
+        return () => {
+            el.removeEventListener("scroll", handleScroll);
+        };
+    }, [activeTab]);
+
+    // Sync board items to store for media chip scroll-to-video
+    useEffect(() => {
+        setCanvasBoardItems(transformedItems);
+        setCurrentCanvasPage('board');
+        return () => {
+            setCanvasBoardItems([]);
+            setCurrentCanvasPage(null);
+        };
+    }, [transformedItems, setCanvasBoardItems, setCurrentCanvasPage]);
 
     const selectedCount = selectedItems.length;
 
@@ -130,6 +169,70 @@ export default function BoardDetailPage() {
     }, [transformedItems]);
 
     const lastCompletedAt = insights?.last_completed_at || null;
+
+    // Analytics stats calculation
+    const analyticsStats = useMemo(() => {
+        const items = transformedItems || [];
+        if (items.length === 0) {
+            return null;
+        }
+
+        const totalCount = items.length;
+        let totalViews = 0;
+        let totalLikes = 0;
+        let totalComments = 0;
+
+        let highestViewedItem: FlatMediaItem | null = null;
+        let highestLikedItem: FlatMediaItem | null = null;
+        let highestViewCount = 0;
+        let highestLikeCount = 0;
+
+        items.forEach(item => {
+            const views = item.view_count || 0;
+            const likes = item.like_count || 0;
+            const comments = item.comment_count || 0;
+
+            totalViews += views;
+            totalLikes += likes;
+            totalComments += comments;
+
+            if (views > highestViewCount) {
+                highestViewCount = views;
+                highestViewedItem = item;
+            }
+
+            if (likes > highestLikeCount) {
+                highestLikeCount = likes;
+                highestLikedItem = item;
+            }
+        });
+
+        const avgViews = totalCount > 0 ? Math.round(totalViews / totalCount) : 0;
+        const avgLikes = totalCount > 0 ? Math.round(totalLikes / totalCount) : 0;
+        const avgComments = totalCount > 0 ? Math.round(totalComments / totalCount) : 0;
+
+        return {
+            totalCount,
+            totalViews,
+            totalLikes,
+            totalComments,
+            avgViews,
+            avgLikes,
+            avgComments,
+            highestViewedItem,
+            highestLikedItem,
+            highestViewCount,
+            highestLikeCount,
+        };
+    }, [transformedItems]);
+
+    // Format numbers for display
+    const formatNumber = (num: number): string => {
+        if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+        if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+        return num.toString();
+    };
+
     const newVideosCount = useMemo(() => {
         if (!items || items.length === 0) return 0;
         if (!lastCompletedAt) return items.length;
@@ -208,445 +311,614 @@ export default function BoardDetailPage() {
     }
 
     return (
-        <div className="min-h-screen bg-background relative">
+        <div className="h-screen bg-background relative flex flex-col overflow-hidden">
             {/* Deep Space Background Gradients */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
                 <div className="absolute top-[-20%] left-[-10%] w-[70%] h-[70%] bg-primary/10 rounded-full blur-[160px] animate-pulse" />
                 <div className="absolute bottom-[-20%] right-[-10%] w-[70%] h-[70%] bg-primary/10 rounded-full blur-[160px]" />
             </div>
 
-            <div className="container mx-auto max-w-7xl py-8 px-4 space-y-8">
-                {/* Header */}
-                <div className="flex flex-col gap-4">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div>
-                            <h1 className="text-3xl font-bold text-white">
-                                {board.name}
-                            </h1>
-                            <p className="text-sm text-muted-foreground mt-1">
-                                Updated {formatDistanceToNow(new Date(board.updated_at), { addSuffix: true })}
-                            </p>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <div className="glass-button h-9 px-4 flex items-center justify-center text-xs font-medium text-muted-foreground border rounded-full border-white/10 !cursor-default">
-                                {transformedItems.length} Videos
-                            </div>
-                            <Button variant="ghost" size="sm" onClick={() => setShowDeleteDialog(true)} className="glass-button-red h-9 px-4">
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete Board
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Custom Glass Pill Tabs & Filters */}
-                <div className="space-y-6">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div className="flex p-1 bg-white/5 glass-nav rounded-full relative h-9 items-center max-w-[280px]">
-                            {(['videos', 'insights'] as const).map((tab) => (
-                                <button
-                                    key={tab}
-                                    onClick={() => setActiveTab(tab)}
-                                    className={cn(
-                                        "flex-1 h-full flex items-center justify-center text-xs font-bold uppercase tracking-wider rounded-full transition-all relative z-10 px-6",
-                                        activeTab === tab ? "text-white" : "text-gray-500 hover:text-gray-300"
-                                    )}
-                                    data-tutorial={tab === 'videos' ? 'videos_tab' : 'insights_tab'}
-                                >
-                                    {activeTab === tab && (
-                                        <motion.div
-                                            layoutId="board-tab-pill"
-                                            className="absolute inset-0 rounded-full glass-pill"
-                                            style={{ borderRadius: 9999 }}
-                                            transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                                        />
-                                    )}
-                                    <span className="relative z-10 mix-blend-normal flex items-center gap-2">
-                                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                                        {tab === 'insights' && newVideosCount > 0 && (
-                                            <Badge variant="secondary" className="bg-white/10 text-white text-[10px] px-1 py-0 h-3.5 min-w-3.5 flex items-center justify-center">
-                                                {newVideosCount}
-                                            </Badge>
-                                        )}
-                                    </span>
-                                </button>
-                            ))}
-                        </div>
-
+            <div className="flex h-full">
+                {/* Main Canvas */}
+                <div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
+                    <div className="w-full py-4 px-4 space-y-6 flex-1 min-h-0 flex flex-col">
+                        {/* Videos Section */}
                         {activeTab === 'videos' && (
-                            <BoardFilterBar
-                                sort={clientSort}
-                                onSortChange={setClientSort}
-                                dateFilter={clientDateFilter}
-                                onDateFilterChange={setClientDateFilter}
-                                platforms={platforms}
-                                selectedPlatforms={selectedPlatforms}
-                                onPlatformsChange={setSelectedPlatforms}
-                            />
-                        )}
-                    </div>
-
-                    {/* Videos Content */}
-                    {activeTab === 'videos' && (
-                        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-                            {isItemsLoading ? (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                                    {[...Array(8)].map((_, i) => (
-                                        <div key={i} className="aspect-[9/16] rounded-xl overflow-hidden">
-                                            <Skeleton className="h-full w-full" />
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : transformedItems.length === 0 ? (
-                                <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4">
-                                    <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
-                                        <FolderOpen className="h-8 w-8 text-muted-foreground" />
-                                    </div>
-                                    <h3 className="text-xl font-medium">This board is empty</h3>
-                                    <p className="text-muted-foreground">
-                                        Go to Search and add content to this board
-                                    </p>
-                                    <Button asChild className="mt-4 glass-button-white hover:text-black">
-                                        <Link href="/app">
-                                            <Plus className="h-4 w-4 mr-2" />
-                                            Go to Search
-                                        </Link>
-                                    </Button>
-                                </BoardGlassCard>
-                            ) : (
-                                <SelectableResultsGrid
-                                    results={flatResults}
-                                    loading={false}
-                                    analysisDisabled={false}
-                                />
-                            )}
-                        </div>
-                    )}
-
-                    {/* Insights Content */}
-                    {activeTab === 'insights' && (
-                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                                <div className="space-y-1">
-                                    <div className="flex items-center gap-2">
-                                        <h2 className="text-xl font-semibold text-white">Insights</h2>
-                                        <Badge variant="outline" className="border-white/10 text-muted-foreground">
-                                            AI-generated insight cards
-                                        </Badge>
-                                    </div>
-                                    <p className="text-sm text-muted-foreground">
-                                        {lastCompletedAt
-                                            ? `Last updated ${formatDistanceToNow(new Date(lastCompletedAt), { addSuffix: true })}`
-                                            : "Run insights to summarize patterns across this board."}
-                                    </p>
-                                </div>
-                                {hasInsights || allFailed ? (
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        {(isProcessingInsights || isRefreshingInsights) && totalVideos > 0 ? (
-                                            <Badge variant="outline" className="border-white/10 text-muted-foreground">
-                                                {isRefreshingInsights && !isProcessingInsights
-                                                    ? "Starting..."
-                                                    : `Analyzing ${analyzedVideos + failedVideos}/${totalVideos} videos`}
-                                            </Badge>
-                                        ) : null}
-                                        <TooltipProvider>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <span tabIndex={0} className="inline-flex"> {/* Span wrapper for disabled button tooltip */}
-                                                        <Button
-                                                            onClick={handleRefreshInsights}
-                                                            disabled={isRefreshingInsights || isProcessingInsights || lowCredits}
-                                                            className="gap-2 glass-button-white hover:text-black disabled:pointer-events-none" // pointer-events-none unfortunately kills the tooltip on the button itself
-                                                            data-tutorial="refresh_insights"
-                                                        >
-                                                            {isRefreshingInsights || isProcessingInsights ? (
-                                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                                            ) : (
-                                                                <RefreshCw className="h-4 w-4" />
-                                                            )}
-                                                            {newVideosCount > 0 ? `Update insights (${newVideosCount} new)` : "Update insights"}
-                                                        </Button>
-                                                    </span>
-                                                </TooltipTrigger>
-                                                {lowCredits && (
-                                                    <TooltipContent>
-                                                        <p>Not enough credits</p>
-                                                    </TooltipContent>
-                                                )}
-                                            </Tooltip>
-                                        </TooltipProvider>
-                                    </div>
-                                ) : null}
-                            </div>
-
-                            {transformedItems.length === 0 ? (
-                                <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4">
-                                    <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
-                                        <FolderOpen className="h-8 w-8 text-muted-foreground" />
-                                    </div>
-                                    <h3 className="text-xl font-medium">No videos yet</h3>
-                                    <p className="text-muted-foreground">
-                                        Add videos to this board to generate insights.
-                                    </p>
-                                    <Button asChild className="mt-4 glass-button-white hover:text-black">
-                                        <Link href="/app">
-                                            <Plus className="h-4 w-4 mr-2" />
-                                            Go to Search
-                                        </Link>
-                                    </Button>
-                                </BoardGlassCard>
-                            ) : isInsightsLoading && !hasInsights ? (
-                                <div className="grid gap-4 lg:grid-cols-2">
-                                    {[...Array(4)].map((_, i) => (
-                                        <Card key={i} className="bg-white/5 border-white/10">
-                                            <CardHeader>
-                                                <CardTitle>
-                                                    <Skeleton className="h-4 w-32" />
-                                                </CardTitle>
-                                            </CardHeader>
-                                            <CardContent className="space-y-3">
-                                                {[...Array(3)].map((_, j) => (
-                                                    <Skeleton key={j} className="h-4 w-full" />
-                                                ))}
-                                            </CardContent>
-                                        </Card>
-                                    ))}
-                                </div>
-                            ) : !hasInsights && !allFailed ? (
-                                <div className="min-h-[55vh] flex flex-col items-center justify-center text-center gap-4 py-16">
-                                    <div className="h-14 w-14 rounded-full bg-white/5 flex items-center justify-center">
-                                        {(isProcessingInsights || isRefreshingInsights) ? (
-                                            <Loader2 className="h-7 w-7 text-white/80 animate-spin" />
-                                        ) : (
-                                            <Sparkles className="h-7 w-7 text-white/80" />
-                                        )}
-                                    </div>
-                                    <div className="space-y-2 max-w-xl">
-                                        <h3 className="text-2xl font-semibold text-white">
-                                            {(isProcessingInsights || isRefreshingInsights)
-                                                ? (totalVideos > 0 && (analyzedVideos + failedVideos) >= totalVideos
-                                                    ? "Generating insights..."
-                                                    : "Analyzing videos...")
-                                                : "Get insights when you are ready"}
-                                        </h3>
-                                        <p className="text-sm text-muted-foreground">
-                                            {isProcessingInsights && totalVideos > 0
-                                                ? ((analyzedVideos + failedVideos) >= totalVideos
-                                                    ? "All videos analyzed. Creating your insights..."
-                                                    : `Analyzing ${analyzedVideos + failedVideos}/${totalVideos} videos...`)
-                                                : (isRefreshingInsights
-                                                    ? "Starting analysis..."
-                                                    : "Run insights to surface hooks, angles, and patterns across this board. Results land in 2–3 minutes.")}
-                                        </p>
-                                        {isProcessingInsights && totalVideos > 0 && (analyzedVideos + failedVideos) < totalVideos && (
-                                            <div className="w-64 mx-auto mt-4">
-                                                <div className="h-2 rounded-full bg-white/10 overflow-hidden">
-                                                    <div
-                                                        className="h-full rounded-full bg-primary transition-all duration-500"
-                                                        style={{ width: `${totalVideos > 0 ? ((analyzedVideos + failedVideos) / totalVideos) * 100 : 0}%` }}
-                                                    />
-                                                </div>
-                                                <p className="text-xs text-muted-foreground mt-2">
-                                                    {analyzedVideos + failedVideos}/{totalVideos} videos analyzed
+                            <section className="flex flex-col min-h-0">
+                                {/* Header with Auto-Hide */}
+                                <motion.div
+                                    initial={false}
+                                    animate={{
+                                        height: showHeader ? "auto" : 0,
+                                        opacity: showHeader ? 1 : 0,
+                                        y: showHeader ? 0 : -16,
+                                        marginBottom: showHeader ? 24 : 0,
+                                    }}
+                                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                                    style={{ pointerEvents: showHeader ? "auto" : "none" }}
+                                    className="w-full overflow-hidden"
+                                >
+                                    <div className="bg-zinc-950/80 backdrop-blur-md px-4 py-4 space-y-6 border-b border-white/5 w-full">
+                                        {/* Board Title Row */}
+                                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                            <div>
+                                                <h1 className="text-3xl font-bold text-white">
+                                                    {board.name}
+                                                </h1>
+                                                <p className="text-sm text-muted-foreground mt-1">
+                                                    Updated {formatDistanceToNow(new Date(board.updated_at), { addSuffix: true })}
                                                 </p>
                                             </div>
-                                        )}
-                                    </div>
-                                    {!(isProcessingInsights || isRefreshingInsights) && (
-                                        <TooltipProvider>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <span tabIndex={0} className="inline-flex"> {/* Wrapper for disabled state */}
-                                                        <Button
-                                                            onClick={handleRefreshInsights}
-                                                            disabled={isRefreshingInsights || isProcessingInsights || lowCredits}
-                                                            className="gap-2 glass-button-white hover:text-black disabled:pointer-events-none"
+
+                                            <div className="flex items-center gap-2">
+                                                <div className="glass-button h-9 px-4 flex items-center justify-center text-xs font-medium text-muted-foreground border rounded-full border-white/10 !cursor-default">
+                                                    {transformedItems.length} Videos
+                                                </div>
+                                                <Button variant="ghost" onClick={() => setShowDeleteDialog(true)} className="glass-button-red h-9 px-4 rounded-full text-xs flex items-center justify-center gap-2 leading-none">
+                                                    <Trash2 className="h-4 w-4" />
+                                                    Delete Board
+                                                </Button>
+                                            </div>
+                                        </div>
+
+                                        {/* Tabs & Filters Bar */}
+                                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                            {/* Glass Pill Tabs - Matching ChatTabs Style */}
+                                            <div className="min-w-0 flex justify-start overflow-hidden flex-shrink">
+                                                <div className="flex p-1.5 bg-white/5 glass-nav rounded-xl relative h-14 items-center max-w-full overflow-x-auto scrollbar-hide">
+                                                    {(['videos', 'insights'] as const).map((tab) => (
+                                                        <button
+                                                            key={tab}
+                                                            onClick={() => setActiveTab(tab)}
+                                                            className={cn(
+                                                                "relative px-5 h-11 flex items-center justify-center text-[12px] font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0",
+                                                                activeTab === tab ? "text-white" : "text-gray-500 hover:text-gray-300"
+                                                            )}
                                                         >
-                                                            <Sparkles className="h-4 w-4" />
-                                                            Get insights
-                                                        </Button>
-                                                    </span>
-                                                </TooltipTrigger>
-                                                {lowCredits && (
-                                                    <TooltipContent>
-                                                        <p>Not enough credits</p>
-                                                    </TooltipContent>
-                                                )}
-                                            </Tooltip>
-                                        </TooltipProvider>
+                                                            {activeTab === tab && (
+                                                                <motion.div
+                                                                    layoutId="board-tab-pill"
+                                                                    className="absolute inset-0 rounded-lg glass-pill"
+                                                                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                                                />
+                                                            )}
+                                                            <span className="relative z-10 flex items-center gap-2">
+                                                                {tab === 'videos' ? (
+                                                                    <>
+                                                                        <Video className="h-3.5 w-3.5" />
+                                                                        Videos
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <Sparkles className="h-3.5 w-3.5" />
+                                                                        Insights
+                                                                    </>
+                                                                )}
+                                                                {tab === 'insights' && newVideosCount > 0 && (
+                                                                    <Badge variant="secondary" className="bg-white/10 text-white text-[10px] px-1.5 py-0 h-4 min-w-4 flex items-center justify-center">
+                                                                        {newVideosCount}
+                                                                    </Badge>
+                                                                )}
+                                                            </span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Filters */}
+                                            <div className="flex-shrink-0">
+                                                <BoardFilterBar
+                                                    sort={clientSort}
+                                                    onSortChange={setClientSort}
+                                                    dateFilter={clientDateFilter}
+                                                    onDateFilterChange={setClientDateFilter}
+                                                    platforms={platforms}
+                                                    selectedPlatforms={selectedPlatforms}
+                                                    onPlatformsChange={setSelectedPlatforms}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </motion.div>
+
+                                {/* Videos Content */}
+                                <div className="flex-1 min-h-0 flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                    {isItemsLoading ? (
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 px-2">
+                                            {[...Array(8)].map((_, i) => (
+                                                <div key={i} className="aspect-[9/16] rounded-xl overflow-hidden">
+                                                    <Skeleton className="h-full w-full" />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : transformedItems.length === 0 ? (
+                                        <BoardGlassCard className="m-2 p-12 text-center flex flex-col items-center gap-4">
+                                            <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
+                                                <FolderOpen className="h-8 w-8 text-muted-foreground" />
+                                            </div>
+                                            <h3 className="text-xl font-medium">This board is empty</h3>
+                                            <p className="text-muted-foreground">
+                                                Go to Search and add content to this board
+                                            </p>
+                                            <Button asChild className="mt-4 glass-button-white hover:text-black">
+                                                <Link href="/app">
+                                                    <Plus className="h-4 w-4 mr-2" />
+                                                    Go to Search
+                                                </Link>
+                                            </Button>
+                                        </BoardGlassCard>
+                                    ) : (
+                                        <SelectableResultsGrid
+                                            results={flatResults}
+                                            loading={false}
+                                            analysisDisabled={false}
+                                            scrollRef={resultsScrollRef}
+                                        />
                                     )}
                                 </div>
-                            ) : allFailed ? (
-                                <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4 text-red-200 bg-red-900/10 border-red-900/20">
-                                    <div className="h-16 w-16 rounded-full bg-red-900/20 flex items-center justify-center">
-                                        <Loader2 className="h-8 w-8 text-red-400" />
+                            </section>
+                        )}
+
+                        {/* Insights Section */}
+                        {activeTab === 'insights' && (
+                            <section className="flex flex-col min-h-0">
+                                {/* Header with Auto-Hide */}
+                                <motion.div
+                                    initial={false}
+                                    animate={{
+                                        height: showHeader ? "auto" : 0,
+                                        opacity: showHeader ? 1 : 0,
+                                        y: showHeader ? 0 : -16,
+                                        marginBottom: showHeader ? 24 : 0,
+                                    }}
+                                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                                    style={{ pointerEvents: showHeader ? "auto" : "none" }}
+                                    className="w-full overflow-hidden"
+                                >
+                                    <div className="bg-zinc-950/80 backdrop-blur-md px-4 py-4 space-y-6 border-b border-white/5 w-full">
+                                        {/* Board Title Row */}
+                                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                            <div>
+                                                <h1 className="text-3xl font-bold text-white">
+                                                    {board.name}
+                                                </h1>
+                                                <p className="text-sm text-muted-foreground mt-1">
+                                                    Updated {formatDistanceToNow(new Date(board.updated_at), { addSuffix: true })}
+                                                </p>
+                                            </div>
+
+                                            <div className="flex items-center gap-2">
+                                                <div className="glass-button h-9 px-4 flex items-center justify-center text-xs font-medium text-muted-foreground border rounded-full border-white/10 !cursor-default">
+                                                    {transformedItems.length} Videos
+                                                </div>
+                                                <Button variant="ghost" onClick={() => setShowDeleteDialog(true)} className="glass-button-red h-9 px-4 rounded-full text-xs flex items-center justify-center gap-2 leading-none">
+                                                    <Trash2 className="h-4 w-4" />
+                                                    Delete Board
+                                                </Button>
+                                            </div>
+                                        </div>
+
+                                        {/* Tabs & Filters Bar */}
+                                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                            {/* Glass Pill Tabs - Matching ChatTabs Style */}
+                                            <div className="min-w-0 flex justify-start overflow-hidden flex-shrink">
+                                                <div className="flex p-1.5 bg-white/5 glass-nav rounded-xl relative h-14 items-center max-w-full overflow-x-auto scrollbar-hide">
+                                                    {(['videos', 'insights'] as const).map((tab) => (
+                                                        <button
+                                                            key={tab}
+                                                            onClick={() => setActiveTab(tab)}
+                                                            className={cn(
+                                                                "relative px-5 h-11 flex items-center justify-center text-[12px] font-bold uppercase tracking-wider transition-all whitespace-nowrap rounded-lg z-10 shrink-0",
+                                                                activeTab === tab ? "text-white" : "text-gray-500 hover:text-gray-300"
+                                                            )}
+                                                        >
+                                                            {activeTab === tab && (
+                                                                <motion.div
+                                                                    layoutId="board-tab-pill"
+                                                                    className="absolute inset-0 rounded-lg glass-pill"
+                                                                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                                                />
+                                                            )}
+                                                            <span className="relative z-10 flex items-center gap-2">
+                                                                {tab === 'videos' ? (
+                                                                    <>
+                                                                        <Video className="h-3.5 w-3.5" />
+                                                                        Videos
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <Sparkles className="h-3.5 w-3.5" />
+                                                                        Insights
+                                                                    </>
+                                                                )}
+                                                                {tab === 'insights' && newVideosCount > 0 && (
+                                                                    <Badge variant="secondary" className="bg-white/10 text-white text-[10px] px-1.5 py-0 h-4 min-w-4 flex items-center justify-center">
+                                                                        {newVideosCount}
+                                                                    </Badge>
+                                                                )}
+                                                            </span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Update Button for Insights tab */}
+                                            <div className="flex-shrink-0 flex items-center gap-2">
+                                                {/* Pending videos count */}
+                                                {(isProcessingInsights || isRefreshingInsights) && totalVideos > 0 ? (
+                                                    <span className="text-xs text-muted-foreground">
+                                                        Analyzing {analyzedVideos + failedVideos}/{totalVideos}
+                                                    </span>
+                                                ) : newVideosCount > 0 ? (
+                                                    <span className="text-xs text-muted-foreground">
+                                                        {newVideosCount} pending
+                                                    </span>
+                                                ) : null}
+                                                <Button
+                                                    onClick={handleRefreshInsights}
+                                                    disabled={isRefreshingInsights || isProcessingInsights}
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="glass-button h-12 !px-5 gap-2.5 text-sm font-medium border border-white/10 hover:border-white/20"
+                                                >
+                                                    {isRefreshingInsights || isProcessingInsights ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                                                    )}
+                                                    <span className="text-white">
+                                                        {newVideosCount > 0 ? `Update (${newVideosCount})` : "Update"}
+                                                    </span>
+                                                </Button>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <h3 className="text-xl font-medium text-red-200">Analysis Failed</h3>
-                                    <p className="text-red-300/70 max-w-md">
-                                        We were unable to analyze the videos in this board. Ensure the videos are publicly accessible and try again.
-                                    </p>
-                                    <TooltipProvider>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <span tabIndex={0} className="inline-flex">
-                                                    <Button
-                                                        onClick={handleRefreshInsights}
-                                                        className="mt-4 gap-2 bg-red-900/30 hover:bg-red-900/50 text-red-100 hover:text-white border border-red-800 disabled:pointer-events-none"
-                                                        disabled={lowCredits}
-                                                    >
-                                                        <RefreshCw className="h-4 w-4" />
-                                                        Try Again
-                                                    </Button>
-                                                </span>
-                                            </TooltipTrigger>
-                                            {lowCredits && (
-                                                <TooltipContent>
-                                                    <p>Not enough credits</p>
-                                                </TooltipContent>
+                                </motion.div>
+
+                                {/* Insights Content */}
+                                <div ref={resultsScrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 px-2">
+
+                                    {transformedItems.length === 0 ? (
+                                        <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4">
+                                            <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
+                                                <FolderOpen className="h-8 w-8 text-muted-foreground" />
+                                            </div>
+                                            <h3 className="text-xl font-medium">No videos yet</h3>
+                                            <p className="text-muted-foreground">
+                                                Add videos to this board to generate insights.
+                                            </p>
+                                            <Button asChild className="mt-4 glass-button-white hover:text-black">
+                                                <Link href="/app">
+                                                    <Plus className="h-4 w-4 mr-2" />
+                                                    Go to Search
+                                                </Link>
+                                            </Button>
+                                        </BoardGlassCard>
+                                    ) : isInsightsLoading && !hasInsights ? (
+                                        <div className="grid gap-6 lg:grid-cols-2">
+                                            {[...Array(4)].map((_, i) => (
+                                                <div key={i} className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+                                                    <div className="flex items-center gap-3 mb-4">
+                                                        <div className="w-9 h-9 rounded-lg bg-white/5"></div>
+                                                        <Skeleton className="h-5 w-32" />
+                                                    </div>
+                                                    <div className="space-y-4">
+                                                        <Skeleton className="h-4 w-full" />
+                                                        <Skeleton className="h-4 w-4/5" />
+                                                        <Skeleton className="h-4 w-3/5" />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : !hasInsights ? (
+                                        <div className="min-h-[50vh] flex flex-col items-center justify-center text-center gap-8 py-20 px-4">
+                                            <div className="h-20 w-20 rounded-2xl bg-white/5 flex items-center justify-center">
+                                                {(isProcessingInsights || isRefreshingInsights) ? (
+                                                    <Loader2 className="h-10 w-10 text-white/70 animate-spin" />
+                                                ) : (
+                                                    <Sparkles className="h-10 w-10 text-white/30" />
+                                                )}
+                                            </div>
+                                            <div className="space-y-3 max-w-md">
+                                                <h3 className="text-2xl font-semibold text-white">
+                                                    {(isProcessingInsights || isRefreshingInsights)
+                                                        ? (totalVideos > 0 && (analyzedVideos + failedVideos) >= totalVideos
+                                                            ? "Generating insights..."
+                                                            : "Analyzing videos...")
+                                                        : "Ready to analyze"}
+                                                </h3>
+                                                <p className="text-base text-muted-foreground leading-relaxed">
+                                                    {isProcessingInsights && totalVideos > 0
+                                                        ? ((analyzedVideos + failedVideos) >= totalVideos
+                                                            ? "All videos analyzed. Creating your insights..."
+                                                            : `Analyzing ${analyzedVideos + failedVideos}/${totalVideos} videos...`)
+                                                        : (isRefreshingInsights
+                                                            ? "Starting analysis..."
+                                                            : "Uncover hooks, angles, and patterns across this board in 2–3 minutes.")}
+                                                </p>
+                                                {isProcessingInsights && totalVideos > 0 && (analyzedVideos + failedVideos) < totalVideos && (
+                                                    <div className="w-full max-w-xs mx-auto mt-6">
+                                                        <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                                                            <div
+                                                                className="h-full rounded-full bg-gradient-to-r from-primary/80 to-primary/60 transition-all duration-500"
+                                                                style={{ width: `${totalVideos > 0 ? ((analyzedVideos + failedVideos) / totalVideos) * 100 : 0}%` }}
+                                                            />
+                                                        </div>
+                                                        <p className="text-xs text-muted-foreground mt-2">{Math.round((totalVideos > 0 ? ((analyzedVideos + failedVideos) / totalVideos) * 100 : 0))}% complete</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {!(isProcessingInsights || isRefreshingInsights) && (
+                                                <Button
+                                                    onClick={handleRefreshInsights}
+                                                    disabled={isRefreshingInsights || isProcessingInsights}
+                                                    className="h-12 px-8 gap-2.5 glass-button-white hover:text-black text-base font-medium"
+                                                >
+                                                    <Sparkles className="h-5 w-5" />
+                                                    Generate Insights
+                                                </Button>
                                             )}
-                                        </Tooltip>
-                                    </TooltipProvider>
-                                </BoardGlassCard>
-                            ) : (
-                                <div className="relative">
-                                    {(isProcessingInsights || isRefreshingInsights || isInsightsFetching) && (
-                                        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/40 backdrop-blur-sm">
-                                            <div className="flex flex-col items-center gap-3">
-                                                <Loader2 className="h-7 w-7 text-white/80 animate-spin" />
-                                                <span className="text-xs text-white/80">
-                                                    {insightsStatus === "queued" ? "Starting insights..." : "Updating insights..."}
-                                                </span>
+                                        </div>
+                                    ) : (
+                                        <div className="relative">
+                                            {(isProcessingInsights || isRefreshingInsights || isInsightsFetching) && (
+                                                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/40 backdrop-blur-sm">
+                                                    <div className="flex flex-col items-center gap-4">
+                                                        <Loader2 className="h-8 w-8 text-white/70 animate-spin" />
+                                                        <span className="text-sm text-white/80 font-medium">
+                                                            {insightsStatus === "queued" ? "Starting..." : "Updating..."}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            <div className={cn(
+                                                "grid gap-6 lg:grid-cols-2",
+                                                (isProcessingInsights || isRefreshingInsights || isInsightsFetching) && "blur-[2px]"
+                                            )}>
+                                                {/* Left Column - Top Hooks */}
+                                                <div className="flex flex-col">
+                                                    <div className="h-full rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden shadow-lg flex flex-col">
+                                                        <div className="px-6 py-5 border-b border-white/10 bg-white/[0.03]">
+                                                            <h3 className="flex items-center gap-3 text-base font-semibold text-white">
+                                                                <div className="p-2 rounded-lg bg-amber-500/10">
+                                                                    <Sparkles className="h-5 w-5 text-amber-400" />
+                                                                </div>
+                                                                Top Hooks
+                                                            </h3>
+                                                        </div>
+                                                        <div className="p-6 space-y-4 flex-1">
+                                                            {(insights?.insights?.top_hooks || []).map((hook, index) => (
+                                                                <div
+                                                                    key={`${hook}-${index}`}
+                                                                    className="rounded-xl border border-white/10 bg-white/[0.02] px-5 py-4 text-base text-white/90 leading-relaxed"
+                                                                >
+                                                                    "{hook}"
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Right Column - Analytics & Angles */}
+                                                <div className="flex flex-col gap-6">
+                                                    {/* Board Analytics */}
+                                                    <div className="rounded-2xl border border-white/10 bg-black/40 overflow-hidden shadow-2xl">
+                                                        <div className="px-6 py-5 border-b border-white/10 bg-white/[0.02] flex items-center justify-between">
+                                                            <h3 className="flex items-center gap-3 text-base font-semibold text-white">
+                                                                <div className="p-2 rounded-lg bg-blue-500/10">
+                                                                    <BarChart3 className="h-5 w-5 text-blue-400" />
+                                                                </div>
+                                                                Board Analytics
+                                                            </h3>
+                                                        </div>
+                                                        {analyticsStats ? (
+                                                            <div className="p-6">
+                                                                <div className="flex flex-col gap-6">
+                                                                    {/* Metrics Grid */}
+                                                                    <div className="grid grid-cols-2 gap-px bg-white/10 border border-white/10 rounded-2xl overflow-hidden shrink-0">
+                                                                        <div className="bg-zinc-950/80 p-6 flex flex-col items-center justify-center text-center hover:bg-zinc-900/80 transition-colors">
+                                                                            <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 font-bold mb-3">Avg Views</p>
+                                                                            <p className="text-3xl font-medium tracking-tight text-white">{formatNumber(analyticsStats.avgViews)}</p>
+                                                                        </div>
+                                                                        <div className="bg-zinc-950/80 p-6 flex flex-col items-center justify-center text-center hover:bg-zinc-900/80 transition-colors">
+                                                                            <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 font-bold mb-3">Avg Likes</p>
+                                                                            <p className="text-3xl font-medium tracking-tight text-white">{formatNumber(analyticsStats.avgLikes)}</p>
+                                                                        </div>
+                                                                        <div className="bg-zinc-950/80 p-6 flex flex-col items-center justify-center text-center hover:bg-zinc-900/80 transition-colors">
+                                                                            <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 font-bold mb-3">Avg Comments</p>
+                                                                            <p className="text-3xl font-medium tracking-tight text-white">{formatNumber(analyticsStats.avgComments)}</p>
+                                                                        </div>
+                                                                        <div className="bg-zinc-950/80 p-6 flex flex-col items-center justify-center text-center hover:bg-zinc-900/80 transition-colors">
+                                                                            <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 font-bold mb-3">Total Videos</p>
+                                                                            <p className="text-3xl font-medium tracking-tight text-white">{analyticsStats.totalCount}</p>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* Top Performers */}
+                                                                    <div className="grid grid-cols-2 gap-4">
+                                                                        {/* Highest Viewed */}
+                                                                        {analyticsStats.highestViewedItem ? (
+                                                                            <div className="group relative aspect-[3/4] rounded-2xl overflow-hidden border border-white/10 bg-zinc-900">
+                                                                                <img
+                                                                                    src={(analyticsStats.highestViewedItem as FlatMediaItem).thumbnail_url}
+                                                                                    alt="Highest Viewed"
+                                                                                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                                                                                />
+                                                                                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-90" />
+                                                                                <div className="absolute bottom-0 inset-x-0 p-4 flex flex-col items-center text-center">
+                                                                                    <div className="mb-2 p-1.5 rounded-full bg-blue-500/20 backdrop-blur-md border border-blue-500/20">
+                                                                                        <Eye className="h-3.5 w-3.5 text-blue-400" />
+                                                                                    </div>
+                                                                                    <p className="text-[9px] uppercase tracking-[0.2em] text-zinc-400 font-bold mb-1">Views</p>
+                                                                                    <p className="text-xl font-medium text-white mb-1">{formatNumber(analyticsStats.highestViewCount)}</p>
+                                                                                </div>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="aspect-[3/4] rounded-2xl border border-white/10 bg-white/[0.02] flex items-center justify-center">
+                                                                                <p className="text-xs text-muted-foreground">No Data</p>
+                                                                            </div>
+                                                                        )}
+
+                                                                        {/* Highest Liked */}
+                                                                        {analyticsStats.highestLikedItem ? (
+                                                                            <div className="group relative aspect-[3/4] rounded-2xl overflow-hidden border border-white/10 bg-zinc-900">
+                                                                                <img
+                                                                                    src={(analyticsStats.highestLikedItem as FlatMediaItem).thumbnail_url}
+                                                                                    alt="Highest Liked"
+                                                                                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                                                                                />
+                                                                                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-90" />
+                                                                                <div className="absolute bottom-0 inset-x-0 p-4 flex flex-col items-center text-center">
+                                                                                    <div className="mb-2 p-1.5 rounded-full bg-red-500/20 backdrop-blur-md border border-red-500/20">
+                                                                                        <Heart className="h-3.5 w-3.5 text-red-400" />
+                                                                                    </div>
+                                                                                    <p className="text-[9px] uppercase tracking-[0.2em] text-zinc-400 font-bold mb-1">Likes</p>
+                                                                                    <p className="text-xl font-medium text-white mb-1">{formatNumber(analyticsStats.highestLikeCount)}</p>
+                                                                                </div>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="aspect-[3/4] rounded-2xl border border-white/10 bg-white/[0.02] flex items-center justify-center">
+                                                                                <p className="text-xs text-muted-foreground">No Data</p>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="p-12 text-center text-muted-foreground">
+                                                                <p>No analytics data available</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Common Angles */}
+                                                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden shadow-lg">
+                                                        <div className="px-6 py-5 border-b border-white/10 bg-white/[0.03]">
+                                                            <h3 className="flex items-center gap-3 text-base font-semibold text-white">
+                                                                <div className="p-2 rounded-lg bg-emerald-500/10">
+                                                                    <Target className="h-5 w-5 text-emerald-400" />
+                                                                </div>
+                                                                Common Angles
+                                                            </h3>
+                                                        </div>
+                                                        <div className="p-6 space-y-5">
+                                                            {(insights?.insights?.common_angles || []).map((angle, index) => (
+                                                                <div key={`${angle.label}-${index}`} className="space-y-2">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <span className="text-sm font-medium text-white/90">{angle.label}</span>
+                                                                        <span className="text-sm font-semibold text-emerald-400">{angle.percentage}%</span>
+                                                                    </div>
+                                                                    <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                                                                        <div
+                                                                            className="h-full rounded-full bg-gradient-to-r from-emerald-500/80 to-emerald-400/80 transition-all duration-500"
+                                                                            style={{ width: `${Math.min(Math.max(angle.percentage, 0), 100)}%` }}
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Creative Brief */}
+                                                <div className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden lg:col-span-2 shadow-lg">
+                                                    <div className="px-6 py-5 border-b border-white/10 bg-white/[0.03]">
+                                                        <h3 className="flex items-center gap-3 text-base font-semibold text-white">
+                                                            <div className="p-2 rounded-lg bg-zinc-500/10">
+                                                                <FileText className="h-5 w-5 text-zinc-300" />
+                                                            </div>
+                                                            Creative Brief
+                                                        </h3>
+                                                    </div>
+                                                    <div className="p-6 grid gap-6 sm:grid-cols-3">
+                                                        <div className="space-y-3">
+                                                            <p className="text-xs uppercase tracking-widest text-muted-foreground font-semibold">Target Audience</p>
+                                                            <p className="text-base leading-relaxed text-white/80">{insights?.insights?.creative_brief?.target_audience}</p>
+                                                        </div>
+                                                        <div className="space-y-3">
+                                                            <p className="text-xs uppercase tracking-widest text-muted-foreground font-semibold">Key Message</p>
+                                                            <p className="text-base leading-relaxed text-white/80">{insights?.insights?.creative_brief?.key_message}</p>
+                                                        </div>
+                                                        <div className="space-y-3">
+                                                            <p className="text-xs uppercase tracking-widest text-muted-foreground font-semibold">Format</p>
+                                                            <p className="text-base leading-relaxed text-white/80">{insights?.insights?.creative_brief?.recommended_format}</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Script Ideas */}
+                                                <div className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden shadow-lg">
+                                                    <div className="px-6 py-5 border-b border-white/10 bg-white/[0.03]">
+                                                        <h3 className="flex items-center gap-3 text-base font-semibold text-white">
+                                                            <div className="p-2 rounded-lg bg-pink-500/10">
+                                                                <PenLine className="h-5 w-5 text-pink-400" />
+                                                            </div>
+                                                            Script Ideas
+                                                        </h3>
+                                                    </div>
+                                                    <div className="p-6 space-y-4">
+                                                        {(insights?.insights?.script_ideas || []).map((idea, index) => (
+                                                            <div
+                                                                key={`${idea}-${index}`}
+                                                                className="rounded-xl border border-white/10 bg-white/[0.02] px-5 py-4 text-base text-white/90 leading-relaxed"
+                                                            >
+                                                                <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-pink-500/20 text-pink-300 font-mono font-bold text-sm mr-4">{String(index + 1).padStart(2, '0')}</span>
+                                                                {idea}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                {/* Objections & CTAs */}
+                                                <div className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden shadow-lg">
+                                                    <div className="px-6 py-5 border-b border-white/10 bg-white/[0.03]">
+                                                        <h3 className="flex items-center gap-3 text-base font-semibold text-white">
+                                                            <div className="p-2 rounded-lg bg-orange-500/10">
+                                                                <MessageCircle className="h-5 w-5 text-orange-400" />
+                                                            </div>
+                                                            Objections & CTAs
+                                                        </h3>
+                                                    </div>
+                                                    <div className="p-6 space-y-6">
+                                                        <div className="space-y-3">
+                                                            <p className="text-xs uppercase tracking-widest text-muted-foreground font-semibold">Common Objections</p>
+                                                            <div className="flex flex-wrap gap-3">
+                                                                {(insights?.insights?.objections || []).map((objection, index) => (
+                                                                    <span key={`${objection}-${index}`} className="rounded-full border border-white/10 bg-white/[0.02] px-4 py-2 text-sm text-white/80">
+                                                                        {objection}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                        <div className="space-y-3">
+                                                            <p className="text-xs uppercase tracking-widest text-muted-foreground font-semibold">Effective CTAs</p>
+                                                            <div className="flex flex-wrap gap-3">
+                                                                {(insights?.insights?.ctas || []).map((cta, index) => (
+                                                                    <span key={`${cta}-${index}`} className="rounded-full border border-orange-300/20 bg-orange-300/10 px-4 py-2 text-sm text-orange-100">
+                                                                        {cta}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
-                                    <div className={cn(
-                                        "grid gap-4 lg:grid-cols-2",
-                                        (isProcessingInsights || isRefreshingInsights || isInsightsFetching) && "blur-sm"
-                                    )}>
-                                        <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
-                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                                <CardTitle className="flex items-center gap-2 text-white">
-                                                    <Sparkles className="h-4 w-4 text-amber-300" />
-                                                    Top Hooks
-                                                </CardTitle>
-                                            </CardHeader>
-                                            <CardContent className="space-y-3 pt-4 pb-6">
-                                                {(insights?.insights?.top_hooks || []).map((hook, index) => (
-                                                    <div
-                                                        key={`${hook}-${index}`}
-                                                        className="rounded-xl border border-white/10 glass bg-white/5 px-4 py-3 text-sm text-white shadow-inner"
-                                                    >
-                                                        "{hook}"
-                                                    </div>
-                                                ))}
-                                            </CardContent>
-                                        </Card>
-
-                                        <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
-                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                                <CardTitle className="flex items-center gap-2 text-white">
-                                                    <Target className="h-4 w-4 text-emerald-300" />
-                                                    Common Angles
-                                                </CardTitle>
-                                            </CardHeader>
-                                            <CardContent className="space-y-3 pt-4 pb-6">
-                                                {(insights?.insights?.common_angles || []).map((angle, index) => (
-                                                    <div key={`${angle.label}-${index}`} className="space-y-2">
-                                                        <div className="flex items-center justify-between text-sm text-white">
-                                                            <span>{angle.label}</span>
-                                                            <span className="text-muted-foreground text-xs font-mono">{angle.percentage}%</span>
-                                                        </div>
-                                                        <div className="h-1.5 rounded-full glass bg-white/5">
-                                                            <div
-                                                                className="h-full rounded-full bg-emerald-400/70 shadow-[0_0_10px_rgba(52,211,153,0.3)]"
-                                                                style={{ width: `${Math.min(Math.max(angle.percentage, 0), 100)}%` }}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </CardContent>
-                                        </Card>
-
-                                        <Card className="glass border-white/10 overflow-hidden lg:col-span-2 gap-0 py-0">
-                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                                <CardTitle className="flex items-center gap-2 text-white">
-                                                    <FileText className="h-4 w-4 text-zinc-300" />
-                                                    Creative Brief
-                                                </CardTitle>
-                                            </CardHeader>
-                                            <CardContent className="grid gap-6 lg:grid-cols-3 text-sm text-white/90 pt-4 pb-6">
-                                                <div className="space-y-2">
-                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Target Audience</p>
-                                                    <p className="leading-relaxed">{insights?.insights?.creative_brief?.target_audience}</p>
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Key Message</p>
-                                                    <p className="leading-relaxed">{insights?.insights?.creative_brief?.key_message}</p>
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Recommended Format</p>
-                                                    <p className="leading-relaxed">{insights?.insights?.creative_brief?.recommended_format}</p>
-                                                </div>
-                                            </CardContent>
-                                        </Card>
-
-                                        <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
-                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                                <CardTitle className="flex items-center gap-2 text-white">
-                                                    <PenLine className="h-4 w-4 text-pink-300" />
-                                                    Script Ideas
-                                                </CardTitle>
-                                            </CardHeader>
-                                            <CardContent className="space-y-3 pt-4 pb-6">
-                                                {(insights?.insights?.script_ideas || []).map((idea, index) => (
-                                                    <div
-                                                        key={`${idea}-${index}`}
-                                                        className="rounded-xl border border-dashed border-white/10 glass bg-white/5 px-4 py-3 text-sm text-white"
-                                                    >
-                                                        <span className="text-pink-300/50 font-mono mr-2">{String(index + 1).padStart(2, '0')}</span>
-                                                        {idea}
-                                                    </div>
-                                                ))}
-                                            </CardContent>
-                                        </Card>
-
-                                        <Card className="glass border-white/10 overflow-hidden gap-0 py-0">
-                                            <CardHeader className="flex-row items-center justify-between space-y-0 gap-0 border-b border-white/5 bg-white/5 py-4">
-                                                <CardTitle className="flex items-center gap-2 text-white">
-                                                    <MessageCircle className="h-4 w-4 text-orange-300" />
-                                                    Objections & CTAs
-                                                </CardTitle>
-                                            </CardHeader>
-                                            <CardContent className="space-y-6 text-sm text-white/90 pt-4 pb-6">
-                                                <div className="space-y-3">
-                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Common Objections</p>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {(insights?.insights?.objections || []).map((objection, index) => (
-                                                            <div key={`${objection}-${index}`} className="rounded-full glass border-white/10 px-3 py-1.5 text-xs">
-                                                                {objection}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                                <div className="space-y-3">
-                                                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Effective CTAs</p>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {(insights?.insights?.ctas || []).map((cta, index) => (
-                                                            <div key={`${cta}-${index}`} className="rounded-full glass bg-white/5 border-orange-300/20 px-3 py-1.5 text-xs text-orange-100">
-                                                                {cta}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            </CardContent>
-                                        </Card>
-                                    </div>
                                 </div>
-                            )}
-                        </div>
-                    )}
+                            </section>
+                        )}
+                    </div>
                 </div>
+
+                {/* Selection Bar */}
+                <SelectionBar
+                    itemsById={itemsById}
+                    showRemoveFromBoard
+                    onRemoveSelected={() => setShowRemoveDialog(true)}
+                    removeDisabled={isRemovingFromBoard || selectedCount === 0}
+                    disabledBoardIds={[boardId]}
+                />
             </div>
 
             {/* Delete Board Confirmation Dialog */}
@@ -702,14 +974,6 @@ export default function BoardDetailPage() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
-
-            <SelectionBar
-                itemsById={itemsById}
-                showRemoveFromBoard
-                onRemoveSelected={() => setShowRemoveDialog(true)}
-                removeDisabled={isRemovingFromBoard || selectedCount === 0}
-                disabledBoardIds={[boardId]}
-            />
-        </div >
+        </div>
     );
 }
