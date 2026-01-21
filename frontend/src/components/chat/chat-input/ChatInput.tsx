@@ -179,14 +179,20 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         openSidebar();
     }, [queuedMediaChips, addMediaChips, clearQueuedMediaChips, openSidebar]);
 
+    // Ref to track if we're currently sending from pending (prevents abort)
+    const sendingFromPendingRef = useRef(false);
+
     useEffect(() => {
         setImageChips([]);
         // Abort any in-progress stream when switching chats
-        if (abortControllerRef.current) {
+        // BUT skip if we're mid-send from pending message
+        if (abortControllerRef.current && !sendingFromPendingRef.current) {
             abortControllerRef.current.abort();
             abortControllerRef.current = null;
         }
-        resetStreaming();
+        if (!sendingFromPendingRef.current) {
+            resetStreaming();
+        }
     }, [activeChatId, resetStreaming]);
 
     // Auto-send pending message from dashboard navigation
@@ -199,12 +205,17 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         if (pendingSentRef.current === pendingFirstMessage.chatId) return;
         pendingSentRef.current = pendingFirstMessage.chatId;
 
+        // Mark as sending from pending BEFORE clearing and sending
+        sendingFromPendingRef.current = true;
+
         // Clear pending message and send
         const messageToSend = pendingFirstMessage.message;
         setPendingFirstMessage(null);
 
         abortControllerRef.current = new AbortController();
-        sendMessage(messageToSend, abortControllerRef.current, activeChatId);
+        sendMessage(messageToSend, abortControllerRef.current, activeChatId).finally(() => {
+            sendingFromPendingRef.current = false;
+        });
     }, [pendingFirstMessage, activeChatId, sendMessage, setPendingFirstMessage]);
 
     const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -373,7 +384,8 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
 
     useEffect(() => {
         return () => {
-            if (abortControllerRef.current) {
+            // Don't abort if we're mid-send from pending (StrictMode remount issue)
+            if (abortControllerRef.current && !sendingFromPendingRef.current) {
                 abortControllerRef.current.abort();
             }
         };

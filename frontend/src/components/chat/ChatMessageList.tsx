@@ -35,16 +35,23 @@ const CHIP_LABEL_LIMIT = 20;
 
 function ThinkingTrigger({ tools }: { tools: ToolCallInfo[] }) {
     // Count searches by parsing result.search_ids (one search tool can trigger multiple searches)
-    const searchCount = tools.reduce((acc, t) => {
+    // Count searches by parsing result.search_ids (one search tool can trigger multiple searches)
+    // We use a Set to avoid double-counting if the tool state has duplicates (e.g. streaming + history overlap)
+    const allSearchIds = new Set<string>();
+
+    tools.forEach(t => {
         const name = t.name.toLowerCase();
         if (name.includes('search') && !name.includes('get_search_items') && t.result) {
             try {
                 const result = JSON.parse(t.result);
-                return acc + (result.search_ids?.length || 0);
-            } catch { return acc; }
+                if (result.search_ids && Array.isArray(result.search_ids)) {
+                    result.search_ids.forEach((id: string) => allSearchIds.add(id));
+                }
+            } catch { /* ignore parse errors */ }
         }
-        return acc;
-    }, 0);
+    });
+
+    const searchCount = allSearchIds.size;
     const analysisCount = tools.filter(t => t.name.toLowerCase().includes('video_analysis')).length;
     const credits = searchCount + (analysisCount * 2);
 
