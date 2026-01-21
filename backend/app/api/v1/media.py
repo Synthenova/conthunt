@@ -164,7 +164,10 @@ async def proxy_media(url: str):
         raise HTTPException(status_code=400, detail="Missing URL")
         
     # Security: Restrict to known domains to prevent open relay/SSRF
-    allowed_domains = ["cdninstagram.com", "fbcdn.net", "instagram.com", "facebook.com"]
+    allowed_domains = [
+        "cdninstagram.com", "fbcdn.net", "instagram.com", "facebook.com",
+        "tiktokcdn.com", "tiktokcdn-us.com", "tiktokv.us"
+    ]
     if not any(domain in url for domain in allowed_domains):
         # Fallback: simple check for others or block? 
         # For now, let's be strict as requested "insta only"

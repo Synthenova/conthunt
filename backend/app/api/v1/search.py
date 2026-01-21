@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Header
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
+from app.core.redis_client import get_app_redis
 from app.core.telemetry import trace_span
 from app.db import get_db_connection, set_rls_user, queries
 
@@ -29,7 +30,7 @@ from app.platforms import (
 from app.platforms.registry import normalize_platform_slug
 from app.storage import upload_raw_json_gz
 from app.media import download_assets_batch
-from app.schemas import SearchRequest
+from app.schemas import SearchRequest, LoadMoreRequest
 from app.services.cloud_tasks import cloud_tasks
 from app.realtime.stream_hub import stream_id_gt
 
@@ -156,7 +157,7 @@ async def search_worker(
     user_uuid: UUID,
     query: str,
     inputs: dict,
-    redis_client: redis.Redis | None = None,
+    redis_client: redis.Redis,
 ):
     """
     Background worker that:
@@ -167,15 +168,6 @@ async def search_worker(
     """
     settings = get_settings()
     r = redis_client
-    owns_client = False
-    if r is None:
-        r = redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            socket_keepalive=True,
-            health_check_interval=30,
-        )
-        owns_client = True
     stream_key = f"search:{search_id}:stream"
     
     collected_results: List[PlatformCallResult] = []
@@ -386,9 +378,6 @@ async def search_worker(
             await r.expire(stream_key, 300)
         except Exception:
             pass
-    finally:
-        if owns_client:
-            await r.close()
 
 
 @trace_span("search.load_more_worker")
@@ -397,7 +386,7 @@ async def load_more_worker(
     user_uuid: UUID,
     query: str,
     platform_cursors: dict,
-    redis_client: redis.Redis | None = None,
+    redis_client: redis.Redis,
 ):
     """
     Background worker for "load more" pagination.
@@ -411,15 +400,6 @@ async def load_more_worker(
     """
     settings = get_settings()
     r = redis_client
-    owns_client = False
-    if r is None:
-        r = redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            socket_keepalive=True,
-            health_check_interval=30,
-        )
-        owns_client = True
     stream_key = f"search:{search_id}:more:stream"
     
     # Clear old stream messages from previous load more requests
@@ -615,31 +595,17 @@ async def load_more_worker(
             await r.expire(stream_key, 300)
         except Exception:
             pass
-    finally:
-        if owns_client:
-            await r.close()
 
 
 # --- Redis Dependency ---
 
 async def get_redis(request: Request):
     """Get Redis client instance."""
-    client = getattr(request.app.state, "redis", None)
-    if client is not None:
-        yield client
-        return
-
-    settings = get_settings()
-    client = redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=True,
-        socket_keepalive=True,
-        health_check_interval=30,
-    )
     try:
-        yield client
-    finally:
-        await client.close()
+        client = get_app_redis(request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    yield client
 
 
 # --- Endpoints ---
@@ -676,11 +642,12 @@ async def create_search(
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
         result = await conn.execute(
-            text("SELECT current_period_start FROM users WHERE id = :id"),
+            text("SELECT current_period_start, timezone FROM users WHERE id = :id"),
             {"id": user_uuid}
         )
         row = result.fetchone()
         period_start = row[0] if row else None
+        timezone = row[1] if row and row[1] else "UTC"
 
         credit_result = await credit_tracker.check(
             user_id=user_uuid,
@@ -701,6 +668,8 @@ async def create_search(
             mode="live",
             status="running",
         )
+        from app.db.queries import streaks as streak_queries
+        await streak_queries.record_activity(conn, user_uuid, "search", timezone=timezone)
         await conn.commit()
 
     # Spawn background worker via Cloud Tasks
@@ -768,6 +737,10 @@ async def stream_search(
 
     async def event_generator():
         if hub is None:
+            logger.warning(
+                "Stream hub missing; SSE will use per-connection Redis XREAD. search_id=%s",
+                search_id,
+            )
             last_id = "0-0"
             try:
                 while True:
@@ -849,6 +822,7 @@ async def stream_search(
 async def load_more(
     search_id: UUID,
     user: dict = Depends(get_current_user),
+    payload: LoadMoreRequest | None = None,
 ):
     """
     Load more results for an existing search using pagination cursors.
@@ -874,14 +848,22 @@ async def load_more(
         # Filter out platforms without cursors and Instagram (no pagination support)
         platform_cursors = {}
         original_inputs = search_data.get("inputs", {})
+        input_overrides = (payload.inputs if payload and payload.inputs else {}) or {}
         
         for platform, cursor in cursors.items():
             if platform == "instagram_reels":
+                if platform in input_overrides or platform in original_inputs:
+                    params = {**original_inputs.get(platform, {}), **input_overrides.get(platform, {})}
+                    platform_cursors[platform] = params
                 continue
             if cursor and platform in original_inputs:
                 # Merge original params with cursor
-                params = {**original_inputs[platform], **cursor}
+                params = {**original_inputs[platform], **input_overrides.get(platform, {}), **cursor}
                 platform_cursors[platform] = params
+
+        if "instagram_reels" not in platform_cursors and ("instagram_reels" in input_overrides or "instagram_reels" in original_inputs):
+            params = {**original_inputs.get("instagram_reels", {}), **input_overrides.get("instagram_reels", {})}
+            platform_cursors["instagram_reels"] = params
     
         if not platform_cursors:
             raise HTTPException(
@@ -894,11 +876,12 @@ async def load_more(
         from sqlalchemy import text
         
         result = await conn.execute(
-            text("SELECT current_period_start FROM users WHERE id = :id"),
+            text("SELECT current_period_start, timezone FROM users WHERE id = :id"),
             {"id": user_uuid}
         )
         row = result.fetchone()
         period_start = row[0] if row else None
+        timezone = row[1] if row and row[1] else "UTC"
 
         credit_result = await credit_tracker.check(
             user_id=user_uuid,
@@ -911,6 +894,8 @@ async def load_more(
         )
         if not credit_result["allowed"]:
             raise HTTPException(status_code=402, detail="Credit limit exceeded")
+        from app.db.queries import streaks as streak_queries
+        await streak_queries.record_activity(conn, user_uuid, "search", timezone=timezone)
         await conn.commit()
     
     # Spawn background worker via Cloud Tasks

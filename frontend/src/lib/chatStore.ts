@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { ClientFilters } from '@/lib/clientFilters';
 
 export interface ToolCallInfo {
     name: string;
@@ -25,6 +26,14 @@ export interface Chat {
     context_id?: string | null;
 }
 
+export interface ChatTagPayload {
+    type: 'board' | 'search' | 'media';
+    id: string;
+    label?: string | null;
+    source?: 'user' | 'agent';
+    sort_order?: number | null;
+}
+
 export interface MediaChipInput {
     id: string;
     media_asset_id?: string | null;
@@ -33,6 +42,7 @@ export interface MediaChipInput {
     creator_handle?: string;
     content_type?: string;
     primary_text?: string;
+    thumbnail_url?: string;
 }
 
 interface ChatState {
@@ -52,8 +62,13 @@ interface ChatState {
     // Active chat
     activeChatId: string | null;
     setActiveChatId: (id: string | null) => void;
-    resetToNewChat: () => void;
+    resetToNewChat: (options?: { pendingTags?: ChatTagPayload[] }) => void;
     isNewChatPending: boolean;
+    pendingNewChatTags: ChatTagPayload[];
+
+    // Pending first message (for dashboard -> chat navigation)
+    pendingFirstMessage: { chatId: string; message: string } | null;
+    setPendingFirstMessage: (pending: { chatId: string; message: string } | null) => void;
 
     // Messages for active chat
     messages: ChatMessage[];
@@ -97,6 +112,10 @@ interface ChatState {
     canvasActiveSearchId: string | null;
     setCanvasResultsMap: (resultsMap: Record<string, any[]>) => void;
     setCanvasActiveSearchId: (searchId: string | null) => void;
+
+    // Client filters (for chat canvas)
+    clientFilters: ClientFilters;
+    setClientFilters: (filters: ClientFilters) => void;
 
     // Board items for media chip scroll-to-video on board pages
     canvasBoardItems: any[];
@@ -147,16 +166,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
             canvasSearchIds: new Set(),
             canvasSearchKeywords: {},
             isNewChatPending: false,
+            pendingNewChatTags: [],
         };
     }),
-    resetToNewChat: () => set({
+    resetToNewChat: (options) => set({
         activeChatId: null,
         messages: [],
         showHistory: false,
         canvasSearchIds: new Set(),
         canvasSearchKeywords: {},
         isNewChatPending: true,
+        pendingNewChatTags: options?.pendingTags || [],
     }),
+    pendingNewChatTags: [],
+
+    // Pending first message
+    pendingFirstMessage: null,
+    setPendingFirstMessage: (pending) => set({ pendingFirstMessage: pending }),
 
     // Messages
     messages: [],
@@ -284,6 +310,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({ canvasActiveSearchId: searchId });
         }
     },
+
+    clientFilters: { sort: "default", dateFilter: "all", platforms: [] },
+    setClientFilters: (filters) => set({ clientFilters: filters }),
 
     // Board items for media chip scroll-to-video on board pages
     canvasBoardItems: [],

@@ -196,33 +196,67 @@ export function VirtualizedResultsGrid({
             const rowIndex = Math.floor(index / columns);
             console.log('[VirtualizedResultsGrid] Found item at index:', index, 'rowIndex:', rowIndex);
 
-            // 3. Scroll to that row
+            // 3. Scroll to that row (smooth animation)
             virtualizer.scrollToIndex(rowIndex, { align: 'center', behavior: 'smooth' });
 
-            // 4. Wait for render and then try to highlight DOM element
-            // We need to wait enough time for the virtualizer to render the new rows
-            // and for React to commit the DOM changes.
-            return new Promise((resolve) => {
-                // Initial short delay to allow scroll start
-                setTimeout(() => {
-                    // Check periodically if element appeared
-                    let attempts = 0;
-                    const maxAttempts = 10;
+            // 4. Wait for scroll animation to complete by detecting scroll position stability
+            // Note: virtualizer.isScrolling is unreliable for programmatic scrolls, so we detect
+            // scroll completion by waiting until scrollTop stops changing for 100ms
+            const waitForScrollComplete = async (): Promise<boolean> => {
+                const scrollEl = scrollRef.current;
+                if (!scrollEl) return false;
 
-                    const checkInterval = setInterval(() => {
-                        attempts++;
-                        const success = scrollToAndHighlight(itemId);
-                        if (success) {
-                            clearInterval(checkInterval);
-                            resolve(true);
-                        } else if (attempts >= maxAttempts) {
-                            clearInterval(checkInterval);
-                            console.log('[VirtualizedResultsGrid] Failed to find DOM element after scrolling');
-                            resolve(false);
+                const maxWaitMs = 3000; // Max 3 seconds for very long scrolls
+                const stabilityThresholdMs = 100; // Consider scroll "done" after 100ms of no movement
+                let lastScrollTop = scrollEl.scrollTop;
+                let stableTime = 0;
+                let elapsed = 0;
+                const pollIntervalMs = 20;
+
+                // Small initial delay to let scroll animation start
+                await new Promise(r => setTimeout(r, 50));
+
+                while (elapsed < maxWaitMs) {
+                    const currentScrollTop = scrollEl.scrollTop;
+
+                    if (currentScrollTop === lastScrollTop) {
+                        stableTime += pollIntervalMs;
+                        if (stableTime >= stabilityThresholdMs) {
+                            console.log('[VirtualizedResultsGrid] Scroll completed (stable) after', elapsed, 'ms');
+                            return true;
                         }
-                    }, 50);
-                }, 100);
-            });
+                    } else {
+                        stableTime = 0; // Reset stability counter on movement
+                        lastScrollTop = currentScrollTop;
+                    }
+
+                    await new Promise(r => setTimeout(r, pollIntervalMs));
+                    elapsed += pollIntervalMs;
+                }
+                console.log('[VirtualizedResultsGrid] Scroll timed out after 3s');
+                return false;
+            };
+
+            await waitForScrollComplete();
+
+            // 5. Small buffer for React to render the new rows after scroll settles
+            await new Promise(r => setTimeout(r, 100));
+
+            // 6. Poll for DOM element (now with confidence it should exist)
+            let attempts = 0;
+            const maxAttempts = 10; // Increased attempts
+
+            while (attempts < maxAttempts) {
+                const success = scrollToAndHighlight(itemId);
+                if (success) {
+                    return true;
+                }
+                attempts++;
+                await new Promise(r => setTimeout(r, 50));
+            }
+
+            console.log('[VirtualizedResultsGrid] Failed to find DOM element after scrolling');
+            return false;
         };
 
         setCanvasScrollToItem(handleScrollToItem);

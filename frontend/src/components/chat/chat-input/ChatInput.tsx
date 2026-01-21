@@ -30,14 +30,18 @@ import type {
 } from './types';
 import { MENTION_RE, MEDIA_DRAG_TYPE, CHIP_TITLE_LIMIT, MODEL_OPTIONS } from './constants';
 import { truncateText, formatChipFence } from './utils';
+import { mapClientFiltersToPlatformInputs } from '@/lib/clientFilters';
 import { ChipList } from './ChipList';
 import { ModelSelector } from './ModelSelector';
 import { ActionButtons } from './ActionButtons';
+import { ImageChipList } from './ImageChipList';
+import { GlassPanel } from '@/components/ui/glass-card';
 
 export function ChatInput({ context, isDragActive }: ChatInputProps) {
     const [message, setMessage] = useState('');
     const [chips, setChips] = useState<ContextChip[]>([]);
-    const [imageChips, setImageChips] = useState<ImageChip[]>([]);
+    // Floating chips (Images + Media)
+    const [imageChips, setImageChips] = useState<(ImageChip | MediaChip)[]>([]);
     const [mentionQuery, setMentionQuery] = useState<string | null>(null);
     const [isDragOver, setIsDragOver] = useState(false);
     const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].value);
@@ -56,6 +60,11 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         queuedMediaChips,
         clearQueuedMediaChips,
         openSidebar,
+        clientFilters,
+        isNewChatPending,
+        pendingNewChatTags,
+        pendingFirstMessage,
+        setPendingFirstMessage,
     } = useChatStore();
     const { sendMessage } = useSendMessage();
     const { uploadChatImage } = useUploadChatImage();
@@ -122,31 +131,37 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                     creator_handle: item.creator_handle,
                     content_type: item.content_type,
                     primary_text: item.primary_text,
+                    thumbnail_url: (item as any).thumbnail_url || (item as any).poster_url || (item.media_asset_id ? `https://img.youtube.com/vi/${item.media_asset_id}/mqdefault.jpg` : undefined)
                 };
             });
 
         if (!nextChips.length) return;
 
-        setChips((prev) => {
-            const existingIds = new Set(
-                prev.filter((chip) => chip.type === 'media').map((chip) => chip.id)
-            );
-            const merged = nextChips.filter((chip) => !existingIds.has(chip.id));
-            return merged.length ? [...prev, ...merged] : prev;
+        // Add to imageChips (as floating media) instead of context chips
+        setImageChips((prev) => {
+            // Note: imageChips is currently typed as ImageChip[], we need to cast or rely on updated typing if we changed state definition.
+            // Wait, we need to update the state type for imageChips first.
+            // Let's assume we modify the state definition in the next chunk.
+
+            // Actually, let's treat media chips as part of the 'imageChips' state which we will rename or simply use as 'floatingChips' conceptually.
+            // But we have a typing conflict if we don't update state type.
+            const existingIds = new Set(prev.map(c => c.id));
+            const distinct = nextChips.filter(c => !existingIds.has(c.id));
+            return [...prev, ...distinct] as any[];
         });
     }, []);
 
     useEffect(() => {
         setChips((prev) => {
             const unlocked = prev.filter((chip) => !chip.locked);
-            if (!context?.id || !contextLabel) {
+            if (!context?.id) {
                 return unlocked;
             }
 
             const baseChip: ContextChip = {
                 type: context.type,
                 id: context.id,
-                label: contextLabel,
+                label: contextLabel || context.id, // Fallback to ID if label not available
                 locked: true,
             };
 
@@ -164,9 +179,44 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         openSidebar();
     }, [queuedMediaChips, addMediaChips, clearQueuedMediaChips, openSidebar]);
 
+    // Ref to track if we're currently sending from pending (prevents abort)
+    const sendingFromPendingRef = useRef(false);
+
     useEffect(() => {
         setImageChips([]);
-    }, [activeChatId]);
+        // Abort any in-progress stream when switching chats
+        // BUT skip if we're mid-send from pending message
+        if (abortControllerRef.current && !sendingFromPendingRef.current) {
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+        }
+        if (!sendingFromPendingRef.current) {
+            resetStreaming();
+        }
+    }, [activeChatId, resetStreaming]);
+
+    // Auto-send pending message from dashboard navigation
+    const pendingSentRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!pendingFirstMessage || !activeChatId) return;
+        if (pendingFirstMessage.chatId !== activeChatId) return;
+
+        // Prevent double-send (React StrictMode runs effects twice)
+        if (pendingSentRef.current === pendingFirstMessage.chatId) return;
+        pendingSentRef.current = pendingFirstMessage.chatId;
+
+        // Mark as sending from pending BEFORE clearing and sending
+        sendingFromPendingRef.current = true;
+
+        // Clear pending message and send
+        const messageToSend = pendingFirstMessage.message;
+        setPendingFirstMessage(null);
+
+        abortControllerRef.current = new AbortController();
+        sendMessage(messageToSend, abortControllerRef.current, activeChatId).finally(() => {
+            sendingFromPendingRef.current = false;
+        });
+    }, [pendingFirstMessage, activeChatId, sendMessage, setPendingFirstMessage]);
 
     const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         setIsDragOver(false);
@@ -197,8 +247,8 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         setIsDragOver(false);
     }, []);
 
-    const handleRemoveImageChip = useCallback((chipId: string) => {
-        setImageChips((prev) => prev.filter((chip) => chip.id !== chipId));
+    const handleRemoveFloatingChip = useCallback((chipId: string, type: 'image' | 'media') => {
+        setImageChips((prev) => prev.filter((chip) => !(chip.id === chipId && chip.type === type)));
     }, []);
 
     const handleFilesAdded = useCallback(async (files: File[]) => {
@@ -208,10 +258,12 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         let targetChatId = activeChatId;
         if (!targetChatId) {
             try {
+                const pendingTags = isNewChatPending ? pendingNewChatTags : [];
                 const chat = await createChat.mutateAsync({
                     title: message.trim().slice(0, 50) || 'New Chat',
                     contextType: context?.type,
                     contextId: context?.id,
+                    tags: pendingTags.length ? pendingTags : undefined,
                 });
                 targetChatId = chat.id;
             } catch (err) {
@@ -246,25 +298,26 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                 toast.error('Image upload failed.');
             }
         }));
-    }, [activeChatId, context, createChat, message, uploadChatImage]);
+    }, [activeChatId, context, createChat, isNewChatPending, message, pendingNewChatTags, uploadChatImage]);
 
     const handleSend = useCallback(async () => {
         if (!message.trim() || isStreaming) return;
-        if (imageChips.some((chip) => chip.status === 'uploading')) {
+        const uploadingImages = imageChips.filter((chip) => chip.type === 'image' && chip.status === 'uploading');
+        if (uploadingImages.length > 0) {
             toast.info('Wait for image uploads to finish.');
             return;
         }
 
         const messageText = message.trim();
         const imageUrls = imageChips
-            .filter((chip) => chip.status === 'ready' && chip.url)
-            .map((chip) => chip.url as string);
+            .filter((chip) => chip.type === 'image' && chip.status === 'ready')
+            .map((chip) => (chip as ImageChip).url as string);
         setMessage('');
         setMentionQuery(null);
         setImageChips([]);
 
         // Only send chips fence, no detailed context block
-        const sendChips = [...chips, ...imageChips.filter((chip) => chip.status === 'ready')];
+        const sendChips = [...chips, ...imageChips.filter((chip) => chip.type === 'image' ? chip.status === 'ready' : true)];
         const chipFence = sendChips.length
             ? sendChips.map((chip) => `\`\`\`chip ${formatChipFence(chip)}\`\`\``).join(' ')
             : '';
@@ -278,14 +331,25 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                 label: chip.type === 'media' ? (chip as MediaChip).title || chip.label : chip.label,
             }));
 
+        // Add floating media tags
+        (imageChips.filter(c => c.type === 'media') as MediaChip[]).forEach(m => {
+            tagPayload.push({
+                type: 'media',
+                id: m.id,
+                label: m.title || m.label
+            });
+        });
+
         abortControllerRef.current = new AbortController();
 
         if (!activeChatId) {
             try {
+                const pendingTags = isNewChatPending ? pendingNewChatTags : [];
                 const chat = await createChat.mutateAsync({
                     title: messageText.slice(0, 50),
                     contextType: context?.type,
                     contextId: context?.id,
+                    tags: pendingTags.length ? pendingTags : undefined,
                 });
                 if (isChatRoute) {
                     router.push(`/app/chats/${chat.id}`);
@@ -294,6 +358,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                     tags: tagPayload,
                     model: selectedModel,
                     imageUrls,
+                    filters: mapClientFiltersToPlatformInputs(clientFilters),
                 });
             } catch (err) {
                 console.error('Failed to create chat:', err);
@@ -304,9 +369,10 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                 tags: tagPayload,
                 model: selectedModel,
                 imageUrls,
+                filters: mapClientFiltersToPlatformInputs(clientFilters),
             });
         }
-    }, [message, isStreaming, imageChips, chips, activeChatId, createChat, context, sendMessage, resetStreaming, isChatRoute, router, selectedModel]);
+    }, [message, isStreaming, imageChips, chips, activeChatId, createChat, context, sendMessage, resetStreaming, isChatRoute, router, selectedModel, isNewChatPending, pendingNewChatTags]);
 
     const handleStop = useCallback(() => {
         if (abortControllerRef.current) {
@@ -318,7 +384,8 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
 
     useEffect(() => {
         return () => {
-            if (abortControllerRef.current) {
+            // Don't abort if we're mid-send from pending (StrictMode remount issue)
+            if (abortControllerRef.current && !sendingFromPendingRef.current) {
                 abortControllerRef.current.abort();
             }
         };
@@ -335,7 +402,7 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         (chat.title || '').toLowerCase().includes(mentionFilter)
     );
 
-    const canSend = !!message.trim() && !createChat.isPending && !imageChips.some((chip) => chip.status === 'uploading');
+    const canSend = !!message.trim() && !createChat.isPending && !imageChips.some((chip) => chip.type === 'image' && chip.status === 'uploading');
 
     return (
         <FileUpload
@@ -365,59 +432,70 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                         }}
                     />
                 )}
-                <PromptInput
-                    value={message}
-                    onValueChange={handleMessageChange}
-                    onSubmit={handleSend}
-                    isLoading={isStreaming}
-                    disabled={createChat.isPending}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
+
+
+                {/* Image Chips - Floating above */}
+                <ImageChipList
+                    chips={imageChips}
+                    onRemoveChip={handleRemoveFloatingChip}
+                />
+
+                <GlassPanel
+                    intensity="medium"
                     className={cn(
-                        "bg-secondary/50 border-white/10",
+                        "backdrop-blur-none",
                         (isDragOver || isDragActive) && "ring-1 ring-primary/60 border-primary/60"
                     )}
                 >
-                    <ChipList
-                        chips={chips}
-                        imageChips={imageChips}
-                        onRemoveChip={handleRemoveChip}
-                        onRemoveImageChip={handleRemoveImageChip}
-                    />
-                    <PromptInputTextarea
-                        placeholder="Send a message"
-                        className="text-sm min-h-[40px] text-foreground"
-                    />
-                    <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">
-                        <div className="flex items-center gap-2">
-                            <PromptInputAction tooltip="Attach image">
-                                <FileUploadTrigger asChild>
-                                    <Button
-                                        size="icon"
-                                        variant="ghost"
-                                        className="h-8 w-8 rounded-full"
-                                        disabled={createChat.isPending || isStreaming}
-                                    >
-                                        <ImagePlus className="h-4 w-4" />
-                                    </Button>
-                                </FileUploadTrigger>
-                            </PromptInputAction>
-                            <ModelSelector
-                                selectedModel={selectedModel}
-                                onModelChange={setSelectedModel}
-                            />
-                        </div>
-                        <div>
-                            <ActionButtons
-                                isStreaming={isStreaming}
-                                canSend={canSend}
-                                onSend={handleSend}
-                                onStop={handleStop}
-                            />
-                        </div>
-                    </PromptInputActions>
-                </PromptInput>
+                    <PromptInput
+                        value={message}
+                        onValueChange={handleMessageChange}
+                        onSubmit={handleSend}
+                        isLoading={isStreaming}
+                        disabled={createChat.isPending}
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        className="border-none bg-transparent"
+                    >
+                        <ChipList
+                            chips={chips}
+                            onRemoveChip={handleRemoveChip}
+                        />
+                        <PromptInputTextarea
+                            placeholder="Send a message"
+                            className="text-sm min-h-[40px] text-foreground leading-[34px]"
+                        />
+                        <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">
+                            <div className="flex items-center gap-2">
+                                <PromptInputAction tooltip="Attach image">
+                                    <FileUploadTrigger asChild>
+                                        <Button
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-8 w-8 rounded-full"
+                                            disabled={createChat.isPending || isStreaming}
+                                        >
+                                            <ImagePlus className="h-4 w-4" />
+                                        </Button>
+                                    </FileUploadTrigger>
+                                </PromptInputAction>
+                                <ModelSelector
+                                    selectedModel={selectedModel}
+                                    onModelChange={setSelectedModel}
+                                />
+                            </div>
+                            <div>
+                                <ActionButtons
+                                    isStreaming={isStreaming}
+                                    canSend={canSend}
+                                    onSend={handleSend}
+                                    onStop={handleStop}
+                                />
+                            </div>
+                        </PromptInputActions>
+                    </PromptInput>
+                </GlassPanel>
             </div>
         </FileUpload>
     );

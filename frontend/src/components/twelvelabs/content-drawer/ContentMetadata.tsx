@@ -81,22 +81,22 @@ export function ContentMetadata({
         <div>
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3 overflow-hidden flex-1 min-w-0">
-                    <div className="h-10 w-10 rounded-full bg-zinc-800 border border-zinc-700 overflow-hidden flex-shrink-0">
-                        {item.creator_image ? (
-                            <img
-                                src={item.creator_image}
-                                alt={item.creator_name || item.creator}
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                    (e.target as HTMLImageElement).style.display = "none";
-                                }}
-                            />
-                        ) : (
-                            <div className="h-full w-full flex items-center justify-center text-zinc-500 font-bold text-xs">
-                                {(item.creator_name || item.creator || "?").substring(0, 1).toUpperCase()}
-                            </div>
-                        )}
-                    </div>
+                    {/* <div className="h-10 w-10 rounded-full bg-zinc-800 border border-zinc-700 overflow-hidden flex-shrink-0">
+                    {item.creator_image ? (
+                        <img
+                            src={item.creator_image}
+                            alt={item.creator_name || item.creator}
+                            className="h-full w-full object-cover"
+                            onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = "none";
+                            }}
+                        />
+                    ) : (
+                        <div className="h-full w-full flex items-center justify-center text-zinc-500 font-bold text-xs">
+                            {(item.creator_name || item.creator || "?").substring(0, 1).toUpperCase()}
+                        </div>
+                    )}
+                </div> */}
 
                     <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-2">
@@ -240,7 +240,7 @@ export function ContentMetadata({
                 )}
             </div>
 
-            <h2 className="text-2xl font-semibold leading-snug text-white mb-3">
+            <h2 className="text-2xl font-semibold leading-snug text-white mb-3 line-clamp-2">
                 {item.title || "Untitled Video"}
             </h2>
 

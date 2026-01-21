@@ -45,6 +45,51 @@ class CreditTracker:
         row = result.fetchone()
         return row[0] if row and row[0] else None
 
+    async def _get_reward_balance(self, conn, user_id: UUID, reward_feature: str) -> int:
+        result = await conn.execute(
+            text("""
+            SELECT balance
+            FROM reward_balances
+            WHERE user_id = :user_id AND reward_feature = :reward_feature
+            """),
+            {"user_id": user_id, "reward_feature": reward_feature}
+        )
+        row = result.fetchone()
+        return row[0] if row and row[0] is not None else 0
+
+    async def _get_reward_balances(self, conn, user_id: UUID) -> dict[str, int]:
+        result = await conn.execute(
+            text("""
+            SELECT reward_feature, balance
+            FROM reward_balances
+            WHERE user_id = :user_id
+            """),
+            {"user_id": user_id}
+        )
+        balances = {}
+        for row in result.fetchall():
+            balances[row[0]] = row[1]
+        return balances
+
+    async def _decrement_reward_balance(
+        self,
+        conn,
+        user_id: UUID,
+            reward_feature: str,
+            amount: int,
+    ) -> None:
+        if amount <= 0:
+            return
+        await conn.execute(
+            text("""
+            UPDATE reward_balances
+            SET balance = GREATEST(balance - :amount, 0),
+                updated_at = NOW()
+            WHERE user_id = :user_id AND reward_feature = :reward_feature
+            """),
+            {"user_id": user_id, "reward_feature": reward_feature, "amount": amount}
+        )
+
     async def _advance_credit_period_if_needed(self, conn, user_id: UUID, current_period: datetime) -> datetime:
         """
         Check if 30 days have passed since credit_period_start.
@@ -195,18 +240,59 @@ class CreditTracker:
         async def _check_with_conn(active_conn: AsyncConnection) -> dict:
             await set_rls_user(active_conn, user_id)
             period_start = await _ensure_period_start(active_conn)
-            used = await self.get_credits_used(active_conn, user_id, period_start)
-            remaining_before = max(0, total_credits - used)
-            allowed = remaining_before >= credit_cost
+
+            limit_result = await active_conn.execute(
+                text("""
+                SELECT limit_count
+                FROM usage_limits
+                WHERE plan_role = :role AND feature = :feature AND period = 'monthly'
+                """),
+                {"role": role, "feature": feature}
+            )
+            limit_row = limit_result.fetchone()
+            limit_count = limit_row[0] if limit_row else None
+
+            used_result = await active_conn.execute(
+                text("""
+                SELECT COALESCE(SUM(quantity), 0)
+                FROM usage_logs
+                WHERE user_id = :user_id
+                  AND feature = :feature
+                  AND created_at >= :period_start
+                """),
+                {"user_id": user_id, "feature": feature, "period_start": period_start}
+            )
+            used = used_result.scalar() or 0
+
+            bonus_feature = await self._get_reward_balance(active_conn, user_id, feature)
+            bonus_credits = await self._get_reward_balance(active_conn, user_id, "credits")
+            credits_used = await self.get_credits_used(active_conn, user_id, period_start)
+            credit_remaining = max(0, total_credits + bonus_credits - credits_used)
+            if limit_count is None:
+                remaining_before = None
+                allowed = credit_remaining >= credit_cost
+            else:
+                remaining_before = max(0, limit_count + bonus_feature - used)
+                allowed = credit_remaining >= credit_cost and remaining_before >= credit_cost
+
             if allowed and record:
                 await self.record_usage(user_id, feature, context, conn=active_conn)
-            return {
+                if limit_count is not None and used >= limit_count:
+                    await self._decrement_reward_balance(active_conn, user_id, feature, credit_cost)
+                if credits_used >= total_credits:
+                    await self._decrement_reward_balance(active_conn, user_id, "credits", credit_cost)
+
+            response = {
                 "allowed": allowed,
                 "credits_remaining": max(
+                    0, credit_remaining - (credit_cost if allowed and record else 0)
+                ),
+                "feature_uses_remaining": None if remaining_before is None else max(
                     0, remaining_before - (credit_cost if allowed and record else 0)
                 ),
-                "feature_uses_remaining": None,
             }
+
+            return response
 
         if conn is None:
             async with get_db_connection() as local_conn:
@@ -228,6 +314,7 @@ class CreditTracker:
         total_credits = ROLE_CREDITS.get(role, 50)
         
         async with get_db_connection() as conn:
+            await set_rls_user(conn, user_id)
             # Get credit period start from DB
             period_start = await self._get_credit_period_start(conn, user_id)
             
@@ -259,17 +346,24 @@ class CreditTracker:
                     "cap": None,
                     "remaining": None,
                 }
-                total_credits_used += credits
+                if credits > 0:
+                    total_credits_used += credits
             
             # Calculate next reset date
             next_reset = period_start + timedelta(days=CREDIT_PERIOD_DAYS)
             
+            reward_balances = await self._get_reward_balances(conn, user_id)
+            bonus_credits = reward_balances.get("credits", 0)
+            bonus_searches = reward_balances.get("search_query", 0)
+
             return {
                 "credits": {
                     "total": total_credits,
                     "used": total_credits_used,
-                    "remaining": max(0, total_credits - total_credits_used),
+                    "bonus": bonus_credits,
+                    "remaining": max(0, total_credits + bonus_credits - total_credits_used),
                 },
+                "reward_balances": reward_balances,
                 "features": features,
                 "period_start": period_start.isoformat() + "Z",
                 "next_reset": next_reset.isoformat() + "Z",

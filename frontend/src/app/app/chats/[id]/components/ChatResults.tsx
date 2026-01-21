@@ -44,6 +44,7 @@ export function ChatResults({
                             onLoadMore={onLoadMore}
                             hasMore={hasMore}
                             isLoading={isLoadingMore}
+                            tooltip="1 credit will be used"
                         />
                     ) : null
                 }

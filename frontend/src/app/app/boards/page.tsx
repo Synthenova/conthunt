@@ -35,6 +35,7 @@ import { AsyncImage } from "@/components/ui/async-image";
 import { BoardCardSkeleton } from "@/components/ui/board-skeletons";
 import { StaggerContainer, StaggerItem, FadeIn, AnimatePresence } from "@/components/ui/animations";
 import { formatDistanceToNow } from "date-fns";
+import { useTutorialAutoStart } from "@/hooks/useTutorialAutoStart";
 
 export default function BoardsPage() {
     const router = useRouter();
@@ -44,6 +45,9 @@ export default function BoardsPage() {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [boardToDelete, setBoardToDelete] = useState<{ id: string, name: string } | null>(null);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+    // Auto-start boards tutorial on first visit
+    useTutorialAutoStart({ flowId: "boards_tour" });
 
     // Filter boards by search query
     const filteredBoards = boards.filter(board =>
@@ -174,6 +178,7 @@ export default function BoardsPage() {
                                                 router.push(`/app/boards/${board.id}`);
                                             }
                                         }}
+                                        data-tutorial="board_card"
                                     >
 
                                         {/* Collage Preview */}

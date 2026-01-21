@@ -65,7 +65,7 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
                 content_type: payloadItem.content_type,
                 primary_text: payloadItem.primary_text || payloadItem.caption || payloadItem.description,
                 media_asset_id: videoAsset?.id || payloadItem.media_asset_id || null,
-                thumbnail: thumb,
+                thumbnail_url: thumb,
             };
         });
 
@@ -89,7 +89,7 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
         preview.style.zIndex = "9999";
 
         for (let i = 0; i < maxThumbs; i++) {
-            const thumb = payloadItems[i]?.thumbnail;
+            const thumb = payloadItems[i]?.thumbnail_url;
             const layer = document.createElement("div");
             layer.style.position = "absolute";
             layer.style.top = `${i * offset}px`;
@@ -154,6 +154,7 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
             <div className="absolute top-2 left-2 z-20">
                 <button
                     onClick={handleSelect}
+                    data-tutorial="video_checkbox"
                     className={cn(
                         "h-6 w-6 rounded-md border-2 flex items-center justify-center overflow-hidden transition-opacity duration-200",
                         isSelected

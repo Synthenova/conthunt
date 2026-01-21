@@ -44,16 +44,12 @@ def init_chat_model(model_name: str | None, temperature: float = 0.5):
     provider, resolved_name = _parse_model_name(model_name)
     settings = get_settings()
 
-    if provider == "openrouter":
-        base_url = (
-            os.getenv("OPENAI_BASE_URL")
-            or os.getenv("OPENAI_API_BASE")
-            or "https://openrouter.ai/api/v1"
-        )
+    if provider == "openrouter":        
         return ChatOpenAI(
             model=resolved_name,
             temperature=temperature,
-            openai_api_base=base_url,
+            openai_api_base=settings.OPENAI_BASE_URL,
+            api_key=settings.OPENAI_API_KEY,
         )
 
     return ChatGoogleGenerativeAI(

@@ -39,7 +39,8 @@ async def lifespan(app: FastAPI):
             socket_keepalive=True,
             health_check_interval=30,
         )
-        logger.debug("Redis client initialized")
+        max_conn = getattr(app.state.redis.connection_pool, "max_connections", None)
+        logger.info("Redis client initialized (max_connections=%s)", max_conn)
         app.state.stream_hub = StreamFanoutHub(app.state.redis, logger)
         await app.state.stream_hub.start()
         logger.debug("Stream hub initialized")

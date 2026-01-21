@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Plus_Jakarta_Sans, Space_Grotesk, DM_Sans } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
@@ -37,11 +38,15 @@ export default function RootLayout({
       <body
         className={`${plusJakartaSans.variable} ${spaceGrotesk.variable} ${dmSans.variable} antialiased bg-background text-foreground`}
       >
+        <Script
+          src="https://cdn.lordicon.com/lordicon.js"
+          strategy="afterInteractive"
+        />
         {/* <GridTorch /> */}
         <Providers>
           {children}
         </Providers>
       </body>
-    </html>
+    </html >
   );
 }

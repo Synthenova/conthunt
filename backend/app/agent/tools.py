@@ -5,22 +5,27 @@ user data like boards, videos, and analysis.
 """
 import os
 from uuid import UUID
-from typing import Optional, List, Dict, Any, Annotated
+from enum import Enum
+from typing import Optional, List, Dict, Any, Annotated, Literal
 import httpx
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import InjectedState
 
-from app.core import get_settings
+from app.core import get_settings, logger
 from app.agent.model_factory import init_chat_model
 
 settings = get_settings()
 
 
 def _get_api_base_url() -> str:
-    """Get API base URL - use localhost with correct port for internal calls."""
+    """Get API base URL for internal/external calls."""
+    env_base_url = os.getenv("API_BASE_URL") or settings.API_BASE_URL
+    if env_base_url:
+        return env_base_url.rstrip("/") + "/v1"
+
     # Cloud Run sets PORT env var; default to 8000 for local dev
     port = os.getenv("PORT", "8000")
     return f"http://localhost:{port}/v1"
@@ -40,9 +45,10 @@ async def report_step(step: str, config: RunnableConfig) -> str:
     """
     Report a thinking step to the user.
     Call this because the user likes to know what you are doing.
+    Strictly less than 5 words. No trailing dots or ellipsis.
     
     Args:
-        step: Brief description of current step (e.g., "Analyzing your request", "Searching for content")
+        step: Brief description (e.g., "Analyzing request", "Searching content")
     """
     return "ok"
 
@@ -302,6 +308,10 @@ async def get_video_analysis(
     except ValueError:
         return {"error": "Invalid media_asset_id format."}
     except Exception as e:
+        # Catch explicit 402 or "Credit limit exceeded" in error message
+        error_str = str(e)
+        if "402" in error_str or "Credit limit exceeded" in error_str:
+            return {"error": "CREDIT_LIMIT_EXCEEDED: You have run out of credits. Please upgrade your plan to continue."}
         return {"error": f"Analysis error: {str(e)}"}
 
 
@@ -348,8 +358,66 @@ async def get_chat_searches(
 class SearchQuery(BaseModel):
     keyword: str = Field(description="The search keyword")
 
-class SearchKeywords(BaseModel):
+class TikTokSortBy(str, Enum):
+    relevance = "relevance"
+    most_liked = "most-liked"
+    date_posted = "date-posted"
+
+
+class TikTokDateFilter(str, Enum):
+    this_week = "this-week"
+    yesterday = "yesterday"
+    this_month = "this-month"
+    last_3_months = "last-3-months"
+    last_6_months = "last-6-months"
+    all_time = "all-time"
+
+
+class TikTokTopFilters(BaseModel):
+    publish_time: Optional[TikTokDateFilter] = None
+    sort_by: Optional[TikTokSortBy] = None
+
+
+class TikTokKeywordFilters(BaseModel):
+    date_posted: Optional[TikTokDateFilter] = None
+    sort_by: Optional[TikTokSortBy] = None
+
+
+class SearchFilters(BaseModel):
+    platforms: Optional[List[Literal["tiktok_top", "tiktok_keyword"]]] = Field(
+        default=None,
+        description="Optional platform slugs to search.",
+    )
+    tiktok_top: Optional[TikTokTopFilters] = None
+    tiktok_keyword: Optional[TikTokKeywordFilters] = None
+
+
+class SearchPlan(BaseModel):
     queries: List[SearchQuery] = Field(description="List of search queries to execute")
+    filters: Optional[SearchFilters] = None
+
+
+def _llm_filters_to_inputs(filters: SearchFilters) -> dict:
+    inputs: Dict[str, Dict[str, Any]] = {}
+    if filters.tiktok_top:
+        inputs["tiktok_top"] = filters.tiktok_top.model_dump(exclude_none=True, mode="json")
+    if filters.tiktok_keyword:
+        inputs["tiktok_keyword"] = filters.tiktok_keyword.model_dump(exclude_none=True, mode="json")
+    return inputs
+
+
+def _merge_filter_inputs(base: dict, override: dict) -> dict:
+    merged: Dict[str, Dict[str, Any]] = {}
+    base = base or {}
+    override = override or {}
+    for platform in set(base.keys()) | set(override.keys()):
+        merged[platform] = {
+            **(base.get(platform) or {}),
+            **(override.get(platform) or {}),
+        }
+    return merged
+
+
 
 
 @tool
@@ -375,17 +443,26 @@ async def search(
         
         # 1. Initialize Gemini 3 Pro for intent detection
         llm = init_chat_model("google/gemini-3-pro-preview")
-        structured_llm = llm.with_structured_output(SearchKeywords)
+        llm = llm.bind_tools([{"google_search": {}}])
+        structured_llm = llm.with_structured_output(SearchPlan)
 
         # 2. Extract messages for context
         messages = state.get("messages", [])
+        config_filters = configurable.get("filters") or {}
         
         # 3. Generate keywords
         system_msg = SystemMessage(content="""
         You are a search expert. Analyze the conversation history and user request to understand their intent.
         Generate 3 to 5 distinct, high-quality search queries that will help the user find what they are looking for.
         For each query, provide ONLY the keyword.
-        Focus on finding content related to the user's request.
+        Focus on finding content related to the user's request. Use the google_search if necessary for more details.
+
+        If the user explicitly requests filters (date, sort, platforms), include them in `filters`.
+        Use platform slugs: tiktok_top, tiktok_keyword.
+        Leave `platforms` empty to mean "all platforms".
+        Allowed values:
+        - publish_time/date_posted: this-week, yesterday, this-month, last-3-months, last-6-months, all-time
+        - sort_by: relevance, most-liked, date-posted
         """)
         
         # Invoke the model
@@ -399,6 +476,16 @@ async def search(
              return {"error": "Could not generate valid search queries."}
 
         queries = response.queries
+        llm_filters = response.filters
+        llm_filter_inputs = _llm_filters_to_inputs(llm_filters) if llm_filters else {}
+        effective_filters = _merge_filter_inputs(config_filters, llm_filter_inputs)
+        platforms_list = llm_filters.platforms if llm_filters and llm_filters.platforms else AVAILABLE_PLATFORMS
+        logger.info(f"Generated search queries: {queries}")
+        logger.info(f"Generated filters: {llm_filters}")
+        logger.info(f"Config filters: {config_filters}")
+        logger.info(f"Effective filters: {effective_filters}")
+        logger.info(f"Platforms list: {platforms_list}")
+
         search_ids = []
         errors = []
         results_info = []
@@ -411,9 +498,13 @@ async def search(
             if not keyword:
                 return None
 
-            # Always search all available platforms
-            platforms_list = AVAILABLE_PLATFORMS
-            inputs = {platform: {} for platform in platforms_list}
+            # Always search all available platforms unless explicitly limited by LLM platforms
+            resolved_platforms = platforms_list
+            inputs = {
+                platform: dict(effective_filters.get(platform, {}))
+                for platform in resolved_platforms
+            }
+            logger.info(f"Executing search using inputs: {inputs}")
             
             url = f"{_get_api_base_url()}/search"
             payload = {
@@ -451,7 +542,15 @@ async def search(
                             "keyword": keyword,
                             "platforms": list(inputs.keys())
                         }
+            except httpx.HTTPStatusError as e:
+                # Explicitly handle 402 Credit Limit errors
+                if e.response.status_code == 402:
+                    return {"error": "CREDIT_LIMIT_EXCEEDED: You have run out of credits. Please upgrade your plan to continue."}
+                return {"error": f"Failed to start search for '{keyword}': {str(e)}"}
             except Exception as e:
+                # Handle cases where backend error detail contains info
+                if "Credit limit exceeded" in str(e):
+                    return {"error": "CREDIT_LIMIT_EXCEEDED: You have run out of credits. Please upgrade your plan to continue."}
                 return {"error": f"Failed to start search for '{keyword}': {str(e)}"}
             return None
 

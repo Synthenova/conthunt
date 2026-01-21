@@ -23,6 +23,7 @@ export function SearchStreamer({
     useEffect(() => {
         // Transform the raw results to FlatMediaItem
         const transformed = transformSearchResults(results || []);
+        console.log('[SearchStreamer] Sending results for searchId:', searchId, 'count:', transformed.length);
         onResults(searchId, transformed);
     }, [results, searchId, onResults]);
 

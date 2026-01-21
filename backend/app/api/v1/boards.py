@@ -143,7 +143,7 @@ async def get_board_items(
         if not board:
             raise HTTPException(status_code=404, detail="Board not found")
             
-        items = await queries.get_board_items(conn, board_id)        
+        items = await queries.get_board_items(conn, board_id, user_id=user_uuid)        
         
         # Sign URLs for stored assets        
         for item in items:

@@ -69,6 +69,7 @@ export function ChatTabs({
         <div className="min-w-0 flex justify-start overflow-hidden flex-shrink">
             <div
                 ref={tabsScrollRef}
+                data-tutorial="chat_tabs"
                 className="flex p-1.5 bg-white/5 glass-nav rounded-xl relative h-14 items-center max-w-full overflow-x-auto scrollbar-hide cursor-grab"
                 style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
                 onMouseDown={handleTabsMouseDown}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useUser } from "@/hooks/useUser";
 import { GlassPanel } from "@/components/ui/glass-card";
@@ -32,6 +32,9 @@ import { useProducts } from "@/contexts/ProductsContext";
 import { useStreak } from "@/hooks/useStreak";
 import { StreakMilestone } from "@/components/streak/StreakMilestone";
 import { Flame, CheckCircle2, Circle } from "lucide-react";
+import { useTutorialAutoStart } from "@/hooks/useTutorialAutoStart";
+import { TutorialReplayDropdown } from "@/components/tutorial";
+import { useIsFetching } from "@tanstack/react-query";
 
 // Feature icons mapping
 const featureIcons: Record<string, any> = {
@@ -40,38 +43,50 @@ const featureIcons: Record<string, any> = {
     index_video: FileSearch,
 };
 
-// Default milestones for demo/fallback
-const defaultMilestones = [
-    { days_required: 10, reward_description: "500 Credits", icon_name: "gift", completed: false },
-    { days_required: 50, reward_description: "2,000 Credits + T-Shirt", icon_name: "shirt", completed: false },
-    { days_required: 100, reward_description: "5,000 Credits + Hoodie", icon_name: "package", completed: false },
-    { days_required: 365, reward_description: "Exclusive Event Invite", icon_name: "plane", completed: false },
-];
-
 export default function ProfilePage() {
-    const { profile, user, subscription, isLoading } = useUser();
+    const { profile, user, subscription, isLoading } = useUser({ refreshOnMount: true });
     const { getPlanName } = useProducts();
-    const { streak: streakData, isLoading: isStreakLoading } = useStreak();
+    const { streak: openStreak, claimReward, isClaiming } = useStreak({ type: "open" });
     const rocketRef = useRef<RocketIconHandle>(null);
+    const [isClaimSyncing, setIsClaimSyncing] = useState(false);
+    const meFetching = useIsFetching({ queryKey: ["userMe"] });
+    const streakFetching = useIsFetching({ queryKey: ["userStreak"] });
 
-    // Use streak data from API or fallback to demo data
-    const streak = streakData ?? {
-        current_streak: 1,
-        longest_streak: 1,
-        last_activity_date: null,
-        next_milestone: defaultMilestones[0],
-        milestones: defaultMilestones,
-        today_complete: false,
-        today_status: {
-            app_opened: true,
-            search_done: false,
-        },
-    };
+    useEffect(() => {
+        if (!isClaimSyncing) return;
+        if (isClaiming) return;
+        if (meFetching > 0 || streakFetching > 0) return;
+        setIsClaimSyncing(false);
+    }, [isClaimSyncing, isClaiming, meFetching, streakFetching]);
 
-    if (isLoading) {
+    // Auto-start profile tutorial on first visit
+    useTutorialAutoStart({ flowId: "profile_tour" });
+
+    if (isLoading || !profile || !user) {
         return (
-            <div className="h-full flex items-center justify-center">
-                <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <div className="relative">
+                    {/* Spinner ring */}
+                    <div
+                        className="absolute rounded-full border-2 border-transparent border-t-white animate-spin"
+                        style={{
+                            width: '72px',
+                            height: '72px',
+                            top: '-4px',
+                            left: '-4px',
+                        }}
+                    />
+                    {/* Logo */}
+                    <div className="h-16 w-16 rounded-full overflow-hidden bg-white/5 flex items-center justify-center">
+                        <img
+                            src="/images/image.png"
+                            alt="Logo"
+                            width={54}
+                            height={54}
+                            className="object-contain"
+                        />
+                    </div>
+                </div>
             </div>
         );
     }
@@ -139,20 +154,23 @@ export default function ProfilePage() {
                         </p>
                     </div>
 
-                    {profile?.role !== "pro_research" && (
-                        <Button size="lg" asChild className="rounded-full px-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_20px_rgba(255,255,255,0.1)]">
-                            <Link href="/app/billing/return">
-                                <Sparkles className="h-4 w-4 mr-2" />
-                                Upgrade Plan
-                            </Link>
-                        </Button>
-                    )}
+                    <div className="flex items-center gap-3">
+                        <TutorialReplayDropdown />
+                        {profile?.role !== "pro_research" && (
+                            <Button size="lg" asChild className="rounded-full px-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_20px_rgba(255,255,255,0.1)]">
+                                <Link href="/app/billing/return">
+                                    <Sparkles className="h-4 w-4 mr-2" />
+                                    Upgrade Plan
+                                </Link>
+                            </Button>
+                        )}
+                    </div>
                 </div>
             </FadeIn>
 
             {/* Streak Section */}
             <FadeIn delay={0.1}>
-                <div className="space-y-4">
+                <div className="space-y-4" data-tutorial="streak_section">
                     <div className="flex items-center gap-2">
                         <Flame className="h-5 w-5 text-orange-400" />
                         <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground">
@@ -160,39 +178,26 @@ export default function ProfilePage() {
                         </h2>
                     </div>
 
-                    {streak ? (
+                    {openStreak ? (
                         <>
                             {/* Today's Progress */}
                             <GlassPanel className="p-4">
                                 <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">Today's Progress</p>
                                 <div className="flex items-center gap-6">
                                     <div className="flex items-center gap-2">
-                                        {streak.today_status.app_opened ? (
+                                        {openStreak.today_complete ? (
                                             <CheckCircle2 className="h-5 w-5 text-green-500" />
                                         ) : (
                                             <Circle className="h-5 w-5 text-gray-500" />
                                         )}
                                         <span className={cn(
                                             "text-sm",
-                                            streak.today_status.app_opened ? "text-green-400" : "text-gray-400"
+                                            openStreak.today_complete ? "text-green-400" : "text-gray-400"
                                         )}>
                                             App Opened
                                         </span>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        {streak.today_status.search_done ? (
-                                            <CheckCircle2 className="h-5 w-5 text-green-500" />
-                                        ) : (
-                                            <Circle className="h-5 w-5 text-gray-500" />
-                                        )}
-                                        <span className={cn(
-                                            "text-sm",
-                                            streak.today_status.search_done ? "text-green-400" : "text-gray-400"
-                                        )}>
-                                            Search Made
-                                        </span>
-                                    </div>
-                                    {streak.today_complete && (
+                                    {openStreak.today_complete && (
                                         <Badge variant="outline" className="ml-auto border-green-500/30 bg-green-500/10 text-green-400">
                                             Day Complete!
                                         </Badge>
@@ -202,22 +207,27 @@ export default function ProfilePage() {
 
                             {/* Streak Milestone Component */}
                             <StreakMilestone
-                                currentStreak={streak.current_streak}
-                                nextMilestone={streak.next_milestone}
-                                milestones={streak.milestones}
+                                currentStreak={openStreak.current_streak}
+                                nextMilestone={openStreak.next_milestone}
+                                milestones={openStreak.milestones}
+                                onClaim={(daysRequired) => {
+                                    setIsClaimSyncing(true);
+                                    void claimReward({ type: "open", daysRequired });
+                                }}
+                                isClaiming={isClaiming || isClaimSyncing}
                             />
 
                             {/* Longest Streak */}
-                            {streak.longest_streak > 0 && (
+                            {openStreak.longest_streak > 0 && (
                                 <p className="text-xs text-gray-500 text-center">
-                                    🏆 Longest streak: {streak.longest_streak} {streak.longest_streak === 1 ? 'day' : 'days'}
+                                    🏆 Longest streak: {openStreak.longest_streak} {openStreak.longest_streak === 1 ? 'day' : 'days'}
                                 </p>
                             )}
                         </>
                     ) : (
                         <GlassPanel className="p-8 text-center">
                             <Flame className="h-12 w-12 text-orange-400/30 mx-auto mb-4" />
-                            <p className="text-muted-foreground">Start your streak by opening the app and making a search!</p>
+                            <p className="text-muted-foreground">Start your streak by opening the app!</p>
                         </GlassPanel>
                     )}
                 </div>

@@ -4,8 +4,12 @@ import { authFetch, BACKEND_URL } from "@/lib/api";
 import { useUser } from "@/hooks/useUser";
 import { Product, PreviewData } from "../types";
 
-export function useBilling() {
-    const { profile, subscription, isLoading: userLoading } = useUser();
+type UseBillingOptions = {
+    refreshOnMount?: boolean;
+};
+
+export function useBilling(options: UseBillingOptions = {}) {
+    const { profile, subscription, isLoading: userLoading, refreshUser } = useUser(options);
     const [products, setProducts] = useState<Product[]>([]);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -296,6 +300,7 @@ export function useBilling() {
         handleCancelDowngrade,
         confirmPlanChange,
         clearPreviewError,
-        clearPreviewData
+        clearPreviewData,
+        refreshUser,
     };
 }

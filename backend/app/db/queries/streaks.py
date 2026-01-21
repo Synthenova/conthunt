@@ -1,89 +1,10 @@
-"""Streak-related database queries."""
+"""Streak-related database queries (multi-type + daily ledger)."""
 from uuid import UUID
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
-
-
-async def get_user_streak(conn: AsyncConnection, user_id: UUID) -> dict | None:
-    """Get user's current streak data."""
-    result = await conn.execute(
-        text("""
-        SELECT id, current_streak, longest_streak, last_activity_date,
-               last_search_at, last_app_open_at, timezone, created_at, updated_at
-        FROM user_streaks WHERE user_id = :user_id
-        """),
-        {"user_id": user_id}
-    )
-    row = result.fetchone()
-    if not row:
-        return None
-    return {
-        "id": row[0],
-        "current_streak": row[1],
-        "longest_streak": row[2],
-        "last_activity_date": row[3],
-        "last_search_at": row[4],
-        "last_app_open_at": row[5],
-        "timezone": row[6],
-        "created_at": row[7],
-        "updated_at": row[8],
-    }
-
-
-async def get_milestones(conn: AsyncConnection) -> list[dict]:
-    """Get all streak milestones ordered by days required."""
-    result = await conn.execute(
-        text("""
-        SELECT days_required, reward_description, icon_name
-        FROM streak_milestones
-        ORDER BY days_required ASC
-        """)
-    )
-    rows = result.fetchall()
-    return [
-        {
-            "days_required": row[0],
-            "reward_description": row[1],
-            "icon_name": row[2],
-        }
-        for row in rows
-    ]
-
-
-async def ensure_streak_record(conn: AsyncConnection, user_id: UUID, timezone: str = "UTC") -> dict:
-    """Ensure a streak record exists for the user, creating one if needed."""
-    # Try to get existing record
-    existing = await get_user_streak(conn, user_id)
-    if existing:
-        return existing
-    
-    # Create new record
-    result = await conn.execute(
-        text("""
-        INSERT INTO user_streaks (user_id, timezone)
-        VALUES (:user_id, :timezone)
-        ON CONFLICT (user_id) DO UPDATE SET timezone = EXCLUDED.timezone
-        RETURNING id, current_streak, longest_streak, last_activity_date,
-                  last_search_at, last_app_open_at, timezone, created_at, updated_at
-        """),
-        {"user_id": user_id, "timezone": timezone}
-    )
-    await conn.commit()
-    row = result.fetchone()
-    return {
-        "id": row[0],
-        "current_streak": row[1],
-        "longest_streak": row[2],
-        "last_activity_date": row[3],
-        "last_search_at": row[4],
-        "last_app_open_at": row[5],
-        "timezone": row[6],
-        "created_at": row[7],
-        "updated_at": row[8],
-    }
 
 
 def get_user_today(timezone: str) -> date:
@@ -95,108 +16,367 @@ def get_user_today(timezone: str) -> date:
     return datetime.now(tz).date()
 
 
-async def record_app_open(conn: AsyncConnection, user_id: UUID, timezone: str = "UTC") -> dict:
-    """Record app open event and potentially update streak."""
-    streak = await ensure_streak_record(conn, user_id, timezone)
-    user_today = get_user_today(timezone)
-    
-    # Update last_app_open_at and timezone
+async def get_user_timezone(conn: AsyncConnection, user_id: UUID) -> str:
+    """Get user's timezone from users table (source of truth)."""
+    result = await conn.execute(
+        text("SELECT timezone FROM users WHERE id = :user_id"),
+        {"user_id": user_id},
+    )
+    row = result.fetchone()
+    return row[0] if row and row[0] else "UTC"
+
+
+async def set_user_timezone(conn: AsyncConnection, user_id: UUID, timezone: str) -> None:
+    """Persist user's timezone on session start/app open."""
     await conn.execute(
         text("""
-        UPDATE user_streaks
-        SET last_app_open_at = NOW(),
-            timezone = :timezone,
-            updated_at = NOW()
-        WHERE user_id = :user_id
+        UPDATE users
+        SET timezone = :timezone
+        WHERE id = :user_id
         """),
-        {"user_id": user_id, "timezone": timezone}
+        {"user_id": user_id, "timezone": timezone},
     )
-    await conn.commit()
-    
-    # Check if streak needs reset (missed days)
-    streak = await check_streak_reset(conn, user_id, user_today)
-    
-    return streak
 
 
-async def record_search_activity(conn: AsyncConnection, user_id: UUID, timezone: str = "UTC") -> dict:
-    """Record search activity and update streak if day is now complete."""
-    streak = await ensure_streak_record(conn, user_id, timezone)
-    user_today = get_user_today(timezone)
-    
-    # Check if streak needs reset first
-    streak = await check_streak_reset(conn, user_id, user_today)
-    
-    # Update last_search_at
+async def get_streak_type_id(conn: AsyncConnection, streak_type: str) -> UUID:
+    """Resolve streak type slug to ID."""
+    result = await conn.execute(
+        text("SELECT id FROM streak_types WHERE slug = :slug"),
+        {"slug": streak_type},
+    )
+    row = result.fetchone()
+    if not row:
+        raise ValueError(f"Unknown streak type: {streak_type}")
+    return row[0]
+
+
+async def _get_user_streak_by_type_id(
+    conn: AsyncConnection, user_id: UUID, streak_type_id: UUID
+) -> dict | None:
+    result = await conn.execute(
+        text("""
+        SELECT id, current_streak, longest_streak, last_activity_date, last_action_at
+        FROM user_streaks
+        WHERE user_id = :user_id AND streak_type_id = :streak_type_id
+        """),
+        {"user_id": user_id, "streak_type_id": streak_type_id},
+    )
+    row = result.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "current_streak": row[1],
+        "longest_streak": row[2],
+        "last_activity_date": row[3],
+        "last_action_at": row[4],
+    }
+
+
+async def get_user_streak(conn: AsyncConnection, user_id: UUID, streak_type: str) -> dict | None:
+    """Get user's streak data for a specific type."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    return await _get_user_streak_by_type_id(conn, user_id, streak_type_id)
+
+
+async def _ensure_user_streak_by_type_id(
+    conn: AsyncConnection, user_id: UUID, streak_type_id: UUID
+) -> dict:
     await conn.execute(
         text("""
-        UPDATE user_streaks
-        SET last_search_at = NOW(),
-            updated_at = NOW()
-        WHERE user_id = :user_id
+        INSERT INTO user_streaks (user_id, streak_type_id)
+        VALUES (:user_id, :streak_type_id)
+        ON CONFLICT (user_id, streak_type_id) DO NOTHING
         """),
-        {"user_id": user_id}
+        {"user_id": user_id, "streak_type_id": streak_type_id},
     )
-    await conn.commit()
-    
-    # Refresh streak data
-    streak = await get_user_streak(conn, user_id)
-    
-    # Check if both conditions are met for today
-    if streak["last_app_open_at"] and streak["last_search_at"]:
-        last_app_open_date = streak["last_app_open_at"].astimezone(ZoneInfo(timezone)).date() if streak["last_app_open_at"] else None
-        last_search_date = streak["last_search_at"].astimezone(ZoneInfo(timezone)).date() if streak["last_search_at"] else None
-        
-        # Both actions happened today
-        if last_app_open_date == user_today and last_search_date == user_today:
-            # Check if we haven't already counted today
-            if streak["last_activity_date"] != user_today:
-                streak = await increment_streak(conn, user_id, user_today)
-    
-    return streak
+    return await _get_user_streak_by_type_id(conn, user_id, streak_type_id)
 
 
-async def check_streak_reset(conn: AsyncConnection, user_id: UUID, user_today: date) -> dict:
-    """Check if streak should be reset due to missed days."""
-    streak = await get_user_streak(conn, user_id)
+async def ensure_user_streak(conn: AsyncConnection, user_id: UUID, streak_type: str) -> dict:
+    """Ensure a streak record exists for the user + type."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    return await _ensure_user_streak_by_type_id(conn, user_id, streak_type_id)
+
+
+async def reset_streak_if_missed(
+    conn: AsyncConnection,
+    user_id: UUID,
+    streak_type: str,
+    user_today: date,
+) -> dict:
+    """Reset streak if user missed more than one day."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    streak = await _get_user_streak_by_type_id(conn, user_id, streak_type_id)
     if not streak or not streak["last_activity_date"]:
         return streak
-    
-    last_activity = streak["last_activity_date"]
-    days_since = (user_today - last_activity).days
-    
-    # If more than 1 day has passed, reset streak
-    if days_since > 1:
+
+    days_since = (user_today - streak["last_activity_date"]).days
+    if days_since > 1 and streak["current_streak"] != 0:
         await conn.execute(
             text("""
             UPDATE user_streaks
             SET current_streak = 0,
                 updated_at = NOW()
-            WHERE user_id = :user_id
+            WHERE user_id = :user_id AND streak_type_id = :streak_type_id
             """),
-            {"user_id": user_id}
+            {"user_id": user_id, "streak_type_id": streak_type_id},
         )
-        await conn.commit()
-        streak = await get_user_streak(conn, user_id)
-    
+        return await _get_user_streak_by_type_id(conn, user_id, streak_type_id)
+
     return streak
 
 
-async def increment_streak(conn: AsyncConnection, user_id: UUID, activity_date: date) -> dict:
-    """Increment the streak and update last_activity_date."""
+async def record_activity(
+    conn: AsyncConnection,
+    user_id: UUID,
+    streak_type: str,
+    timezone: str | None = None,
+) -> dict:
+    """Record activity and update streak if this is the first activity today."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    if timezone is None:
+        timezone = await get_user_timezone(conn, user_id)
+    user_today = get_user_today(timezone)
+
+    await _ensure_user_streak_by_type_id(conn, user_id, streak_type_id)
+
+    insert_result = await conn.execute(
+        text("""
+        INSERT INTO user_streak_days (user_id, streak_type_id, activity_date)
+        VALUES (:user_id, :streak_type_id, :activity_date)
+        ON CONFLICT (user_id, streak_type_id, activity_date) DO NOTHING
+        RETURNING id
+        """),
+        {
+            "user_id": user_id,
+            "streak_type_id": streak_type_id,
+            "activity_date": user_today,
+        },
+    )
+    inserted = insert_result.fetchone() is not None
+
+    if inserted:
+        streak = await _get_user_streak_by_type_id(conn, user_id, streak_type_id)
+        last_activity = streak["last_activity_date"]
+        current = streak["current_streak"]
+        if last_activity and (user_today - last_activity).days > 1:
+            current = 0
+
+        new_current = current + 1
+        await conn.execute(
+            text("""
+            UPDATE user_streaks
+            SET current_streak = :current_streak,
+                longest_streak = GREATEST(longest_streak, :current_streak),
+                last_activity_date = :activity_date,
+                last_action_at = NOW(),
+                updated_at = NOW()
+            WHERE user_id = :user_id AND streak_type_id = :streak_type_id
+            """),
+            {
+                "current_streak": new_current,
+                "activity_date": user_today,
+                "user_id": user_id,
+                "streak_type_id": streak_type_id,
+            },
+        )
+    else:
+        await conn.execute(
+            text("""
+            UPDATE user_streaks
+            SET last_action_at = NOW(),
+                updated_at = NOW()
+            WHERE user_id = :user_id AND streak_type_id = :streak_type_id
+            """),
+            {"user_id": user_id, "streak_type_id": streak_type_id},
+        )
+
+    return await _get_user_streak_by_type_id(conn, user_id, streak_type_id)
+
+
+async def get_today_status(
+    conn: AsyncConnection,
+    user_id: UUID,
+    streak_type: str,
+    user_today: date,
+) -> bool:
+    """Check if user has completed today's activity for the type."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    result = await conn.execute(
+        text("""
+        SELECT 1
+        FROM user_streak_days
+        WHERE user_id = :user_id
+          AND streak_type_id = :streak_type_id
+          AND activity_date = :activity_date
+        LIMIT 1
+        """),
+        {
+            "user_id": user_id,
+            "streak_type_id": streak_type_id,
+            "activity_date": user_today,
+        },
+    )
+    return result.fetchone() is not None
+
+
+async def get_milestones(
+    conn: AsyncConnection, role: str, streak_type: str
+) -> list[dict]:
+    """Get milestones for a role + type ordered by days required."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    result = await conn.execute(
+        text("""
+        SELECT days_required, reward_description, icon_name, reward_feature, reward_amount
+        FROM streak_milestones
+        WHERE role = :role AND streak_type_id = :streak_type_id
+        ORDER BY days_required ASC
+        """),
+        {"role": role, "streak_type_id": streak_type_id},
+    )
+    rows = result.fetchall()
+    return [
+        {
+            "days_required": row[0],
+            "reward_description": row[1],
+            "icon_name": row[2],
+            "reward_feature": row[3],
+            "reward_amount": row[4],
+        }
+        for row in rows
+    ]
+
+
+async def get_claimed_days(
+    conn: AsyncConnection,
+    user_id: UUID,
+    role: str,
+    streak_type: str,
+) -> set[int]:
+    """Get days_required values already claimed for this role + type."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    result = await conn.execute(
+        text("""
+        SELECT days_required
+        FROM streak_reward_grants
+        WHERE user_id = :user_id AND role = :role AND streak_type_id = :streak_type_id
+        """),
+        {"user_id": user_id, "role": role, "streak_type_id": streak_type_id},
+    )
+    return {row[0] for row in result.fetchall()}
+
+
+async def get_milestone_for_claim(
+    conn: AsyncConnection,
+    role: str,
+    streak_type: str,
+    days_required: int,
+) -> dict | None:
+    """Fetch a single milestone for claim validation."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    result = await conn.execute(
+        text("""
+        SELECT days_required, reward_description, icon_name, reward_feature, reward_amount
+        FROM streak_milestones
+        WHERE role = :role AND streak_type_id = :streak_type_id AND days_required = :days_required
+        """),
+        {
+            "role": role,
+            "streak_type_id": streak_type_id,
+            "days_required": days_required,
+        },
+    )
+    row = result.fetchone()
+    if not row:
+        return None
+    return {
+        "days_required": row[0],
+        "reward_description": row[1],
+        "icon_name": row[2],
+            "reward_feature": row[3],
+            "reward_amount": row[4],
+        }
+
+
+async def get_reward_balance(
+    conn: AsyncConnection,
+    user_id: UUID,
+    reward_feature: str,
+) -> int:
+    """Get reward balance for a user and type."""
+    result = await conn.execute(
+        text("""
+        SELECT balance
+        FROM reward_balances
+        WHERE user_id = :user_id AND reward_feature = :reward_feature
+        """),
+        {"user_id": user_id, "reward_feature": reward_feature},
+    )
+    row = result.fetchone()
+    return row[0] if row and row[0] is not None else 0
+
+
+async def grant_reward(
+    conn: AsyncConnection,
+    user_id: UUID,
+    role: str,
+    streak_type: str,
+    milestone: dict,
+) -> dict | None:
+    """Grant a reward for a milestone if not already claimed."""
+    streak_type_id = await get_streak_type_id(conn, streak_type)
+    result = await conn.execute(
+        text("""
+        INSERT INTO streak_reward_grants (
+            user_id,
+            streak_type_id,
+            days_required,
+            role,
+            reward_feature,
+            reward_amount
+        )
+        VALUES (
+            :user_id,
+            :streak_type_id,
+            :days_required,
+            :role,
+            :reward_feature,
+            :reward_amount
+        )
+        ON CONFLICT (user_id, streak_type_id, days_required, role) DO NOTHING
+        RETURNING id
+        """),
+        {
+            "user_id": user_id,
+            "streak_type_id": streak_type_id,
+            "days_required": milestone["days_required"],
+            "role": role,
+            "reward_feature": milestone["reward_feature"],
+            "reward_amount": milestone["reward_amount"],
+        },
+    )
+    inserted = result.fetchone() is not None
+    if not inserted:
+        return None
+
     await conn.execute(
         text("""
-        UPDATE user_streaks
-        SET current_streak = current_streak + 1,
-            longest_streak = GREATEST(longest_streak, current_streak + 1),
-            last_activity_date = :activity_date,
+        INSERT INTO reward_balances (user_id, reward_feature, balance, updated_at)
+        VALUES (:user_id, :reward_feature, :reward_amount, NOW())
+        ON CONFLICT (user_id, reward_feature) DO UPDATE
+        SET balance = reward_balances.balance + EXCLUDED.balance,
             updated_at = NOW()
-        WHERE user_id = :user_id
         """),
-        {"user_id": user_id, "activity_date": activity_date}
+        {
+            "user_id": user_id,
+            "reward_feature": milestone["reward_feature"],
+            "reward_amount": milestone["reward_amount"],
+        },
     )
-    await conn.commit()
-    return await get_user_streak(conn, user_id)
+
+    new_balance = await get_reward_balance(conn, user_id, milestone["reward_feature"])
+    return {"balance": new_balance}
 
 
 async def get_next_milestone(current_streak: int, milestones: list[dict]) -> dict | None:

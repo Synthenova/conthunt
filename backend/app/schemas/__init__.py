@@ -6,6 +6,7 @@ from .search import (
     ContentItemResponse,
     AssetResponse,
     ResultItem,
+    LoadMoreRequest,
 )
 from .history import (
     SearchHistoryItem,
@@ -27,6 +28,7 @@ __all__ = [
     "ContentItemResponse",
     "AssetResponse",
     "ResultItem",
+    "LoadMoreRequest",
     # History
     "SearchHistoryItem",
     "SearchHistoryResponse",

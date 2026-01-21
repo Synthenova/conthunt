@@ -131,6 +131,7 @@ export function SelectionBar({
                 creator_handle: item.creator || item.creator_handle || item.creator_name,
                 content_type: item.content_type,
                 primary_text: item.primary_text || item.caption || item.description,
+                thumbnail_url: item.thumbnail || item.thumbnail_url || item.cover_url || item.image_url || item.cover || item.image || item.poster || item.preview_image || item.cover_image || null,
             };
         }).filter((chip: any) => chip.media_asset_id && chip.platform);
 
@@ -231,6 +232,7 @@ export function SelectionBar({
                                 variant="default"
                                 className="gap-1.5 glass-button-white hover:text-black"
                                 disabled={isAddingToBoard}
+                                data-tutorial="add_to_board"
                             >
                                 {isAddingToBoard ? (
                                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -369,6 +371,7 @@ export function SelectionBar({
                     className="gap-1.5 glass-button-white hover:text-black"
                     onClick={handleAddToChat}
                     disabled={count === 0}
+                    data-tutorial="add_to_chat"
                 >
                     <MessageSquarePlus className="h-4 w-4" />
                     <span className="relative bottom-[1px]">Add to chat</span>

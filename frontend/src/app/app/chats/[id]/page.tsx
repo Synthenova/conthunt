@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useChatStore } from "@/lib/chatStore";
 import { useChatMessages } from "@/hooks/useChat";
@@ -11,6 +11,7 @@ import { SearchStreamer } from "@/components/search/SearchStreamer";
 import { transformToMediaItem, FlatMediaItem } from "@/lib/transformers";
 import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { ChatCanvasContext } from "@/lib/chatCanvasContext";
+import { useTutorialAutoStart } from "@/hooks/useTutorialAutoStart";
 
 // Hooks
 import { useChatSearchState } from "./hooks/useChatSearchState";
@@ -28,6 +29,9 @@ export default function ChatPage() {
     const chatId = params.id as string;
     const searchIdFromUrl = searchParams.get('search');
 
+    // Auto-start chat tutorial on first visit
+    useTutorialAutoStart({ flowId: "chat_tour", delay: 1000 });
+
     const {
         setActiveChatId,
         messages,
@@ -36,6 +40,7 @@ export default function ChatPage() {
         setCanvasActiveSearchId,
         setCurrentCanvasPage,
         canvasActiveSearchId,
+        setClientFilters,
         chats
         // Note: activeSearchId is managed via store (canvasActiveSearchId)
     } = useChatStore();
@@ -161,6 +166,7 @@ export default function ChatPage() {
 
     // Sync resultsMap to store for media chip scroll-to-video
     useEffect(() => {
+        console.log('[ChatPage] Syncing resultsMap to store:', Object.keys(resultsMap).map(k => `${k}: ${resultsMap[k]?.length || 0} items`));
         setCanvasResultsMap(resultsMap);
     }, [resultsMap, setCanvasResultsMap]);
 
@@ -199,6 +205,22 @@ export default function ChatPage() {
         selectedPlatforms,
         setSelectedPlatforms,
     } = useClientResultSort(activeResults, { resultsAreFlat: true });
+
+    useEffect(() => {
+        setClientFilters({
+            sort: clientSort,
+            dateFilter: clientDateFilter,
+            platforms: selectedPlatforms,
+        });
+    }, [clientSort, clientDateFilter, selectedPlatforms, setClientFilters]);
+
+    const handleLoadMoreWithFilters = useCallback(() => {
+        handleLoadMore({
+            sort: clientSort,
+            dateFilter: clientDateFilter,
+            platforms: selectedPlatforms,
+        });
+    }, [handleLoadMore, clientSort, clientDateFilter, selectedPlatforms]);
 
     // Scroll detection
     const resultsScrollRef = useRef<HTMLDivElement>(null);
@@ -323,7 +345,10 @@ export default function ChatPage() {
 
                 {/* Canvas (left/center) */}
                 <div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
-                    <div className="w-full py-4 px-4 space-y-6 flex-1 min-h-0 flex flex-col">
+                    <div
+                        className="w-full py-4 px-4 space-y-6 flex-1 min-h-0 flex flex-col"
+                        data-tutorial="chat_canvas"
+                    >
                         {isInitialLoading ? (
                             <ChatEmptyState state="loading" />
                         ) : !hasContent ? (
@@ -366,7 +391,7 @@ export default function ChatPage() {
                                                 loading={(!!streamingSearchIds[activeSearchId] || !!loadingSearchIds[activeSearchId]) && (filteredResults.length === 0)}
                                                 hasMore={hasMoreMapValue}
                                                 isLoadingMore={isLoadingMore}
-                                                onLoadMore={handleLoadMore}
+                                                onLoadMore={handleLoadMoreWithFilters}
                                                 clientSort={clientSort}
                                                 clientDateFilter={clientDateFilter}
                                                 selectedPlatforms={selectedPlatforms}

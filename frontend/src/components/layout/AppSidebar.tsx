@@ -15,7 +15,8 @@ import {
     ChevronLeft,
     LayoutPanelTop,
     Pencil,
-    Trash
+    Trash,
+    Flame
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSearch } from "@/hooks/useSearch";
@@ -25,10 +26,11 @@ import { useChatStore } from "@/lib/chatStore";
 import { StaggerContainer, StaggerItem, AnimatePresence } from "@/components/ui/animations";
 import { useUser } from "@/hooks/useUser";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useStreak } from "@/hooks/useStreak";
 import { motion } from "framer-motion";
 
-// New icons
-import { SearchIcon } from "@/components/ui/search";
+// Animated icons
+import { HomeIcon } from "@/components/ui/home";
 import { HistoryIcon } from "@/components/ui/history";
 import { LayoutPanelTopIcon } from "@/components/ui/layout-panel-top";
 
@@ -39,7 +41,7 @@ import { SidebarUser } from "@/components/layout/sidebar/SidebarUser";
 import { SidebarRecentsModal } from "@/components/layout/sidebar/SidebarRecentsModal";
 
 const navItems = [
-    { title: "Search", path: "/app", icon: SearchIcon },
+    { title: "Home", path: "/app", icon: HomeIcon },
     { title: "Chats", path: "/app/chats", icon: HistoryIcon },
     { title: "Boards", path: "/app/boards", icon: LayoutPanelTopIcon },
 ];
@@ -99,6 +101,7 @@ export function AppSidebar({
     const renameChat = useRenameChat();
     const deleteChat = useDeleteChat();
     const { user, profile } = useUser();
+    const { streak: streakData } = useStreak();
 
     // Reset mobile state on path change
     useEffect(() => {

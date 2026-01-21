@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     DODO_BRAND_ID: str = ""
     DODO_ENVIRONMENT: str = "test_mode"  # or "live_mode"
 
+    # SMTP Settings
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = "lamrin@synthenova.xyz"
+
     class Config:
         # Pydantic loads from the first file found in this list, OR merges them depending on library version.
         # But crucially, real Environment Variables (like from Secret Manager or Shell) ALWAYS override files.

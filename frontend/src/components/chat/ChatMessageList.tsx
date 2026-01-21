@@ -1,4 +1,5 @@
 "use client";
+import { StackedMediaChips } from './StackedMediaChips';
 
 import { useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
@@ -22,13 +23,68 @@ import { Loader } from '@/components/ui/loader';
 import { ChatLoader } from './ChatLoader';
 import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { ContentDrawer } from '@/components/twelvelabs/ContentDrawer';
-import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus, Coins } from 'lucide-react';
 
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 
 const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
+const CHIP_TITLE_LIMIT = 10;
 const CONTEXT_FENCE_RE = /```context[\s\S]*?```/g;
 const CHIP_LABEL_LIMIT = 20;
+
+function ThinkingTrigger({ tools }: { tools: ToolCallInfo[] }) {
+    // Count searches by parsing result.search_ids (one search tool can trigger multiple searches)
+    // Count searches by parsing result.search_ids (one search tool can trigger multiple searches)
+    // We use a Set to avoid double-counting if the tool state has duplicates (e.g. streaming + history overlap)
+    const allSearchIds = new Set<string>();
+
+    tools.forEach(t => {
+        const name = t.name.toLowerCase();
+        if (name.includes('search') && !name.includes('get_search_items') && t.result) {
+            try {
+                const result = JSON.parse(t.result);
+                if (result.search_ids && Array.isArray(result.search_ids)) {
+                    result.search_ids.forEach((id: string) => allSearchIds.add(id));
+                }
+            } catch { /* ignore parse errors */ }
+        }
+    });
+
+    const searchCount = allSearchIds.size;
+    const analysisCount = tools.filter(t => t.name.toLowerCase().includes('video_analysis')).length;
+    const credits = searchCount + (analysisCount * 2);
+
+    return (
+        <CollapsibleTrigger className="flex w-full items-center justify-between text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group font-bold tracking-[0.06em]">
+            <div className="flex items-center gap-2">
+                <span>Thinking</span>
+                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
+            </div>
+
+            {credits > 0 && (
+                <Tooltip delayDuration={0}>
+                    <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground/80 hover:text-white transition-colors">
+                            <Coins className="h-3.5 w-3.5" />
+                            <span>{credits}</span>
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" showArrow={false} className="flex items-center gap-2 bg-zinc-950 border-white/10 text-white text-xs">
+                        <div className="flex items-center gap-1.5">
+                            <Search className="h-3 w-3 text-muted-foreground" />
+                            <span>{searchCount}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <Sparkles className="h-3 w-3 text-white" />
+                            <span>{analysisCount}</span>
+                        </div>
+                    </TooltipContent>
+                </Tooltip>
+            )}
+        </CollapsibleTrigger>
+    );
+}
 
 function getPlatformIcon(platform: string) {
     const normalized = platform.toLowerCase();
@@ -76,17 +132,19 @@ function parseChipLabel(label: string) {
     if (!type || !id) return { text: label };
 
     if (type === "media") {
-        const platform = parts[3] ? parts[2] : ""; // Format: media|id|platform|title or media|id|title (if no platform, rare)
-        // Wait, format is media | id | platform | title
+        // Format: media | id | platform | title | thumbnail_url
+        // Parts indices: 0=media, 1=id, 2=platform, 3=title, 4=thumb
+        const platform = parts[3] ? parts[2] : "";
         const title = parts[3] || parts[2] || "Media";
-        const plat = parts[2] || "";
+        const thumb = parts[4] || "";
 
         return {
             type: "media",
             id,
             text: title,
-            Icon: plat ? getPlatformIcon(plat) : undefined,
-            platform: plat
+            Icon: platform ? getPlatformIcon(platform) : undefined,
+            platform: platform,
+            thumbnail_url: thumb
         };
     }
 
@@ -129,6 +187,11 @@ function truncateLabel(value: string) {
     return value.slice(0, CHIP_LABEL_LIMIT - 1).trimEnd() + "…";
 }
 
+function truncateText(value: string, limit: number) {
+    if (value.length <= limit) return value;
+    return value.slice(0, limit - 1).trimEnd() + "…";
+}
+
 
 function getImageLabelFromUrl(url?: string) {
     if (!url) return 'Image';
@@ -155,6 +218,49 @@ function extractImageAttachments(content: string | Array<any>) {
     }, []);
 }
 
+function extractChipsFromContent(content: string) {
+    const mediaChips: any[] = [];
+    const boardChips: { id: string; label: string }[] = [];
+    const searchChips: { id: string; label: string }[] = [];
+    // We run the regex to find all chips
+    const CHIP_RE = /```chip\s+([\s\S]*?)```/g;
+
+    // We replace all chips with empty string to remove them from display text
+    const cleanedContent = content.replace(CHIP_RE, (match, label) => {
+        const meta = parseChipLabel(label);
+        if (meta.type === 'media') {
+            mediaChips.push({
+                id: meta.id!,
+                title: meta.text || 'Media',
+                platform: meta.platform || '',
+                thumbnail_url: (meta as any).thumbnail_url
+            });
+            return '';
+        }
+        if (meta.type === 'board') {
+            boardChips.push({
+                id: meta.id!,
+                label: meta.text || 'Board'
+            });
+            return '';
+        }
+        if (meta.type === 'search') {
+            searchChips.push({
+                id: meta.id!,
+                label: meta.text || 'Search'
+            });
+            return '';
+        }
+        // For image chips, just remove them (they're handled separately)
+        if (meta.type === 'image') {
+            return '';
+        }
+        return match;
+    });
+
+    return { mediaChips, boardChips, searchChips, cleanedContent };
+}
+
 function buildContentString(content: string | Array<any>) {
     if (typeof content === 'string') return content;
     if (!Array.isArray(content)) return '';
@@ -171,13 +277,15 @@ function buildContentString(content: string | Array<any>) {
     return parts.join('\n');
 }
 
-function getToolDisplayName(name: string): string {
+function getToolDisplayLabel(name: string, count: number): string {
     switch (name) {
-        case 'search': return 'Searching';
-        case 'get_search_items': return 'Loading results';
-        case 'get_board_items': return 'Loading board';
-        case 'get_video_analysis': return 'Analyzing video';
-        case 'report_step': return 'Thinking';
+        case 'search': return count > 1 ? `Searching ${count} topics` : 'Searching';
+        case 'get_search_items': return count > 1 ? `Loading ${count} results` : 'Loading your results';
+        case 'get_board_items': return count > 1 ? `Loading ${count} boards` : 'Loading your board';
+        case 'get_video_analysis': return count > 1 ? `Analyzing ${count} videos` : 'Analyzing your video';
+        case 'get_user_boards': return 'Fetching your boards';
+        case 'search_my_videos': return 'Searching your videos';
+        case 'get_chat_searches': return 'Loading your searches';
         default: return name;
     }
 }
@@ -212,7 +320,7 @@ function ToolList({ tools }: { tools: ToolCallInfo[] }) {
                 const isReportStep = tool.name === 'report_step';
 
                 if (isReportStep) {
-                    const stepText = (tool.input?.step as string) || 'Processing...';
+                    const stepText = (tool.input?.step as string) || 'Processing';
                     return (
                         <div key={idx} className="text-sm text-muted-foreground flex items-center gap-2">
                             <ListTodo className="h-4 w-4 shrink-0" />
@@ -221,8 +329,7 @@ function ToolList({ tools }: { tools: ToolCallInfo[] }) {
                     );
                 }
 
-                const displayName = getToolDisplayName(tool.name);
-                const label = count > 1 ? `${displayName} (${count})` : displayName;
+                const label = getToolDisplayLabel(tool.name, count);
 
                 let ToolIcon = Circle;
                 if (tool.name.includes('search') || tool.name.includes('get_search_items')) ToolIcon = Search;
@@ -237,7 +344,7 @@ function ToolList({ tools }: { tools: ToolCallInfo[] }) {
                         </div>
                         <div className="ml-2">
                             {allDone ? (
-                                <Check className="h-4 w-4 text-green-500 shrink-0" />
+                                <Check className="h-4 w-4 text-white shrink-0" />
                             ) : (
                                 <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                             )}
@@ -270,26 +377,26 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
                 if (chipMeta.icon === "image") return null;
 
                 return (
-                    <span className="inline-flex align-middle mx-1">
+                    <span className="inline-flex align-middle mx-1 -translate-y-0.5">
                         <button
                             type="button"
                             onClick={() => handleChipClick(label, chipMeta.type, chipMeta.id)}
-                            className="inline-flex items-center gap-1.5 rounded-lg glass border-white/20 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-white/10 cursor-pointer"
+                            className="inline-flex items-center gap-1 rounded-full bg-[#b7b7b7] px-2.5 py-1 text-xs font-medium text-black ring-1 ring-white/10 transition-colors hover:bg-[#c5c5c5] cursor-pointer"
                         >
                             {chipMeta.icon === "board" && (
-                                <LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+                                <LayoutDashboard className="h-3.5 w-3.5 text-black/60" />
                             )}
                             {chipMeta.icon === "search" && (
-                                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                                <Search className="h-3.5 w-3.5 text-black/60" />
                             )}
                             {chipMeta.icon === "image" && (
-                                <ImagePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                                <ImagePlus className="h-3.5 w-3.5 text-black/60" />
                             )}
                             {chipMeta.Icon && (
-                                <chipMeta.Icon className="text-[12px]" />
+                                <chipMeta.Icon className="text-[12px] text-black/60" />
                             )}
-                            <span className="truncate max-w-[200px]" title={chipMeta.text}>
-                                {truncateLabel(chipMeta.text || '')}
+                            <span className="truncate" title={chipMeta.text}>
+                                {truncateText(chipMeta.text || '', CHIP_TITLE_LIMIT)}
                             </span>
                         </button>
                     </span>
@@ -303,19 +410,54 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
 
     if (!isAi) {
         // Human message: Plain text, just strip context
-        const cleaned = contentStr.replace(CONTEXT_FENCE_RE, '');
-        if (!cleaned.trim()) return null;
+        const { mediaChips, boardChips, searchChips, cleanedContent: contentStrCleaned } = extractChipsFromContent(contentStr);
+        const cleaned = contentStrCleaned.replace(CONTEXT_FENCE_RE, '');
+
+        // If message is empty after stripping chips (just chips sent), don't return null if we have chips
+        if (!cleaned.trim() && mediaChips.length === 0 && boardChips.length === 0 && searchChips.length === 0 && imageAttachments.length === 0) return null;
+
+        const renderChip = (type: string, id: string, label: string, icon: any) => (
+            <button
+                key={`${type}-${id}`}
+                type="button"
+                onClick={() => handleChipClick(label, type, id)}
+                className="inline-flex items-center gap-1 rounded-full bg-[#b7b7b7] px-2.5 py-1 text-xs font-medium text-black ring-1 ring-white/10 transition-colors hover:bg-[#c5c5c5] cursor-pointer mb-1"
+            >
+                {icon}
+                <span className="truncate" title={label}>
+                    {truncateText(label || '', CHIP_TITLE_LIMIT)}
+                </span>
+            </button>
+        );
 
         return (
-            <div className="flex flex-col gap-2">
-                <div className="w-full">
-                    <MessageContent
-                        markdown={false}
-                        className='whitespace-pre-wrap !px-4 !py-2.5 text-base leading-[26px] font-light tracking-[0.035rem]'
-                    >
-                        {cleaned.trim()}
-                    </MessageContent>
-                </div>
+            <div className="flex flex-col gap-2 items-end">
+                {/* Stacked Media Chips (Right Aligned) */}
+                {mediaChips.length > 0 && (
+                    <StackedMediaChips
+                        chips={mediaChips}
+                        onChipClick={(id, platform) => handleChipClick('media', 'media', id)}
+                    />
+                )}
+
+                {/* Search & Board Chips */}
+                {(boardChips.length > 0 || searchChips.length > 0) && (
+                    <div className="flex flex-wrap justify-end gap-2">
+                        {boardChips.map(chip => renderChip('board', chip.id, chip.label, <LayoutDashboard className="h-3.5 w-3.5 text-black/60" />))}
+                        {searchChips.map(chip => renderChip('search', chip.id, chip.label, <Search className="h-3.5 w-3.5 text-black/60" />))}
+                    </div>
+                )}
+
+                {cleaned.trim() && (
+                    <div className="w-full glass text-foreground shadow-lg border-white/10 bg-[#1A1A1A] rounded-xl overflow-hidden">
+                        <MessageContent
+                            markdown={false}
+                            className='whitespace-pre-wrap !px-4 !py-2.5 text-base leading-[34px] font-light tracking-[0.035rem]'
+                        >
+                            {cleaned.trim()}
+                        </MessageContent>
+                    </div>
+                )}
                 {/* Image Attachments */}
                 {imageAttachments.length > 0 && (
                     <div className="flex overflow-x-auto scrollbar-none gap-2 mt-2 pb-1">
@@ -345,6 +487,7 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
         );
     }
 
+
     // AI Message: enhanced markdown
     const withoutContext = contentStr.replace(CONTEXT_FENCE_RE, '');
 
@@ -358,7 +501,7 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
             <div className="w-full">
                 <MessageContent
                     markdown={true}
-                    className="bg-transparent p-0 text-base leading-[26px] font-light tracking-[0.035rem]"
+                    className="bg-transparent p-0 text-base leading-[34px] font-light tracking-[0.035rem]"
                     components={components}
                 >
                     {processedContent}
@@ -468,7 +611,9 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
 
             // Only attempt scroll if we're on a board or chat page
             if (currentCanvasPage === 'chat') {
-                const match = findMediaInResults(targetId, canvasResultsMap);
+                // Read directly from store to avoid stale closure value
+                const currentResultsMap = useChatStore.getState().canvasResultsMap;
+                const match = findMediaInResults(targetId, currentResultsMap);
 
                 if (match) {
                     // Helper to wait for the scroll function to be registered (handles re-renders/tab switches)
@@ -488,6 +633,9 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                     };
 
                     if (match.searchId !== canvasActiveSearchId) {
+                        // [DISABLED] Tab switching logic - causes timing issues with virtualized grid
+                        // TODO: Re-enable once scroll timing is fully stabilized
+                        /*
                         setCanvasActiveSearchId(match.searchId);
                         // Give a tiny buffer for state update to propagate before polling
                         setTimeout(async () => {
@@ -496,6 +644,9 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                 openContentDrawer(targetId);
                             }
                         }, 50);
+                        */
+                        console.log('[MediaChip] Item is in another tab, opening drawer instead of switching');
+                        openContentDrawer(targetId);
                     } else {
                         const success = await attemptScroll();
                         if (!success) {
@@ -520,7 +671,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                 await openContentDrawer(targetId);
             }
         }
-    }, [router, activeChatId, fetchMediaView, canvasResultsMap, canvasActiveSearchId, setCanvasActiveSearchId, canvasBoardItems, currentCanvasPage]);
+    }, [router, activeChatId, fetchMediaView, canvasActiveSearchId, setCanvasActiveSearchId, canvasBoardItems, currentCanvasPage]);
 
     // Handle image attachment click (opens lightbox)
     const handleImageClick = useCallback((url: string) => {
@@ -605,8 +756,8 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
         );
     }
 
-    // Loading messages
-    if (isLoading || (isFetching && messages.length === 0)) {
+    // Loading messages - only show skeleton if no messages at all (including optimistic)
+    if ((isLoading || isFetching) && messages.length === 0 && !isStreaming) {
         return <ChatLoader />;
     }
 
@@ -617,7 +768,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                 <div className="rounded-full bg-secondary p-4 mb-4">
                     <MessageSquare className="h-8 w-8 text-muted-foreground" />
                 </div>
-                <p className="text-base text-muted-foreground leading-[26px] font-light tracking-[0.035rem]">
+                <p className="text-base text-muted-foreground leading-[34px] font-light tracking-[0.035rem]">
                     Send a message
                 </p>
             </div>
@@ -637,10 +788,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                 <Message key={item.id} className="justify-start">
                                     <div className="w-full max-w-[95%] mb-2">
                                         <Collapsible defaultOpen={hasActiveTools}>
-                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group font-bold tracking-[0.06em]">
-                                                <span>Thinking</span>
-                                                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
-                                            </CollapsibleTrigger>
+                                            <ThinkingTrigger tools={tools} />
                                             <CollapsibleContent className="mt-2">
                                                 <ToolList tools={tools} />
                                             </CollapsibleContent>
@@ -660,7 +808,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                     <div
                                         className={
                                             msg.type === 'human'
-                                                ? 'glass max-w-[85%] text-foreground shadow-lg border-white/10 bg-[#1A1A1A] rounded-xl !p-0'
+                                                ? 'max-w-[85%] !p-0'
                                                 : 'bg-transparent max-w-[95%] text-foreground p-0'
                                         }
                                     >
@@ -681,10 +829,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                         <Message key="streaming-tools" className="justify-start">
                             <div className="w-full max-w-[95%] mb-2">
                                 <Collapsible defaultOpen={true}>
-                                    <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group font-bold tracking-[0.06em]">
-                                        <span>Thinking</span>
-                                        <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
-                                    </CollapsibleTrigger>
+                                    <ThinkingTrigger tools={streamingTools} />
                                     <CollapsibleContent className="mt-2">
                                         <ToolList tools={streamingTools} />
                                     </CollapsibleContent>

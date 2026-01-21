@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover - fallback if psycopg isn't available
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
+from app.core.redis_client import get_app_redis
 from app.db import get_db_connection, set_rls_user, queries
 
 from app.storage import async_gcs_client
@@ -51,21 +52,11 @@ class UpdateTagOrdersRequest(BaseModel):
 
 async def get_redis(request: Request):
     """Get Redis client instance."""
-    client = getattr(request.app.state, "redis", None)
-    if client is not None:
-        yield client
-        return
-
-    client = redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=True,
-        socket_keepalive=True,
-        health_check_interval=30,
-    )
     try:
-        yield client
-    finally:
-        await client.close()
+        client = get_app_redis(request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    yield client
 
 
 # --- Helpers ---
@@ -153,10 +144,11 @@ async def stream_generator_to_redis(
     chat_id: str,
     thread_id: str,
     inputs: dict,
+    redis_client: redis.Redis,
     context: dict | None = None,
     model_name: str | None = None,
     image_urls: list[str] | None = None,
-    redis_client: redis.Redis | None = None,
+    filters: dict | None = None,
 ):
     """
     Background task:
@@ -165,18 +157,9 @@ async def stream_generator_to_redis(
     3. Push to Redis Stream `chat:{id}:stream`.
     4. Cleanup Redis key on finish.
     """
-    logger.info(f"Starting background stream for chat {chat_id}")
+    logger.info(f"Starting background stream for chat {chat_id} {filters}")
     
     r = redis_client
-    owns_client = False
-    if r is None:
-        r = redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            socket_keepalive=True,
-            health_check_interval=30,
-        )
-        owns_client = True
     stream_key = f"chat:{chat_id}:stream"
 
     try:
@@ -188,9 +171,27 @@ async def stream_generator_to_redis(
                 "chat_id": chat_id,
                 "model_name": model_name,
                 "image_urls": image_urls or [],
+                "filters": filters or {},
             }
         }
         tool_run_ids = set()
+        
+        # Token batching: buffer content_delta tokens before pushing to Redis
+        BUFFER_THRESHOLD = 80  # characters
+        content_buffer = ""
+        current_msg_id = None
+        
+        async def flush_buffer():
+            """Flush buffered content to Redis if any."""
+            nonlocal content_buffer, current_msg_id
+            if content_buffer and current_msg_id:
+                payload = {
+                    "type": "content_delta",
+                    "content": content_buffer,
+                    "id": current_msg_id
+                }
+                await r.xadd(stream_key, {"data": json.dumps(payload, default=str)})
+                content_buffer = ""
         
         async for ev in graph.astream_events(inputs, config=config, version="v2"):
             ev_type = ev.get("event")
@@ -219,16 +220,37 @@ async def stream_generator_to_redis(
                     msg_id = getattr(chunk, "id", None) if hasattr(chunk, "id") else chunk.get("id")
                     
                     if content:
-                        payload = {
-                            "type": "content_delta",
-                            "content": content,
-                            "id": msg_id
-                        }
-                    else:
-                        # Sometimes empty chunks come through e.g. at start/end
-                        pass
+                        # Check if message ID changed (new message started)
+                        if msg_id != current_msg_id:
+                            # Flush previous message's buffer first
+                            await flush_buffer()
+                            current_msg_id = msg_id
+                        
+                        # Normalize content to string for buffering
+                        # Gemini returns list of content blocks, OpenRouter returns string
+                        if isinstance(content, list):
+                            # Extract text from content blocks (Gemini format)
+                            text_content = "".join(
+                                block.get("text", "") if isinstance(block, dict) else str(block)
+                                for block in content
+                                if isinstance(block, dict) and block.get("type") == "text"
+                            )
+                        else:
+                            text_content = str(content)
+                        
+                        # Accumulate content in buffer
+                        content_buffer += text_content
+                        
+                        # Flush if buffer exceeds threshold
+                        if len(content_buffer) >= BUFFER_THRESHOLD:
+                            await flush_buffer()
+                    # Skip setting payload - content_delta is handled via buffering
+                    continue
                         
             elif ev_type == "on_tool_start":
+                # Flush any buffered content before tool events
+                await flush_buffer()
+                
                 if run_id:
                     tool_run_ids.add(run_id)
                 logger.debug(
@@ -246,6 +268,9 @@ async def stream_generator_to_redis(
                 }
                 
             elif ev_type == "on_tool_end":
+                # Flush any buffered content before tool events
+                await flush_buffer()
+                
                 if run_id and run_id in tool_run_ids:
                     tool_run_ids.discard(run_id)
                 tool_output = data.get("output")
@@ -265,6 +290,8 @@ async def stream_generator_to_redis(
             if payload:
                 await r.xadd(stream_key, {"data": json.dumps(payload, default=str)})
 
+        # Flush any remaining buffered content before sending done
+        await flush_buffer()
         await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
 
     except Exception as e:
@@ -273,8 +300,6 @@ async def stream_generator_to_redis(
         
     finally:
         await r.expire(stream_key, 60)
-        if owns_client:
-            await r.close()
         logger.info(f"Background stream finished for {chat_id}")
 
 
@@ -346,6 +371,19 @@ async def create_chat(
             context_type=request.context_type,
             context_id=request.context_id,
         )
+        if request.tags:
+            tags = [
+                {
+                    "type": tag.type,
+                    "tag_id": tag.id,
+                    "label": tag.label,
+                    "source": tag.source or "user",
+                    "sort_order": tag.sort_order,
+                }
+                for tag in request.tags
+            ]
+            await queries.upsert_chat_tags(conn, chat_id, tags)
+
         await conn.commit()
         
         return Chat(
@@ -519,6 +557,7 @@ async def send_message(
     auth_token = auth_header.split(" ")[1]
 
     send_request = SendMessageRequest.model_validate(await req_obj.json())
+    logger.info("send message", send_request.filters)
 
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
@@ -573,6 +612,7 @@ async def send_message(
             "model_name": send_request.model,
             "image_urls": image_urls,
             "auth_token": auth_token,
+            "filters": send_request.filters or {},
         },
     )
     
@@ -650,6 +690,10 @@ async def stream_chat(
 
     async def event_generator():
         if hub is None:
+            logger.warning(
+                "Stream hub missing; SSE will use per-connection Redis XREAD. chat_id=%s",
+                chat_id,
+            )
             last_id = last_event_id or "0-0"
             try:
                 while True:

@@ -6,7 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.decorators import log_query_timing
-
+from app.core import logger
 from app.services.content_builder import content_item_from_row
 
 
@@ -221,6 +221,7 @@ async def remove_item_from_board(
 async def get_board_items(
     conn: AsyncConnection,
     board_id: UUID,
+    user_id: Optional[UUID] = None,
 ) -> List[dict]:
     """Get all items in a board with content details."""
     result = await conn.execute(
@@ -247,7 +248,7 @@ async def get_board_items(
 
     item_ids = [row[2] for row in rows]
     
-    assets_result = await conn.execute(
+    result = await conn.execute(
         text("""
             SELECT content_item_id, id, asset_type, source_url, gcs_uri, status
             FROM media_assets
@@ -255,18 +256,46 @@ async def get_board_items(
         """),
         {"ids": item_ids}
     )
+    assets_result = result.fetchall()
     
+    analyzed_asset_ids = set()
+    if user_id:
+        # Collect all video asset IDs to check analysis status
+        video_asset_ids = []
+        for a in assets_result:
+            if a[2] == 'video':  # asset_type
+                video_asset_ids.append(a[1])  # id
+        
+        if video_asset_ids:
+            # Single batch query to check which assets are analyzed by this user
+            # Uses unique index on (user_id, media_asset_id) from user_analysis_access
+            analysis_result = await conn.execute(
+                text("""
+                    SELECT media_asset_id 
+                    FROM user_analysis_access 
+                    WHERE user_id = :user_id 
+                    AND media_asset_id = ANY(:asset_ids)
+                """),
+                {"user_id": user_id, "asset_ids": video_asset_ids}
+            )
+            analyzed_asset_ids = {row[0] for row in analysis_result.fetchall()}
+
     assets_map = {}
-    for a in assets_result.fetchall():
+    for a in assets_result:
         cid = a[0]
         if cid not in assets_map:
             assets_map[cid] = []
+        
+        asset_id = a[1]
+        is_video = a[2] == 'video'
+        
         assets_map[cid].append({
-            "id": a[1],
+            "id": asset_id,
             "asset_type": a[2],
             "source_url": a[3],
             "gcs_uri": a[4],
             "status": a[5],
+            "is_analyzed": is_video and asset_id in analyzed_asset_ids
         })
 
     for row in rows:
@@ -274,14 +303,24 @@ async def get_board_items(
         
         # Build content_item using shared helper (offset=2: skips board_id, added_at)
         content_item = content_item_from_row(row, offset=2)
-
+        
+        # Check if any asset for this item is an analyzed video
+        is_analyzed = False
+        item_assets = assets_map.get(cid, [])
+        for asset in item_assets:
+            if asset.get("is_analyzed"):
+                is_analyzed = True
+                break
+        
+        content_item["is_analyzed"] = is_analyzed
+        logger.info(f"Content item {cid} is_analyzed: {is_analyzed}")
         items.append({
             "board_id": row[0],
             "added_at": row[1],
             "content_item": content_item,
-            "assets": assets_map.get(cid, [])
+            "assets": item_assets
         })
-        
+
     return items
 
 

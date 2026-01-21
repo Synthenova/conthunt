@@ -4,7 +4,8 @@ import { useCallback, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { auth } from '@/lib/firebaseClient';
-import { useChatStore, Chat, ChatMessage } from '@/lib/chatStore';
+import { useChatStore, Chat, ChatMessage, ChatTagPayload } from '@/lib/chatStore';
+import type { PlatformInputs } from '@/lib/clientFilters';
 import { BACKEND_URL, authFetch } from '@/lib/api';
 
 async function waitForAuth() {
@@ -63,13 +64,19 @@ export function useCreateChat() {
     const { addChat, setActiveChatId, setMessages, openSidebar } = useChatStore();
 
     return useMutation({
-        mutationFn: async (input?: { title?: string; contextType?: 'board' | 'search'; contextId?: string | null }) => {
+        mutationFn: async (input?: {
+            title?: string;
+            contextType?: 'board' | 'search';
+            contextId?: string | null;
+            tags?: ChatTagPayload[];
+        }) => {
             return fetchWithAuth<Chat>(`${BACKEND_URL}/v1/chats`, {
                 method: 'POST',
                 body: JSON.stringify({
                     title: input?.title || 'New Chat',
                     context_type: input?.contextType,
                     context_id: input?.contextId,
+                    tags: input?.tags,
                 }),
             });
         },
@@ -305,6 +312,7 @@ export function useSendMessage() {
             tags?: Array<{ type: 'board' | 'search' | 'media'; id: string; label?: string }>;
             model?: string;
             imageUrls?: string[];
+            filters?: PlatformInputs;
         }
     ) => {
         // Use passed chatId or fall back to activeChatId from store
@@ -351,6 +359,9 @@ export function useSendMessage() {
             }
             if (options?.imageUrls?.length) {
                 payload.image_urls = options.imageUrls;
+            }
+            if (options?.filters) {
+                payload.filters = options.filters;
             }
 
             // 1. Send message to start background streaming

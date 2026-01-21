@@ -17,6 +17,7 @@ export type MediaChip = {
     creator_handle?: string;
     content_type?: string;
     primary_text?: string;
+    thumbnail_url?: string;
     locked?: boolean;
 };
 

@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { usePathname } from 'next/navigation';
 import { useMemo, useEffect, useRef, useState } from 'react';
 import { useChatList } from '@/hooks/useChat';
+import { useChatTags } from '@/hooks/useChatTags';
 
 import { GripVertical } from 'lucide-react';
 
@@ -27,6 +28,8 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
     const resizeStartX = useRef(0);
     const resizeStartWidth = useRef(420);
     const [isDragOver, setIsDragOver] = useState(false);
+    const [isSidebarDragOver, setIsSidebarDragOver] = useState(false);
+    const dragCounter = useRef(0);
 
     const MEDIA_DRAG_TYPE = 'application/x-conthunt-media';
 
@@ -53,6 +56,19 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
         type: context?.type,
         id: context?.id,
     });
+    const { tagsQuery } = useChatTags(chatIdFromPath);
+    const pendingSearchTags = useMemo(() => {
+        if (!chatIdFromPath) return [];
+        return (tagsQuery.data || [])
+            .filter((tag) => tag.type === 'search')
+            .map((tag) => ({
+                type: tag.type,
+                id: tag.id,
+                label: tag.label ?? undefined,
+                source: tag.source,
+                sort_order: tag.sort_order ?? undefined,
+            }));
+    }, [chatIdFromPath, tagsQuery.data]);
     const contextKey = useMemo(() => {
         return context ? `${context.type}:${context.id}` : 'none';
     }, [context]);
@@ -127,11 +143,59 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
         }
     }, [maxWidth, sidebarWidth]);
 
-    const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    // Global Window Drag Listeners for Overlay Visibility
+    useEffect(() => {
+        const handleWindowDragEnter = (e: DragEvent) => {
+            if (e.dataTransfer?.types.includes(MEDIA_DRAG_TYPE)) {
+                dragCounter.current += 1;
+                setIsSidebarDragOver(true);
+            }
+        };
+
+        const handleWindowDragLeave = (e: DragEvent) => {
+            if (e.dataTransfer?.types.includes(MEDIA_DRAG_TYPE)) {
+                dragCounter.current -= 1;
+                if (dragCounter.current <= 0) {
+                    setIsSidebarDragOver(false);
+                    dragCounter.current = 0;
+                }
+            }
+        };
+
+        const handleWindowDrop = (e: DragEvent) => {
+            dragCounter.current = 0;
+            setIsSidebarDragOver(false);
+        };
+
+        const handleWindowDragEnd = (e: DragEvent) => {
+            dragCounter.current = 0;
+            setIsSidebarDragOver(false);
+        };
+
+        window.addEventListener('dragenter', handleWindowDragEnter);
+        window.addEventListener('dragleave', handleWindowDragLeave);
+        window.addEventListener('drop', handleWindowDrop);
+        window.addEventListener('dragend', handleWindowDragEnd);
+
+        return () => {
+            window.removeEventListener('dragenter', handleWindowDragEnter);
+            window.removeEventListener('dragleave', handleWindowDragLeave);
+            window.removeEventListener('drop', handleWindowDrop);
+            window.removeEventListener('dragend', handleWindowDragEnd);
+        };
+    }, []);
+
+    // Global Drop Handler for Sidebar
+    const handleSidebarDrop = (event: React.DragEvent<HTMLDivElement>) => {
+        setIsSidebarDragOver(false);
         setIsDragOver(false);
+        dragCounter.current = 0;
+
         const payload = event.dataTransfer.getData(MEDIA_DRAG_TYPE);
         if (!payload) return;
         event.preventDefault();
+        event.stopPropagation();
+
         try {
             const parsed = JSON.parse(payload) as { items?: any[] };
             if (!parsed.items?.length) return;
@@ -142,15 +206,23 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
         }
     };
 
-    const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    const handleSidebarDragOver = (event: React.DragEvent<HTMLDivElement>) => {
         if (event.dataTransfer.types.includes(MEDIA_DRAG_TYPE)) {
             event.preventDefault();
             event.dataTransfer.dropEffect = 'copy';
-            setIsDragOver(true);
         }
     };
 
-    const handleDragLeave = () => setIsDragOver(false);
+    // Keep ChatInput specific handlers if needed for specific visual feedback there,
+    // but sidebar handler should catch everything bubbling up if we attach it correctly.
+    // The Input's onDrop was stopping propagation potentially?
+    // Let's rely on the sidebar handler primarily, but ChatInput might still want to highlight itself.
+
+    // We update ChatInput props to just use the drag state if we want, or pass handlers.
+    // Actually, ChatInput's handlers are local.
+
+    // Original local handlers (for chat input specific highlight if we keep it)
+    // We can simplify and just use the global sidebar drop.
 
     return (
         <>
@@ -165,21 +237,33 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
             {/* Sidebar */}
             <aside
                 className={cn(
-                    "flex flex-col bg-background/95 backdrop-blur-lg border-l border-white/5 font-nav",
-                    "transition-all duration-300 ease-in-out",
-                    // Mobile: fixed overlay with full viewport height
+                    "flex flex-col bg-background/95 backdrop-blur-lg border-l border-white/5 font-nav text-foreground",
+                    "transition-all duration-300 ease-in-out relative",
+                    // Mobile: fixed overlay
                     "fixed inset-y-0 right-0 z-50 w-[90%] max-w-[420px] h-screen",
-                    // Desktop: part of flex layout, constrained to viewport
+                    // Desktop: relative
                     "lg:relative lg:z-0 lg:h-full lg:max-w-none",
                     isOpen
                         ? "translate-x-0 lg:w-[var(--sidebar-width)] lg:min-w-[var(--sidebar-width)]"
                         : "translate-x-full lg:w-0 lg:min-w-0 lg:overflow-hidden"
                 )}
                 style={{ ['--sidebar-width' as any]: `${Math.max(0, Math.min(sidebarWidth, maxWidth ?? sidebarWidth))}px` }}
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
+                onDrop={handleSidebarDrop}
+                onDragOver={handleSidebarDragOver}
             >
+                {/* Drag Overlay */}
+                {isSidebarDragOver && (
+                    <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center border-2 border-dashed border-primary/50 text-center p-6 animate-in fade-in duration-200 pointer-events-none">
+                        <img
+                            src="/images/image.png"
+                            alt="ContHunt"
+                            className="w-24 h-24 mb-6 opacity-90 object-contain"
+                        />
+                        <p className="text-2xl font-bold text-white tracking-tight">
+                            Drop videos to agent to analyze quickly
+                        </p>
+                    </div>
+                )}
                 <div
                     className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-50 hidden lg:flex h-12 w-6 items-center justify-center cursor-col-resize group"
                     onMouseDown={(event) => {
@@ -198,7 +282,7 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                     "flex flex-col h-full w-full max-w-full",
                     !isOpen && "lg:invisible"
                 )}>
-                    <ChatHeader />
+                    <ChatHeader pendingTags={pendingSearchTags} />
                     <div className="relative flex-1 min-h-0 flex flex-col">
                         <ChatHistoryPanel context={context} />
                         <ChatMessageList isContextLoading={!!context && isLoading} />
