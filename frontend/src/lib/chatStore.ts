@@ -66,6 +66,10 @@ interface ChatState {
     isNewChatPending: boolean;
     pendingNewChatTags: ChatTagPayload[];
 
+    // Pending first message (for dashboard -> chat navigation)
+    pendingFirstMessage: { chatId: string; message: string } | null;
+    setPendingFirstMessage: (pending: { chatId: string; message: string } | null) => void;
+
     // Messages for active chat
     messages: ChatMessage[];
     setMessages: (messages: ChatMessage[]) => void;
@@ -175,6 +179,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingNewChatTags: options?.pendingTags || [],
     }),
     pendingNewChatTags: [],
+
+    // Pending first message
+    pendingFirstMessage: null,
+    setPendingFirstMessage: (pending) => set({ pendingFirstMessage: pending }),
 
     // Messages
     messages: [],

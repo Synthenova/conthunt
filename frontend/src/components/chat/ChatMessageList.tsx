@@ -749,8 +749,8 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
         );
     }
 
-    // Loading messages
-    if (isLoading || (isFetching && messages.length === 0)) {
+    // Loading messages - only show skeleton if no messages at all (including optimistic)
+    if ((isLoading || isFetching) && messages.length === 0 && !isStreaming) {
         return <ChatLoader />;
     }
 

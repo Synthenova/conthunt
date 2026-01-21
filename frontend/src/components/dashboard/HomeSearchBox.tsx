@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { useCreateChat, useSendMessage } from "@/hooks/useChat";
+import { useCreateChat } from "@/hooks/useChat";
+import { useChatStore } from "@/lib/chatStore";
 import { SendHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FaInstagram, FaTiktok, FaYoutube, FaPinterest } from "react-icons/fa6";
@@ -44,7 +45,7 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
 
     const router = useRouter();
     const createChat = useCreateChat();
-    const { sendMessage } = useSendMessage();
+    const setPendingFirstMessage = useChatStore((s) => s.setPendingFirstMessage);
 
     const handleSubmit = async () => {
         if (!message.trim() || createChat.isPending || isSubmitting) return;
@@ -60,18 +61,9 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                 contextId: undefined,
             });
 
-            void sendMessage(
-                messageText,
-                new AbortController(),
-                chat.id,
-                {
-                    detach: true,
-                    onSendOk: () => router.push(`/app/chats/${chat.id}`),
-                }
-            ).catch((error) => {
-                console.error("Failed to send first message:", error);
-                setIsSubmitting(false);
-            });
+            // Set pending message and navigate - chat page will handle sending
+            setPendingFirstMessage({ chatId: chat.id, message: messageText });
+            router.push(`/app/chats/${chat.id}`);
         } catch (error) {
             console.error("Failed to create chat:", error);
             setIsSubmitting(false);
@@ -168,14 +160,14 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                         onClick={handleSubmit}
                         disabled={isSubmitting || !message.trim()}
                         className={cn(
-                            "relative group/submit rounded-full overflow-hidden transition-all duration-300 -mr-5 w-12 h-12 flex items-center justify-center",
-                            (isSubmitting || !message.trim()) ? "opacity-30 grayscale cursor-not-allowed scale-90" : "opacity-100 cursor-pointer"
+                            "relative group/submit rounded-full overflow-hidden transition-all duration-300 -mr-5 w-12 h-12 flex items-center justify-center bg-transparent",
+                            !message.trim() ? "opacity-30 grayscale cursor-not-allowed scale-90" : isSubmitting ? "cursor-wait" : "opacity-100 cursor-pointer"
                         )}
                     >
                         {isSubmitting ? (
-                            <div className="w-5 h-5 border-2 border-white/50 border-t-white rounded-full animate-spin" />
+                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                         ) : (
-                            <SendHorizontal className="w-6 h-6 text-white fill-white" />
+                            <SendHorizontal className="w-5 h-5 text-white fill-white" />
                         )}
                     </button>
                 </div>

@@ -63,6 +63,8 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         clientFilters,
         isNewChatPending,
         pendingNewChatTags,
+        pendingFirstMessage,
+        setPendingFirstMessage,
     } = useChatStore();
     const { sendMessage } = useSendMessage();
     const { uploadChatImage } = useUploadChatImage();
@@ -186,6 +188,24 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
         }
         resetStreaming();
     }, [activeChatId, resetStreaming]);
+
+    // Auto-send pending message from dashboard navigation
+    const pendingSentRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!pendingFirstMessage || !activeChatId) return;
+        if (pendingFirstMessage.chatId !== activeChatId) return;
+
+        // Prevent double-send (React StrictMode runs effects twice)
+        if (pendingSentRef.current === pendingFirstMessage.chatId) return;
+        pendingSentRef.current = pendingFirstMessage.chatId;
+
+        // Clear pending message and send
+        const messageToSend = pendingFirstMessage.message;
+        setPendingFirstMessage(null);
+
+        abortControllerRef.current = new AbortController();
+        sendMessage(messageToSend, abortControllerRef.current, activeChatId);
+    }, [pendingFirstMessage, activeChatId, sendMessage, setPendingFirstMessage]);
 
     const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         setIsDragOver(false);
@@ -426,43 +446,43 @@ export function ChatInput({ context, isDragActive }: ChatInputProps) {
                         onDrop={handleDrop}
                         className="border-none bg-transparent"
                     >
-                    <ChipList
-                        chips={chips}
-                        onRemoveChip={handleRemoveChip}
-                    />
-                    <PromptInputTextarea
-                        placeholder="Send a message"
-                        className="text-sm min-h-[40px] text-foreground leading-[34px]"
-                    />
-                    <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">
-                        <div className="flex items-center gap-2">
-                            <PromptInputAction tooltip="Attach image">
-                                <FileUploadTrigger asChild>
-                                    <Button
-                                        size="icon"
-                                        variant="ghost"
-                                        className="h-8 w-8 rounded-full"
-                                        disabled={createChat.isPending || isStreaming}
-                                    >
-                                        <ImagePlus className="h-4 w-4" />
-                                    </Button>
-                                </FileUploadTrigger>
-                            </PromptInputAction>
-                            <ModelSelector
-                                selectedModel={selectedModel}
-                                onModelChange={setSelectedModel}
-                            />
-                        </div>
-                        <div>
-                            <ActionButtons
-                                isStreaming={isStreaming}
-                                canSend={canSend}
-                                onSend={handleSend}
-                                onStop={handleStop}
-                            />
-                        </div>
-                    </PromptInputActions>
-                </PromptInput>
+                        <ChipList
+                            chips={chips}
+                            onRemoveChip={handleRemoveChip}
+                        />
+                        <PromptInputTextarea
+                            placeholder="Send a message"
+                            className="text-sm min-h-[40px] text-foreground leading-[34px]"
+                        />
+                        <PromptInputActions className="mt-2 w-full justify-between px-2 pb-1">
+                            <div className="flex items-center gap-2">
+                                <PromptInputAction tooltip="Attach image">
+                                    <FileUploadTrigger asChild>
+                                        <Button
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-8 w-8 rounded-full"
+                                            disabled={createChat.isPending || isStreaming}
+                                        >
+                                            <ImagePlus className="h-4 w-4" />
+                                        </Button>
+                                    </FileUploadTrigger>
+                                </PromptInputAction>
+                                <ModelSelector
+                                    selectedModel={selectedModel}
+                                    onModelChange={setSelectedModel}
+                                />
+                            </div>
+                            <div>
+                                <ActionButtons
+                                    isStreaming={isStreaming}
+                                    canSend={canSend}
+                                    onSend={handleSend}
+                                    onStop={handleStop}
+                                />
+                            </div>
+                        </PromptInputActions>
+                    </PromptInput>
                 </GlassPanel>
             </div>
         </FileUpload>
