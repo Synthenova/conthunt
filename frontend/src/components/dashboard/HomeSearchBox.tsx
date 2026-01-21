@@ -168,7 +168,7 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                         onClick={handleSubmit}
                         disabled={isSubmitting || !message.trim()}
                         className={cn(
-                            "relative group/submit rounded-full overflow-hidden transition-all duration-300",
+                            "relative group/submit rounded-full overflow-hidden transition-all duration-300 -mr-5",
                             (isSubmitting || !message.trim()) ? "opacity-30 grayscale cursor-not-allowed scale-90" : "opacity-100 hover:scale-110 hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
                         )}
                     >
