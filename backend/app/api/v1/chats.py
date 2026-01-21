@@ -244,8 +244,20 @@ async def stream_generator_to_redis(
                             await flush_buffer()
                             current_msg_id = msg_id
                         
+                        # Normalize content to string for buffering
+                        # Gemini returns list of content blocks, OpenRouter returns string
+                        if isinstance(content, list):
+                            # Extract text from content blocks (Gemini format)
+                            text_content = "".join(
+                                block.get("text", "") if isinstance(block, dict) else str(block)
+                                for block in content
+                                if isinstance(block, dict) and block.get("type") == "text"
+                            )
+                        else:
+                            text_content = str(content)
+                        
                         # Accumulate content in buffer
-                        content_buffer += content
+                        content_buffer += text_content
                         
                         # Flush if buffer exceeds threshold
                         if len(content_buffer) >= BUFFER_THRESHOLD:
