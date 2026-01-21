@@ -307,6 +307,10 @@ async def get_video_analysis(
     except ValueError:
         return {"error": "Invalid media_asset_id format."}
     except Exception as e:
+        # Catch explicit 402 or "Credit limit exceeded" in error message
+        error_str = str(e)
+        if "402" in error_str or "Credit limit exceeded" in error_str:
+            return {"error": "CREDIT_LIMIT_EXCEEDED: You have run out of credits. Please upgrade your plan to continue."}
         return {"error": f"Analysis error: {str(e)}"}
 
 
@@ -537,7 +541,15 @@ async def search(
                             "keyword": keyword,
                             "platforms": list(inputs.keys())
                         }
+            except httpx.HTTPStatusError as e:
+                # Explicitly handle 402 Credit Limit errors
+                if e.response.status_code == 402:
+                    return {"error": "CREDIT_LIMIT_EXCEEDED: You have run out of credits. Please upgrade your plan to continue."}
+                return {"error": f"Failed to start search for '{keyword}': {str(e)}"}
             except Exception as e:
+                # Handle cases where backend error detail contains info
+                if "Credit limit exceeded" in str(e):
+                    return {"error": "CREDIT_LIMIT_EXCEEDED: You have run out of credits. Please upgrade your plan to continue."}
                 return {"error": f"Failed to start search for '{keyword}': {str(e)}"}
             return None
 

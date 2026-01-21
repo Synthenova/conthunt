@@ -554,22 +554,33 @@ export default function BoardDetailPage() {
                                                         {newVideosCount} pending
                                                     </span>
                                                 ) : null}
-                                                <Button
-                                                    onClick={handleRefreshInsights}
-                                                    disabled={isRefreshingInsights || isProcessingInsights}
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    className="glass-button h-12 !px-5 gap-2.5 text-sm font-medium border border-white/10 hover:border-white/20"
-                                                >
-                                                    {isRefreshingInsights || isProcessingInsights ? (
-                                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                                    ) : (
-                                                        <RefreshCw className="h-4 w-4 text-muted-foreground" />
-                                                    )}
-                                                    <span className="text-white">
-                                                        {newVideosCount > 0 ? `Update (${newVideosCount})` : "Update"}
-                                                    </span>
-                                                </Button>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <span className="inline-block" tabIndex={0}>
+                                                            <Button
+                                                                onClick={handleRefreshInsights}
+                                                                disabled={isRefreshingInsights || isProcessingInsights}
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="glass-button h-12 !px-5 gap-2.5 text-sm font-medium border border-white/10 hover:border-white/20"
+                                                            >
+                                                                {isRefreshingInsights || isProcessingInsights ? (
+                                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                                ) : (
+                                                                    <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                                                                )}
+                                                                <span className="text-white">
+                                                                    {newVideosCount > 0 ? `Update` : "Update"}
+                                                                </span>
+                                                            </Button>
+                                                        </span>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent className="bg-white text-black border-none shadow-xl font-medium">
+                                                        {transformedItems.filter(item => !item.is_analyzed).length > 0
+                                                            ? `${transformedItems.filter(item => !item.is_analyzed).length} credits will be used`
+                                                            : "No credits will be used"}
+                                                    </TooltipContent>
+                                                </Tooltip>
                                             </div>
                                         </div>
                                     </div>
@@ -649,14 +660,25 @@ export default function BoardDetailPage() {
                                                 )}
                                             </div>
                                             {!(isProcessingInsights || isRefreshingInsights) && (
-                                                <Button
-                                                    onClick={handleRefreshInsights}
-                                                    disabled={isRefreshingInsights || isProcessingInsights}
-                                                    className="h-12 px-8 gap-2.5 glass-button-white hover:text-black text-base font-medium"
-                                                >
-                                                    <Sparkles className="h-5 w-5" />
-                                                    Generate Insights
-                                                </Button>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <span className="inline-block" tabIndex={0}>
+                                                            <Button
+                                                                onClick={handleRefreshInsights}
+                                                                disabled={isRefreshingInsights || isProcessingInsights}
+                                                                className="h-12 px-8 gap-2.5 glass-button-white hover:text-black text-base font-medium"
+                                                            >
+                                                                <Sparkles className="h-5 w-5" />
+                                                                Generate Insights
+                                                            </Button>
+                                                        </span>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent className="bg-white text-black border-none shadow-xl font-medium">
+                                                        {transformedItems.filter(item => !item.is_analyzed).length > 0
+                                                            ? `${transformedItems.filter(item => !item.is_analyzed).length} credits will be used`
+                                                            : "No credits will be used"}
+                                                    </TooltipContent>
+                                                </Tooltip>
                                             )}
                                         </div>
                                     ) : (

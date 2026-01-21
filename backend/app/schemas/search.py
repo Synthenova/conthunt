@@ -69,7 +69,9 @@ class ContentItemResponse(BaseModel):
     author_name: Optional[str] = None
     author_url: Optional[str] = None
     author_image_url: Optional[str] = None
+    author_image_url: Optional[str] = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
+    is_analyzed: bool = False
 
 
 class ResultItem(BaseModel):

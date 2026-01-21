@@ -20,6 +20,7 @@ export interface FlatMediaItem {
     creator_url?: string;
     creator_image?: string;
     assets?: any[];  // Raw assets array for API calls (ContentDrawer)
+    is_analyzed?: boolean;
 }
 
 /**
@@ -93,6 +94,7 @@ export function transformToMediaItem(backendResult: any): FlatMediaItem {
 
         // Raw assets for API calls
         assets: assets,
+        is_analyzed: Boolean(content.is_analyzed),
     };
 }
 

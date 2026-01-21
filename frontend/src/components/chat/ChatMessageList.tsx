@@ -23,7 +23,8 @@ import { Loader } from '@/components/ui/loader';
 import { ChatLoader } from './ChatLoader';
 import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { ContentDrawer } from '@/components/twelvelabs/ContentDrawer';
-import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus, Coins } from 'lucide-react';
 
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 
@@ -31,6 +32,48 @@ const CHIP_FENCE_RE = /```chip\s+([\s\S]*?)```/g;
 const CHIP_TITLE_LIMIT = 10;
 const CONTEXT_FENCE_RE = /```context[\s\S]*?```/g;
 const CHIP_LABEL_LIMIT = 20;
+
+function ThinkingTrigger({ tools }: { tools: ToolCallInfo[] }) {
+    const credits = tools.reduce((acc, t) => {
+        const name = t.name.toLowerCase();
+        if (name.includes('search') && !name.includes('get_search_items')) return acc + 1;
+        if (name.includes('video_analysis')) return acc + 2;
+        return acc;
+    }, 0);
+
+    const searchCount = tools.filter(t => t.name.toLowerCase().includes('search') && !t.name.toLowerCase().includes('get_search_items')).length;
+    const analysisCount = tools.filter(t => t.name.toLowerCase().includes('video_analysis')).length;
+
+    return (
+        <CollapsibleTrigger className="flex w-full items-center justify-between text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group font-bold tracking-[0.06em]">
+            <div className="flex items-center gap-2">
+                <span>Thinking</span>
+                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
+            </div>
+
+            {credits > 0 && (
+                <Tooltip delayDuration={0}>
+                    <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground/80 hover:text-amber-400 transition-colors">
+                            <Coins className="h-3.5 w-3.5" />
+                            <span>{credits}</span>
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" className="flex items-center gap-3 bg-zinc-950 border-white/10 text-white text-xs">
+                        <div className="flex items-center gap-1.5">
+                            <Search className="h-3 w-3 text-muted-foreground" />
+                            <span>{searchCount}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <Sparkles className="h-3 w-3 text-amber-400" />
+                            <span>{analysisCount}</span>
+                        </div>
+                    </TooltipContent>
+                </Tooltip>
+            )}
+        </CollapsibleTrigger>
+    );
+}
 
 function getPlatformIcon(platform: string) {
     const normalized = platform.toLowerCase();
@@ -691,10 +734,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                 <Message key={item.id} className="justify-start">
                                     <div className="w-full max-w-[95%] mb-2">
                                         <Collapsible defaultOpen={hasActiveTools}>
-                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group font-bold tracking-[0.06em]">
-                                                <span>Thinking</span>
-                                                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
-                                            </CollapsibleTrigger>
+                                            <ThinkingTrigger tools={tools} />
                                             <CollapsibleContent className="mt-2">
                                                 <ToolList tools={tools} />
                                             </CollapsibleContent>
@@ -735,10 +775,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                         <Message key="streaming-tools" className="justify-start">
                             <div className="w-full max-w-[95%] mb-2">
                                 <Collapsible defaultOpen={true}>
-                                    <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group font-bold tracking-[0.06em]">
-                                        <span>Thinking</span>
-                                        <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
-                                    </CollapsibleTrigger>
+                                    <ThinkingTrigger tools={streamingTools} />
                                     <CollapsibleContent className="mt-2">
                                         <ToolList tools={streamingTools} />
                                     </CollapsibleContent>
