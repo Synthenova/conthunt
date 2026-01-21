@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover - fallback if psycopg isn't available
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
+from app.core.redis_client import get_app_redis
 from app.db import get_db_connection, set_rls_user, queries
 
 from app.storage import async_gcs_client
@@ -51,21 +52,11 @@ class UpdateTagOrdersRequest(BaseModel):
 
 async def get_redis(request: Request):
     """Get Redis client instance."""
-    client = getattr(request.app.state, "redis", None)
-    if client is not None:
-        yield client
-        return
-
-    client = redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=True,
-        socket_keepalive=True,
-        health_check_interval=30,
-    )
     try:
-        yield client
-    finally:
-        await client.close()
+        client = get_app_redis(request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    yield client
 
 
 # --- Helpers ---
@@ -153,11 +144,11 @@ async def stream_generator_to_redis(
     chat_id: str,
     thread_id: str,
     inputs: dict,
+    redis_client: redis.Redis,
     context: dict | None = None,
     model_name: str | None = None,
     image_urls: list[str] | None = None,
     filters: dict | None = None,
-    redis_client: redis.Redis | None = None,
 ):
     """
     Background task:
@@ -169,15 +160,6 @@ async def stream_generator_to_redis(
     logger.info(f"Starting background stream for chat {chat_id} {filters}")
     
     r = redis_client
-    owns_client = False
-    if r is None:
-        r = redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            socket_keepalive=True,
-            health_check_interval=30,
-        )
-        owns_client = True
     stream_key = f"chat:{chat_id}:stream"
 
     try:
@@ -318,8 +300,6 @@ async def stream_generator_to_redis(
         
     finally:
         await r.expire(stream_key, 60)
-        if owns_client:
-            await r.close()
         logger.info(f"Background stream finished for {chat_id}")
 
 

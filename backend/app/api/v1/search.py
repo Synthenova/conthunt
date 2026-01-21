@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Header
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
+from app.core.redis_client import get_app_redis
 from app.core.telemetry import trace_span
 from app.db import get_db_connection, set_rls_user, queries
 
@@ -156,7 +157,7 @@ async def search_worker(
     user_uuid: UUID,
     query: str,
     inputs: dict,
-    redis_client: redis.Redis | None = None,
+    redis_client: redis.Redis,
 ):
     """
     Background worker that:
@@ -167,15 +168,6 @@ async def search_worker(
     """
     settings = get_settings()
     r = redis_client
-    owns_client = False
-    if r is None:
-        r = redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            socket_keepalive=True,
-            health_check_interval=30,
-        )
-        owns_client = True
     stream_key = f"search:{search_id}:stream"
     
     collected_results: List[PlatformCallResult] = []
@@ -386,9 +378,6 @@ async def search_worker(
             await r.expire(stream_key, 300)
         except Exception:
             pass
-    finally:
-        if owns_client:
-            await r.close()
 
 
 @trace_span("search.load_more_worker")
@@ -397,7 +386,7 @@ async def load_more_worker(
     user_uuid: UUID,
     query: str,
     platform_cursors: dict,
-    redis_client: redis.Redis | None = None,
+    redis_client: redis.Redis,
 ):
     """
     Background worker for "load more" pagination.
@@ -411,15 +400,6 @@ async def load_more_worker(
     """
     settings = get_settings()
     r = redis_client
-    owns_client = False
-    if r is None:
-        r = redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            socket_keepalive=True,
-            health_check_interval=30,
-        )
-        owns_client = True
     stream_key = f"search:{search_id}:more:stream"
     
     # Clear old stream messages from previous load more requests
@@ -615,31 +595,17 @@ async def load_more_worker(
             await r.expire(stream_key, 300)
         except Exception:
             pass
-    finally:
-        if owns_client:
-            await r.close()
 
 
 # --- Redis Dependency ---
 
 async def get_redis(request: Request):
     """Get Redis client instance."""
-    client = getattr(request.app.state, "redis", None)
-    if client is not None:
-        yield client
-        return
-
-    settings = get_settings()
-    client = redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=True,
-        socket_keepalive=True,
-        health_check_interval=30,
-    )
     try:
-        yield client
-    finally:
-        await client.close()
+        client = get_app_redis(request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    yield client
 
 
 # --- Endpoints ---

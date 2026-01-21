@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Optional, List, Literal
 
 from app.core import get_settings, logger
+from app.core.redis_client import get_app_redis
 from app.auth import get_current_user
 import redis.asyncio as redis
 
@@ -17,11 +18,7 @@ router = APIRouter()
 
 async def get_redis_client(request: Request) -> redis.Redis:
     """Helper to get redis client from app state or create new one."""
-    client = getattr(request.app.state, "redis", None)
-    if client:
-        return client
-    settings = get_settings()
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+    return get_app_redis(request)
 
 
 @router.get("/trending/youtube")

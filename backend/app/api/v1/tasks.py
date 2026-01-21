@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import redis.asyncio as redis
 
 from app.core import get_settings, logger
+from app.core.redis_client import get_app_redis
 from app.db.session import get_db_connection
 from app.api.v1.analysis import _execute_gemini_analysis
 from app.api.v1.search import search_worker, load_more_worker
@@ -27,17 +28,9 @@ router = APIRouter()
 settings = get_settings()
 
 
-def _get_request_redis(request: Request) -> tuple[redis.Redis, bool]:
-    """Return request-scoped Redis client and whether it should be closed."""
-    client = getattr(request.app.state, "redis", None)
-    if client is not None:
-        return client, False
-    return redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=True,
-        socket_keepalive=True,
-        health_check_interval=30,
-    ), True
+def _get_request_redis(request: Request) -> redis.Redis:
+    """Return request-scoped Redis client."""
+    return get_app_redis(request)
 
 class AnalysisTaskPayload(BaseModel):
     analysis_id: UUID
@@ -324,7 +317,7 @@ async def handle_search_task(payload: SearchTaskPayload, request: Request):
         user_uuid=payload.user_uuid,
         query=payload.query,
         inputs=payload.inputs,
-        redis_client=getattr(request.app.state, "redis", None),
+        redis_client=_get_request_redis(request),
     )
 
 @router.post("/search/load_more")
@@ -345,7 +338,7 @@ async def handle_load_more_task(payload: LoadMoreTaskPayload, request: Request):
         user_uuid=payload.user_uuid,
         query=payload.query,
         platform_cursors=payload.platform_cursors,
-        redis_client=getattr(request.app.state, "redis", None),
+        redis_client=_get_request_redis(request),
     )
 
 @router.post("/chats/stream")
@@ -359,7 +352,11 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
 
     async def _on_fail(e: Exception):
         logger.error(f"Chat stream task permanently failed for {payload.chat_id}: {e}")
-        r, owns_client = _get_request_redis(request)
+        try:
+            r = _get_request_redis(request)
+        except RuntimeError as exc:
+            logger.warning("Redis client unavailable for chat stream error: %s", exc)
+            return
         try:
             await r.xadd(
                 f"chat:{str(payload.chat_id)}:stream",
@@ -367,13 +364,12 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
             )
             await r.expire(f"chat:{str(payload.chat_id)}:stream", 60)
         finally:
-            if owns_client:
-                await r.close()
+            pass
 
     async def _run_chat_stream():
         graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
         try:
-            redis_client = getattr(request.app.state, "redis", None)
+            redis_client = _get_request_redis(request)
             await stream_generator_to_redis(
                 graph=graph,
                 chat_id=str(payload.chat_id),
