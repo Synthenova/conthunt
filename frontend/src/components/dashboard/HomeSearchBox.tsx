@@ -21,6 +21,15 @@ interface HomeSearchBoxProps {
 export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
     const [localMessage, setLocalMessage] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
+
+    const togglePlatform = (platform: string) => {
+        setSelectedPlatforms(prev =>
+            prev.includes(platform)
+                ? prev.filter(p => p !== platform)
+                : [...prev, platform]
+        );
+    };
 
     // Derived state for message
     const message = value !== undefined ? value : localMessage;
@@ -99,10 +108,37 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                     {/* Platform Icons & Filters */}
                     <div className="flex items-center">
                         <div className="flex items-center gap-4 px-1 text-zinc-500">
-                            <FaInstagram className="h-4 w-4 hover:text-white transition-colors cursor-pointer" />
-                            <FaTiktok className="h-4 w-4 hover:text-white transition-colors cursor-pointer" />
-                            <FaYoutube className="h-4 w-4 hover:text-white transition-colors cursor-pointer" />
-                            <FaPinterest className="h-4 w-4 hover:text-white transition-colors cursor-pointer" />
+                            {['instagram', 'tiktok', 'youtube'].map((platform) => (
+                                <div
+                                    key={platform}
+                                    onClick={() => togglePlatform(platform)}
+                                    className={cn(
+                                        "transition-all duration-300 cursor-pointer",
+                                        selectedPlatforms.includes(platform)
+                                            ? "text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] scale-110"
+                                            : "hover:text-white"
+                                    )}
+                                >
+                                    {platform === 'instagram' && <FaInstagram className="h-4 w-4" />}
+                                    {platform === 'tiktok' && <FaTiktok className="h-4 w-4" />}
+                                    {platform === 'youtube' && <FaYoutube className="h-4 w-4" />}
+                                </div>
+                            ))}
+
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <div className="text-zinc-500 hover:text-white transition-colors cursor-not-allowed">
+                                        <FaPinterest className="h-4 w-4" />
+                                    </div>
+                                </TooltipTrigger>
+                                <TooltipContent
+                                    side="bottom"
+                                    showArrow={false}
+                                    className="bg-black/90 backdrop-blur-md border border-white/10 text-white shadow-2xl px-4 py-2 text-xs font-medium tracking-wide mt-2"
+                                >
+                                    Coming soon
+                                </TooltipContent>
+                            </Tooltip>
                         </div>
 
                         {/* Divider */}
@@ -124,8 +160,6 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                                     Coming soon
                                 </TooltipContent>
                             </Tooltip>
-
-                            <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 border border-white/5 rounded-full px-3 py-1.5 hover:text-zinc-300 hover:border-white/20 hover:bg-white/5 cursor-pointer transition-all">Platforms</span>
                         </div>
                     </div>
 
