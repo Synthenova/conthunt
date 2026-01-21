@@ -34,15 +34,19 @@ const CONTEXT_FENCE_RE = /```context[\s\S]*?```/g;
 const CHIP_LABEL_LIMIT = 20;
 
 function ThinkingTrigger({ tools }: { tools: ToolCallInfo[] }) {
-    const credits = tools.reduce((acc, t) => {
+    // Count searches by parsing result.search_ids (one search tool can trigger multiple searches)
+    const searchCount = tools.reduce((acc, t) => {
         const name = t.name.toLowerCase();
-        if (name.includes('search') && !name.includes('get_search_items')) return acc + 1;
-        if (name.includes('video_analysis')) return acc + 2;
+        if (name.includes('search') && !name.includes('get_search_items') && t.result) {
+            try {
+                const result = JSON.parse(t.result);
+                return acc + (result.search_ids?.length || 0);
+            } catch { return acc; }
+        }
         return acc;
     }, 0);
-
-    const searchCount = tools.filter(t => t.name.toLowerCase().includes('search') && !t.name.toLowerCase().includes('get_search_items')).length;
     const analysisCount = tools.filter(t => t.name.toLowerCase().includes('video_analysis')).length;
+    const credits = searchCount + (analysisCount * 2);
 
     return (
         <CollapsibleTrigger className="flex w-full items-center justify-between text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer group font-bold tracking-[0.06em]">
@@ -54,18 +58,18 @@ function ThinkingTrigger({ tools }: { tools: ToolCallInfo[] }) {
             {credits > 0 && (
                 <Tooltip delayDuration={0}>
                     <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground/80 hover:text-amber-400 transition-colors">
+                        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground/80 hover:text-white transition-colors">
                             <Coins className="h-3.5 w-3.5" />
                             <span>{credits}</span>
                         </div>
                     </TooltipTrigger>
-                    <TooltipContent side="left" className="flex items-center gap-3 bg-zinc-950 border-white/10 text-white text-xs">
+                    <TooltipContent side="left" showArrow={false} className="flex items-center gap-2 bg-zinc-950 border-white/10 text-white text-xs">
                         <div className="flex items-center gap-1.5">
                             <Search className="h-3 w-3 text-muted-foreground" />
                             <span>{searchCount}</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                            <Sparkles className="h-3 w-3 text-amber-400" />
+                            <Sparkles className="h-3 w-3 text-white" />
                             <span>{analysisCount}</span>
                         </div>
                     </TooltipContent>
@@ -266,13 +270,15 @@ function buildContentString(content: string | Array<any>) {
     return parts.join('\n');
 }
 
-function getToolDisplayName(name: string): string {
+function getToolDisplayLabel(name: string, count: number): string {
     switch (name) {
-        case 'search': return 'Searching';
-        case 'get_search_items': return 'Loading results';
-        case 'get_board_items': return 'Loading board';
-        case 'get_video_analysis': return 'Analyzing video';
-        case 'report_step': return 'Thinking';
+        case 'search': return count > 1 ? `Searching ${count} topics` : 'Searching';
+        case 'get_search_items': return count > 1 ? `Loading ${count} results` : 'Loading your results';
+        case 'get_board_items': return count > 1 ? `Loading ${count} boards` : 'Loading your board';
+        case 'get_video_analysis': return count > 1 ? `Analyzing ${count} videos` : 'Analyzing your video';
+        case 'get_user_boards': return 'Fetching your boards';
+        case 'search_my_videos': return 'Searching your videos';
+        case 'get_chat_searches': return 'Loading your searches';
         default: return name;
     }
 }
@@ -307,7 +313,7 @@ function ToolList({ tools }: { tools: ToolCallInfo[] }) {
                 const isReportStep = tool.name === 'report_step';
 
                 if (isReportStep) {
-                    const stepText = (tool.input?.step as string) || 'Processing...';
+                    const stepText = (tool.input?.step as string) || 'Processing';
                     return (
                         <div key={idx} className="text-sm text-muted-foreground flex items-center gap-2">
                             <ListTodo className="h-4 w-4 shrink-0" />
@@ -316,8 +322,7 @@ function ToolList({ tools }: { tools: ToolCallInfo[] }) {
                     );
                 }
 
-                const displayName = getToolDisplayName(tool.name);
-                const label = count > 1 ? `${displayName} (${count})` : displayName;
+                const label = getToolDisplayLabel(tool.name, count);
 
                 let ToolIcon = Circle;
                 if (tool.name.includes('search') || tool.name.includes('get_search_items')) ToolIcon = Search;
@@ -332,7 +337,7 @@ function ToolList({ tools }: { tools: ToolCallInfo[] }) {
                         </div>
                         <div className="ml-2">
                             {allDone ? (
-                                <Check className="h-4 w-4 text-green-500 shrink-0" />
+                                <Check className="h-4 w-4 text-white shrink-0" />
                             ) : (
                                 <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                             )}

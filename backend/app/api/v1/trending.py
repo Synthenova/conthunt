@@ -131,11 +131,12 @@ async def get_tiktok_trending(
     # Helper to proxy URLs through our backend to avoid CORS/HEIC issues
     # Uses API_BASE_URL from settings instead of request.base_url to work in prod
     def proxify(url: str | None) -> str | None:
+        return url
         if not url:
             return None
         import urllib.parse
         encoded_url = urllib.parse.quote(url)
-        return f"{settings.API_BASE_URL}v1/media/proxy?url={encoded_url}"
+        return f"{settings.API_BASE_URL}/v1/media/proxy?url={encoded_url}"
     
     # Helper to apply proxification to cached/fresh items at response time
     def proxify_items(items: list) -> list:

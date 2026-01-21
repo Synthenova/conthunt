@@ -62,10 +62,31 @@ export default function ProfilePage() {
     // Auto-start profile tutorial on first visit
     useTutorialAutoStart({ flowId: "profile_tour" });
 
-    if (isLoading) {
+    if (isLoading || !profile || !user) {
         return (
-            <div className="h-full flex items-center justify-center">
-                <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <div className="relative">
+                    {/* Spinner ring */}
+                    <div
+                        className="absolute rounded-full border-2 border-transparent border-t-white animate-spin"
+                        style={{
+                            width: '72px',
+                            height: '72px',
+                            top: '-4px',
+                            left: '-4px',
+                        }}
+                    />
+                    {/* Logo */}
+                    <div className="h-16 w-16 rounded-full overflow-hidden bg-white/5 flex items-center justify-center">
+                        <img
+                            src="/images/image.png"
+                            alt="Logo"
+                            width={54}
+                            height={54}
+                            className="object-contain"
+                        />
+                    </div>
+                </div>
             </div>
         );
     }

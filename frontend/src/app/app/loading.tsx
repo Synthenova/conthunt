@@ -1,19 +1,32 @@
 "use client";
 
-import { Sparkles } from "lucide-react";
+import Image from "next/image";
 
 export default function AppHomeLoading() {
     return (
-        <div className="min-h-screen bg-background relative flex items-center justify-center animate-in fade-in duration-300">
-            <div className="absolute inset-0 overflow-hidden pointer-events-none -z-10">
-                <div className="absolute top-[-20%] left-[-10%] w-[70%] h-[70%] bg-primary/10 rounded-full blur-[160px] animate-pulse" />
-                <div className="absolute bottom-[-20%] right-[-10%] w-[70%] h-[70%] bg-primary/10 rounded-full blur-[160px]" />
-            </div>
-            <div className="flex flex-col items-center gap-3 text-center">
-                <div className="h-12 w-12 rounded-full glass flex items-center justify-center">
-                    <Sparkles className="h-5 w-5 text-primary animate-pulse" />
+        <div className="min-h-screen bg-background flex items-center justify-center">
+            <div className="relative">
+                {/* Spinner ring */}
+                <div
+                    className="absolute rounded-full border-2 border-transparent border-t-white animate-spin"
+                    style={{
+                        width: '72px',
+                        height: '72px',
+                        top: '-4px',
+                        left: '-4px',
+                    }}
+                />
+                {/* Logo */}
+                <div className="h-16 w-16 rounded-full overflow-hidden bg-white/5 flex items-center justify-center">
+                    <Image
+                        src="/images/image.png"
+                        alt="Logo"
+                        width={54}
+                        height={54}
+                        priority
+                        className="object-contain"
+                    />
                 </div>
-                <p className="text-sm text-muted-foreground">Loading your workspace…</p>
             </div>
         </div>
     );

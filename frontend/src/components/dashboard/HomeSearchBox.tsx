@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useCreateChat, useSendMessage } from "@/hooks/useChat";
-import { Search, Sparkles } from "lucide-react";
+import { SendHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FaInstagram, FaTiktok, FaYoutube, FaPinterest } from "react-icons/fa6";
 import {
@@ -168,16 +168,15 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                         onClick={handleSubmit}
                         disabled={isSubmitting || !message.trim()}
                         className={cn(
-                            "relative group/submit rounded-full overflow-hidden transition-all duration-300 -mr-5",
-                            (isSubmitting || !message.trim()) ? "opacity-30 grayscale cursor-not-allowed scale-90" : "opacity-100 hover:scale-110 hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
+                            "relative group/submit rounded-full overflow-hidden transition-all duration-300 -mr-5 w-12 h-12 flex items-center justify-center",
+                            (isSubmitting || !message.trim()) ? "opacity-30 grayscale cursor-not-allowed scale-90" : "opacity-100 cursor-pointer"
                         )}
                     >
-                        {/* Using img tag to ensure visibility if Next.js Image has issues with local asset paths in dev */}
-                        <img
-                            src="/submit.png"
-                            alt="Submit"
-                            className="w-12 h-12 object-contain"
-                        />
+                        {isSubmitting ? (
+                            <div className="w-5 h-5 border-2 border-white/50 border-t-white rounded-full animate-spin" />
+                        ) : (
+                            <SendHorizontal className="w-6 h-6 text-white fill-white" />
+                        )}
                     </button>
                 </div>
             </div>

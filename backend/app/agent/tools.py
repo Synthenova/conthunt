@@ -45,9 +45,10 @@ async def report_step(step: str, config: RunnableConfig) -> str:
     """
     Report a thinking step to the user.
     Call this because the user likes to know what you are doing.
+    Strictly less than 5 words. No trailing dots or ellipsis.
     
     Args:
-        step: Brief description of current step (e.g., "Analyzing your request", "Searching for content")
+        step: Brief description (e.g., "Analyzing request", "Searching content")
     """
     return "ok"
 

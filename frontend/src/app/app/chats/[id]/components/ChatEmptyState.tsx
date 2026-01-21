@@ -1,39 +1,44 @@
-
-import { Loader2, Search } from "lucide-react";
+import Image from "next/image";
 
 interface ChatEmptyStateProps {
     state: "loading" | "empty";
 }
 
 export function ChatEmptyState({ state }: ChatEmptyStateProps) {
-    if (state === "loading") {
-        return (
-            <div className="min-h-[70vh] flex items-center justify-center">
-                <div className="flex flex-col items-center gap-3 text-center">
-                    <div className="h-12 w-12 rounded-full bg-white/5 flex items-center justify-center text-muted-foreground">
-                        <Loader2 className="h-6 w-6 animate-spin" />
-                    </div>
-                    <div className="space-y-1">
-                        <h3 className="text-base font-semibold text-white">Loading chat</h3>
-                        <p className="text-sm text-muted-foreground">Fetching your conversation history and results.</p>
-                    </div>
-                </div>
-            </div>
-        );
-    }
+    const message = "Loading your canvas, hang tight!";
 
     return (
         <div className="min-h-[70vh] flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3 text-center">
-                <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center text-muted-foreground">
-                    <Search className="h-8 w-8" />
+            <div className="flex flex-col items-center gap-4 text-center">
+                {/* Logo with spinner ring */}
+                <div className="relative">
+                    {/* Spinner ring */}
+                    <div
+                        className="absolute rounded-full border-2 border-transparent border-t-white animate-spin"
+                        style={{
+                            width: '72px',
+                            height: '72px',
+                            top: '-4px',
+                            left: '-4px',
+                        }}
+                    />
+                    {/* Logo */}
+                    <div className="h-16 w-16 rounded-full overflow-hidden bg-white/5 flex items-center justify-center">
+                        <Image
+                            src="/images/image.png"
+                            alt="Logo"
+                            width={54}
+                            height={54}
+                            priority
+                            className="object-contain"
+                        />
+                    </div>
                 </div>
-                <div className="space-y-1">
-                    <h3 className="text-lg font-semibold text-white">Canvas</h3>
-                    <p className="text-sm text-muted-foreground">
-                        Start a conversation to search for content. Results will appear here as you explore.
-                    </p>
-                </div>
+
+                {/* Message */}
+                <p className="text-sm text-muted-foreground max-w-xs">
+                    {message}
+                </p>
             </div>
         </div>
     );

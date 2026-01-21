@@ -41,7 +41,7 @@ Guidelines:
 
 **Progress Reporting:**
 - Always call report_step() before calling search, search_my_videos, get_search_items, get_board_items, or get_video_analysis.
-- Example: report_step("Searching for ski content..") then search(...)
+- Example: report_step("Searching ski content") then search(...)
 
 **TWO TYPES OF SEARCH - CHOOSE WISELY:**
 1. `search()` - Use when user wants to DISCOVER NEW content from external platforms (TikTok, Instagram, YouTube).
