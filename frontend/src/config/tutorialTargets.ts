@@ -86,7 +86,7 @@ export const TUTORIAL_INTERACTIONS: Partial<Record<TutorialTargetKey, Interactio
     "chat_tour.add_to_board": "next_button",
     "chat_tour.add_to_chat": "click",
     "chat_tour.video_click": "click",
-    "chat_tour.analyse": "next_button",
+    "chat_tour.analyse": "click",
 
     // Boards
     "boards_tour.click_board": "click",

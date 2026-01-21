@@ -1,31 +1,57 @@
-"""TikTok Trending Feed API endpoint."""
+"""YouTube Trending Feed API endpoint."""
+import json
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
-from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Optional, List, Literal
 
 from app.core import get_settings, logger
-from app.api.deps import get_current_user
+from app.auth import get_current_user
+import redis.asyncio as redis
+
+from app.agent.model_factory import init_chat_model
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
 
-@router.get("/trending/tiktok")
-async def get_tiktok_trending(
+async def get_redis_client(request: Request) -> redis.Redis:
+    """Helper to get redis client from app state or create new one."""
+    client = getattr(request.app.state, "redis", None)
+    if client:
+        return client
+    settings = get_settings()
+    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+@router.get("/trending/youtube")
+async def get_youtube_trending(
+    request: Request,
     count: Optional[int] = 20,
     user: dict = Depends(get_current_user),
 ):
     """
-    Get TikTok trending feed.
+    Get YouTube Shorts trending feed.
     
-    Returns the current trending videos from TikTok.
-    Used for the home page marquee display.
+    Returns the current trending shorts from YouTube.
+    Cached for 12 hours to minimize API costs.
     """
     settings = get_settings()
+    redis_client = await get_redis_client(request)
+    cache_key = "trending:youtube:feed"
     
+    # Try cache first
+    cached_data = await redis_client.get(cache_key)
+    if cached_data:
+        try:
+            return json.loads(cached_data)
+        except Exception:
+            pass  # Fallback to fetch if cache invalid
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             response = await client.get(
-                f"{settings.SCRAPECREATORS_BASE_URL}/v1/tiktok/get-trending-feed",
+                "https://api.scrapecreators.com/v1/youtube/shorts/trending",
                 headers={"x-api-key": settings.SCRAPECREATORS_API_KEY},
             )
             response.raise_for_status()
@@ -33,70 +59,244 @@ async def get_tiktok_trending(
             
             # Parse response and normalize for frontend
             items = []
-            raw_items = data.get("data", {}).get("items", [])
+            raw_shorts = data.get("shorts", [])
             
-            for item in raw_items[:count]:
+            for item in raw_shorts:
                 if not item:
                     continue
-                    
-                video_obj = item.get("video", {})
-                author = item.get("author", {})
-                stats = item.get("statistics", {})
                 
-                # Get cover/thumbnail URL
-                cover_urls = video_obj.get("cover", {}).get("url_list", [])
-                thumbnail = cover_urls[0] if cover_urls else None
-                
-                # Get animated cover (better for hover effect)
-                dynamic_cover_urls = video_obj.get("dynamic_cover", {}).get("url_list", [])
-                dynamic_cover = dynamic_cover_urls[0] if dynamic_cover_urls else None
-                
-                # Get video play URL
-                play_urls = video_obj.get("play_addr", {}).get("url_list", [])
-                video_url = play_urls[0] if play_urls else None
-                
-                # Author info
-                avatar_thumb = author.get("avatar_thumb", {})
-                if isinstance(avatar_thumb, dict):
-                    avatar_url = avatar_thumb.get("url_list", [None])[0]
-                else:
-                    avatar_url = avatar_thumb if isinstance(avatar_thumb, str) else None
+                # Normalize to MediaCard format
+                channel = item.get("channel", {})
                 
                 items.append({
-                    "id": item.get("aweme_id") or item.get("id"),
-                    "description": item.get("desc", ""),
-                    "thumbnail": thumbnail,
-                    "dynamicCover": dynamic_cover,
-                    "videoUrl": video_url,
-                    "duration": video_obj.get("duration", 0),
+                    "id": item.get("id"),
+                    "title": item.get("title"),
+                    "thumbnail": item.get("thumbnail"),
+                    "videoUrl": item.get("url"), # MediaCard handles YouTube URLs
+                    "duration": item.get("durationMs", 0) / 1000 if item.get("durationMs") else 0,
                     "author": {
-                        "id": author.get("uid"),
-                        "uniqueId": author.get("unique_id"),
-                        "nickname": author.get("nickname"),
-                        "avatar": avatar_url,
+                        "id": channel.get("id"),
+                        "uniqueId": channel.get("handle"),
+                        "nickname": channel.get("title"),
+                        "avatar": None, # API doesn't seem to return avatar in this endpoint
                     },
+                    "creator_name": channel.get("title"), # MediaCard compatibility
+                    "creator_image": None,
                     "stats": {
-                        "views": stats.get("play_count", 0),
-                        "likes": stats.get("digg_count", 0),
-                        "comments": stats.get("comment_count", 0),
-                        "shares": stats.get("share_count", 0),
+                        "views": item.get("viewCountInt", 0),
+                        "likes": item.get("likeCountInt", 0),
+                        "comments": item.get("commentCountInt", 0),
+                        "shares": 0,
                     },
+                    "platform": "youtube",
                 })
             
-            return {
-                "items": items,
-                "creditsRemaining": data.get("credits_remaining"),
+            result = {
+                "items": items[:count] if count else items,
+                "cached": False,
             }
+
+            # Cache for 12 hours (43200 seconds)
+            await redis_client.setex(cache_key, 43200, json.dumps({**result, "cached": True}))
+            
+            return result
             
         except httpx.HTTPStatusError as e:
-            logger.error(f"TikTok trending API error: {e.response.status_code} - {e.response.text}")
+            logger.error(f"YouTube trending API error: {e.response.status_code} - {e.response.text}")
             raise HTTPException(
                 status_code=e.response.status_code,
                 detail="Failed to fetch trending videos"
             )
         except Exception as e:
-            logger.error(f"TikTok trending API error: {e}")
+            logger.error(f"YouTube trending API error: {e}")
             raise HTTPException(
                 status_code=500,
                 detail="Failed to fetch trending videos"
             )
+
+
+@router.get("/trending/tiktok")
+async def get_tiktok_trending(
+    request: Request,
+    count: Optional[int] = 20,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Get TikTok trending feed.
+    
+    Returns the current trending videos from TikTok.
+    Cached for 12 hours.
+    """
+    settings = get_settings()
+    redis_client = await get_redis_client(request)
+    cache_key = "trending:tiktok:feed:v2"
+    
+    # Try cache first
+    cached_data = await redis_client.get(cache_key)
+    if cached_data:
+        try:
+            return json.loads(cached_data)
+        except Exception:
+            pass
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # Using defaults: region=US
+            response = await client.get(
+                "https://api.scrapecreators.com/v1/tiktok/get-trending-feed?region=US",
+                headers={"x-api-key": settings.SCRAPECREATORS_API_KEY},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            items = []
+            aweme_list = data.get("aweme_list", [])
+            
+            # Helper to proxy URLs through our backend to avoid CORS/HEIC issues
+            def proxify(url: str | None) -> str | None:
+                if not url:
+                    return None
+                # Construct full proxy URL
+                # request.base_url is like http://localhost:8000/
+                import urllib.parse
+                encoded_url = urllib.parse.quote(url)
+                return f"{request.base_url}v1/media/proxy?url={encoded_url}"
+
+            for item in aweme_list:
+                if not item:
+                    continue
+                
+                # Extract fields
+                video_data = item.get("video", {})
+                author_data = item.get("author", {})
+                stats = item.get("statistics", {})
+                
+                # Get URLs (picking first valid one)
+                cover_url = None
+                if video_data.get("cover", {}).get("url_list"):
+                    cover_url = proxify(video_data["cover"]["url_list"][0])
+                
+                video_url = None
+                if video_data.get("play_addr", {}).get("url_list"):
+                    # Video usually plays fine directly (browser native), 
+                    # but if CORS blocks, we might need proxy too?
+                    # Usually CORS on video is looser or handled.
+                    # Let's simple-return video for now, proxy images.
+                    video_url = video_data["play_addr"]["url_list"][0]
+                
+                avatar_url = None
+                if author_data.get("avatar_medium", {}).get("url_list"):
+                    avatar_url = proxify(author_data["avatar_medium"]["url_list"][0])
+                elif author_data.get("avatar_thumb", {}).get("url_list"):
+                    avatar_url = proxify(author_data["avatar_thumb"]["url_list"][0])
+
+                items.append({
+                    "id": item.get("aweme_id"),
+                    "title": item.get("desc"),
+                    # Use field names that MediaCard expects
+                    "thumbnail_url": cover_url,
+                    "video_url": video_url,
+                    "duration": 0,
+                    "author": {
+                        "id": author_data.get("uid"),
+                        "uniqueId": author_data.get("unique_id"),
+                        "nickname": author_data.get("nickname"),
+                        "avatar": avatar_url,
+                    },
+                    "creator_name": author_data.get("nickname"),
+                    "creator_image": avatar_url,
+                    # Use field names that MediaCard expects
+                    "view_count": stats.get("play_count", 0),
+                    "like_count": stats.get("digg_count", 0),
+                    "comment_count": stats.get("comment_count", 0),
+                    "share_count": stats.get("share_count", 0),
+                    "platform": "tiktok",
+                })
+            
+            result = {
+                "items": items[:count] if count else items,
+                "cached": False,
+            }
+
+            # Cache for 12 hours
+            await redis_client.setex(cache_key, 43200, json.dumps({**result, "cached": True}))
+            
+            return result
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"TikTok trending API error: {e.response.status_code} - {e.response.text}")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Failed to fetch trending TikToks"
+            )
+        except Exception as e:
+            logger.error(f"TikTok trending API error: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to fetch trending TikToks"
+            )
+
+
+class TrendingNiche(BaseModel):
+    trend: Literal['up1', 'up2', 'down1', 'down2'] = Field(
+        description="Trend direction: up2 (surging), up1 (rising), down1 (cooling), down2 (fading)"
+    )
+    keyword: str = Field(description="The niche name/keyword")
+    hashtags: List[str] = Field(description="List of 2-3 relevant hashtags")
+
+
+class TrendingNichesResponse(BaseModel):
+    niches: List[TrendingNiche]
+
+
+@router.get("/trending/niches")
+async def get_trending_niches(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Get global top trending niches using AI + Google Search.
+    
+    Returns a list of structured trending niches.
+    Cached for 12 hours.
+    """
+    settings = get_settings()
+    redis_client = await get_redis_client(request)
+    cache_key = "trending:niches:global"
+    
+    # Try cache first
+    cached_data = await redis_client.get(cache_key)
+    if cached_data:
+        try:
+            return json.loads(cached_data)
+        except Exception:
+            pass
+
+    try:
+        # Init model with Google Search
+        llm = init_chat_model("google/gemini-3-pro-preview")
+        llm = llm.bind_tools([{"google_search": {}}])
+        structured_llm = llm.with_structured_output(TrendingNichesResponse)
+        
+        prompt = "global ranking of top niches name and hashtag. Find at least 15 items to ensure we have enough good ones."
+        
+        response = await structured_llm.ainvoke([
+            SystemMessage(content="You are a trend hunter. use google search to find real-time global trending niches."),
+            HumanMessage(content=prompt)
+        ])
+        
+        logger.info(f"Generated {len(response.niches)} trending niches")
+        
+        result = []
+        for niche in response.niches:
+             result.append(niche.model_dump())
+             
+        # Cache for 12 hours (43200 seconds)
+        await redis_client.setex(cache_key, 43200, json.dumps(result))
+        
+        return result
+
+    except Exception as e:
+        logger.error(f"Trending niches generation failed: {e}")
+        # Return fallback or empty if it fails and no cache
+        return []

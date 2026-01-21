@@ -194,6 +194,23 @@ async def stream_generator_to_redis(
         }
         tool_run_ids = set()
         
+        # Token batching: buffer content_delta tokens before pushing to Redis
+        BUFFER_THRESHOLD = 80  # characters
+        content_buffer = ""
+        current_msg_id = None
+        
+        async def flush_buffer():
+            """Flush buffered content to Redis if any."""
+            nonlocal content_buffer, current_msg_id
+            if content_buffer and current_msg_id:
+                payload = {
+                    "type": "content_delta",
+                    "content": content_buffer,
+                    "id": current_msg_id
+                }
+                await r.xadd(stream_key, {"data": json.dumps(payload, default=str)})
+                content_buffer = ""
+        
         async for ev in graph.astream_events(inputs, config=config, version="v2"):
             ev_type = ev.get("event")
             data = ev.get("data", {}) or {}
@@ -221,16 +238,25 @@ async def stream_generator_to_redis(
                     msg_id = getattr(chunk, "id", None) if hasattr(chunk, "id") else chunk.get("id")
                     
                     if content:
-                        payload = {
-                            "type": "content_delta",
-                            "content": content,
-                            "id": msg_id
-                        }
-                    else:
-                        # Sometimes empty chunks come through e.g. at start/end
-                        pass
+                        # Check if message ID changed (new message started)
+                        if msg_id != current_msg_id:
+                            # Flush previous message's buffer first
+                            await flush_buffer()
+                            current_msg_id = msg_id
+                        
+                        # Accumulate content in buffer
+                        content_buffer += content
+                        
+                        # Flush if buffer exceeds threshold
+                        if len(content_buffer) >= BUFFER_THRESHOLD:
+                            await flush_buffer()
+                    # Skip setting payload - content_delta is handled via buffering
+                    continue
                         
             elif ev_type == "on_tool_start":
+                # Flush any buffered content before tool events
+                await flush_buffer()
+                
                 if run_id:
                     tool_run_ids.add(run_id)
                 logger.debug(
@@ -248,6 +274,9 @@ async def stream_generator_to_redis(
                 }
                 
             elif ev_type == "on_tool_end":
+                # Flush any buffered content before tool events
+                await flush_buffer()
+                
                 if run_id and run_id in tool_run_ids:
                     tool_run_ids.discard(run_id)
                 tool_output = data.get("output")
@@ -267,6 +296,8 @@ async def stream_generator_to_redis(
             if payload:
                 await r.xadd(stream_key, {"data": json.dumps(payload, default=str)})
 
+        # Flush any remaining buffered content before sending done
+        await flush_buffer()
         await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
 
     except Exception as e:

@@ -207,16 +207,18 @@ function extractImageAttachments(content: string | Array<any>) {
     }, []);
 }
 
-function extractMediaChipsFromContent(content: string) {
-    const chips: any[] = [];
+function extractChipsFromContent(content: string) {
+    const mediaChips: any[] = [];
+    const boardChips: { id: string; label: string }[] = [];
+    const searchChips: { id: string; label: string }[] = [];
     // We run the regex to find all chips
     const CHIP_RE = /```chip\s+([\s\S]*?)```/g;
 
-    // We replace media chips with empty string to remove them from display text
+    // We replace all chips with empty string to remove them from display text
     const cleanedContent = content.replace(CHIP_RE, (match, label) => {
         const meta = parseChipLabel(label);
         if (meta.type === 'media') {
-            chips.push({
+            mediaChips.push({
                 id: meta.id!,
                 title: meta.text || 'Media',
                 platform: meta.platform || '',
@@ -224,10 +226,28 @@ function extractMediaChipsFromContent(content: string) {
             });
             return '';
         }
+        if (meta.type === 'board') {
+            boardChips.push({
+                id: meta.id!,
+                label: meta.text || 'Board'
+            });
+            return '';
+        }
+        if (meta.type === 'search') {
+            searchChips.push({
+                id: meta.id!,
+                label: meta.text || 'Search'
+            });
+            return '';
+        }
+        // For image chips, just remove them (they're handled separately)
+        if (meta.type === 'image') {
+            return '';
+        }
         return match;
     });
 
-    return { chips, cleanedContent };
+    return { mediaChips, boardChips, searchChips, cleanedContent };
 }
 
 function buildContentString(content: string | Array<any>) {
@@ -378,11 +398,25 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
 
     if (!isAi) {
         // Human message: Plain text, just strip context
-        const { chips: mediaChips, cleanedContent: contentStrCleaned } = extractMediaChipsFromContent(contentStr);
+        const { mediaChips, boardChips, searchChips, cleanedContent: contentStrCleaned } = extractChipsFromContent(contentStr);
         const cleaned = contentStrCleaned.replace(CONTEXT_FENCE_RE, '');
 
         // If message is empty after stripping chips (just chips sent), don't return null if we have chips
-        if (!cleaned.trim() && mediaChips.length === 0 && imageAttachments.length === 0) return null;
+        if (!cleaned.trim() && mediaChips.length === 0 && boardChips.length === 0 && searchChips.length === 0 && imageAttachments.length === 0) return null;
+
+        const renderChip = (type: string, id: string, label: string, icon: any) => (
+            <button
+                key={`${type}-${id}`}
+                type="button"
+                onClick={() => handleChipClick(label, type, id)}
+                className="inline-flex items-center gap-1 rounded-full bg-[#b7b7b7] px-2.5 py-1 text-xs font-medium text-black ring-1 ring-white/10 transition-colors hover:bg-[#c5c5c5] cursor-pointer mb-1"
+            >
+                {icon}
+                <span className="truncate" title={label}>
+                    {truncateText(label || '', CHIP_TITLE_LIMIT)}
+                </span>
+            </button>
+        );
 
         return (
             <div className="flex flex-col gap-2 items-end">
@@ -392,6 +426,14 @@ function RenderedMessageContent({ msg, handleChipClick, handleImageClick }: {
                         chips={mediaChips}
                         onChipClick={(id, platform) => handleChipClick('media', 'media', id)}
                     />
+                )}
+
+                {/* Search & Board Chips */}
+                {(boardChips.length > 0 || searchChips.length > 0) && (
+                    <div className="flex flex-wrap justify-end gap-2">
+                        {boardChips.map(chip => renderChip('board', chip.id, chip.label, <LayoutDashboard className="h-3.5 w-3.5 text-black/60" />))}
+                        {searchChips.map(chip => renderChip('search', chip.id, chip.label, <Search className="h-3.5 w-3.5 text-black/60" />))}
+                    </div>
                 )}
 
                 {cleaned.trim() && (
