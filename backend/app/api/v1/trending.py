@@ -129,13 +129,35 @@ async def get_tiktok_trending(
     """
     settings = get_settings()
     redis_client = await get_redis_client(request)
-    cache_key = "trending:tiktok:feed:v2"
+    cache_key = "trending:tiktok:feed:v3"  # Bump cache version for new format
+    
+    # Helper to proxy URLs through our backend to avoid CORS/HEIC issues
+    # Uses API_BASE_URL from settings instead of request.base_url to work in prod
+    def proxify(url: str | None) -> str | None:
+        if not url:
+            return None
+        import urllib.parse
+        encoded_url = urllib.parse.quote(url)
+        return f"{settings.API_BASE_URL}v1/media/proxy?url={encoded_url}"
+    
+    # Helper to apply proxification to cached/fresh items at response time
+    def proxify_items(items: list) -> list:
+        for item in items:
+            if item.get("_raw_thumbnail"):
+                item["thumbnail_url"] = proxify(item["_raw_thumbnail"])
+            if item.get("_raw_avatar"):
+                item["author"]["avatar"] = proxify(item["_raw_avatar"])
+                item["creator_image"] = proxify(item["_raw_avatar"])
+        return items
     
     # Try cache first
     cached_data = await redis_client.get(cache_key)
     if cached_data:
         try:
-            return json.loads(cached_data)
+            data = json.loads(cached_data)
+            # Proxify URLs at response time
+            data["items"] = proxify_items(data["items"])
+            return data
         except Exception:
             pass
 
@@ -151,16 +173,6 @@ async def get_tiktok_trending(
             
             items = []
             aweme_list = data.get("aweme_list", [])
-            
-            # Helper to proxy URLs through our backend to avoid CORS/HEIC issues
-            def proxify(url: str | None) -> str | None:
-                if not url:
-                    return None
-                # Construct full proxy URL
-                # request.base_url is like http://localhost:8000/
-                import urllib.parse
-                encoded_url = urllib.parse.quote(url)
-                return f"{request.base_url}v1/media/proxy?url={encoded_url}"
 
             for item in aweme_list:
                 if not item:
@@ -171,41 +183,38 @@ async def get_tiktok_trending(
                 author_data = item.get("author", {})
                 stats = item.get("statistics", {})
                 
-                # Get URLs (picking first valid one)
-                cover_url = None
+                # Get raw URLs (picking first valid one) - store raw, proxify later
+                raw_cover_url = None
                 if video_data.get("cover", {}).get("url_list"):
-                    cover_url = proxify(video_data["cover"]["url_list"][0])
+                    raw_cover_url = video_data["cover"]["url_list"][0]
                 
                 video_url = None
                 if video_data.get("play_addr", {}).get("url_list"):
-                    # Video usually plays fine directly (browser native), 
-                    # but if CORS blocks, we might need proxy too?
-                    # Usually CORS on video is looser or handled.
-                    # Let's simple-return video for now, proxy images.
                     video_url = video_data["play_addr"]["url_list"][0]
                 
-                avatar_url = None
+                raw_avatar_url = None
                 if author_data.get("avatar_medium", {}).get("url_list"):
-                    avatar_url = proxify(author_data["avatar_medium"]["url_list"][0])
+                    raw_avatar_url = author_data["avatar_medium"]["url_list"][0]
                 elif author_data.get("avatar_thumb", {}).get("url_list"):
-                    avatar_url = proxify(author_data["avatar_thumb"]["url_list"][0])
+                    raw_avatar_url = author_data["avatar_thumb"]["url_list"][0]
 
                 items.append({
                     "id": item.get("aweme_id"),
                     "title": item.get("desc"),
-                    # Use field names that MediaCard expects
-                    "thumbnail_url": cover_url,
+                    # Store raw URLs for caching, will be proxified at response time
+                    "_raw_thumbnail": raw_cover_url,
+                    "_raw_avatar": raw_avatar_url,
+                    "thumbnail_url": None,  # Filled by proxify_items
                     "video_url": video_url,
                     "duration": 0,
                     "author": {
                         "id": author_data.get("uid"),
                         "uniqueId": author_data.get("unique_id"),
                         "nickname": author_data.get("nickname"),
-                        "avatar": avatar_url,
+                        "avatar": None,  # Filled by proxify_items
                     },
                     "creator_name": author_data.get("nickname"),
-                    "creator_image": avatar_url,
-                    # Use field names that MediaCard expects
+                    "creator_image": None,  # Filled by proxify_items
                     "view_count": stats.get("play_count", 0),
                     "like_count": stats.get("digg_count", 0),
                     "comment_count": stats.get("comment_count", 0),
@@ -218,8 +227,11 @@ async def get_tiktok_trending(
                 "cached": False,
             }
 
-            # Cache for 12 hours
+            # Cache for 12 hours - store with raw URLs
             await redis_client.setex(cache_key, 43200, json.dumps({**result, "cached": True}))
+            
+            # Proxify URLs before returning
+            result["items"] = proxify_items(result["items"])
             
             return result
             
