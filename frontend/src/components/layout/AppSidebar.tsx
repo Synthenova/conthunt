@@ -402,33 +402,6 @@ export function AppSidebar({
 
                                 <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                                     <div className="px-3 space-y-1 mt-4">
-                                        {/* Streak Item - Mobile */}
-                                        {streakData && streakData.current_streak > 0 && (
-                                            <div className="flex items-center w-full space-x-3 px-3 py-2.5 rounded-full">
-                                                <div className="relative shrink-0">
-                                                    <motion.div
-                                                        animate={{
-                                                            scale: [1, 1.1, 1],
-                                                            rotate: [0, -5, 5, -5, 0],
-                                                        }}
-                                                        transition={{
-                                                            duration: 0.6,
-                                                            repeat: Infinity,
-                                                            repeatDelay: 3,
-                                                        }}
-                                                    >
-                                                        <Flame className="h-5 w-5 text-orange-400" />
-                                                    </motion.div>
-                                                    <span className="absolute -top-1 -right-1 text-[8px] font-bold text-orange-400">
-                                                        {streakData.current_streak}
-                                                    </span>
-                                                </div>
-                                                <span className="font-medium text-sm text-orange-400">
-                                                    {streakData.current_streak} day{streakData.current_streak !== 1 ? 's' : ''} streak
-                                                </span>
-                                            </div>
-                                        )}
-
                                         {navItems.map(item => (
                                             <NavItem
                                                 key={item.path}
@@ -568,44 +541,6 @@ export function AppSidebar({
 
             {/* Main Nav */}
             <div className="px-3 space-y-1">
-                {/* Streak Item - Always at top */}
-                {streakData && streakData.current_streak > 0 && (
-                    <div
-                        className={cn(
-                            "flex items-center transition-all duration-200 group relative",
-                            isCollapsed
-                                ? "justify-center w-12 h-12 rounded-full mx-auto"
-                                : "w-full space-x-3 px-3 py-2.5 rounded-full"
-                        )}
-                    >
-                        <div className="relative z-10 flex items-center gap-3">
-                            <div className="relative shrink-0">
-                                <motion.div
-                                    animate={{
-                                        scale: [1, 1.1, 1],
-                                        rotate: [0, -5, 5, -5, 0],
-                                    }}
-                                    transition={{
-                                        duration: 0.6,
-                                        repeat: Infinity,
-                                        repeatDelay: 3,
-                                    }}
-                                >
-                                    <Flame className="h-5 w-5 text-orange-400" />
-                                </motion.div>
-                                <span className="absolute -top-1 -right-1 text-[8px] font-bold text-orange-400">
-                                    {streakData.current_streak}
-                                </span>
-                            </div>
-                            {!isCollapsed && (
-                                <span className="font-medium text-sm text-orange-400">
-                                    {streakData.current_streak} day{streakData.current_streak !== 1 ? 's' : ''} streak
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                )}
-
                 {navItems.map(item => (
                     <NavItem
                         key={item.path}

@@ -30,13 +30,13 @@ export function AnalysisPanel({
                 <div className="relative group w-full">
                     <button
                         onClick={onAnalyze}
-                        className="w-full glass-button-yellow h-12 text-base disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full glass-button-white h-12 text-base text-black disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={analysisDisabled}
                         data-tutorial="analyse_button"
                     >
-                        <Sparkles className="mr-2 h-4 w-4" />
+                        <Sparkles className="mr-2 h-4 w-4 text-black" />
                         {analysisDisabled ? (analysisDisabledReason || "Analyze after search completes") : "Analyze with AI"}
-                        {!analysisDisabled && <span className="ml-2 text-xs opacity-60">(1 credit)</span>}
+                        {!analysisDisabled && <span className="ml-2 text-xs opacity-60 text-black">(1 credit)</span>}
                     </button>
                     {analysisDisabled && analysisDisabledReason && (
                         <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-zinc-800 border border-white/10 text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
@@ -47,11 +47,8 @@ export function AnalysisPanel({
             ) : null}
 
             {(analyzing || polling) && (
-                <div className="flex flex-col items-center justify-center p-8 border border-dashed border-yellow-900/50 rounded-xl bg-gradient-to-b from-yellow-900/10 to-zinc-900/30">
-                    <div className="relative">
-                        <Loader2 className="h-10 w-10 text-yellow-500 animate-spin" />
-                        <Sparkles className="h-4 w-4 text-yellow-400 absolute -top-1 -right-1 animate-pulse" />
-                    </div>
+                <div className="flex flex-col items-center justify-center py-8">
+                    <Loader2 className="h-10 w-10 text-white animate-spin" />
                     <p className="text-sm text-zinc-300 mt-4 text-center font-medium transition-all duration-300">
                         {analysisResult?.status === "not_ready" ? ANALYSIS_NOT_READY_MESSAGE : loadingMessage}
                     </p>
@@ -76,11 +73,8 @@ export function AnalysisPanel({
             {analysisResult && analysisResult.status === "completed" && (
                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <div className="flex items-center gap-2 mb-2">
-                        <Sparkles className="h-4 w-4 text-yellow-500" />
+                        <Sparkles className="h-4 w-4 text-white" />
                         <h3 className="font-semibold text-white">AI Extract</h3>
-                        <Badge variant="outline" className="ml-auto text-[10px] border-green-800 text-green-400">
-                            Complete
-                        </Badge>
                     </div>
 
                     <div className="space-y-4">

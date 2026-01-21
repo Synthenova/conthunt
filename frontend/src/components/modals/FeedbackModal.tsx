@@ -83,77 +83,86 @@ export function FeedbackModal({ isOpen, onClose }: FeedbackModalProps) {
 
     return (
         <Dialog open={isOpen} onOpenChange={handleClose}>
-            <DialogContent className="sm:max-w-[500px] bg-[#0A0A0A] border-[#1F1F1F] text-gray-100">
-                <DialogHeader>
-                    <div className="flex items-center gap-2">
-                        <div className="p-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                            <Bug className="w-5 h-5 text-orange-500" />
+            <DialogContent className="bg-[#0f0f0f] border border-white/10 text-gray-200 p-0 gap-0 overflow-hidden shadow-2xl rounded-3xl sm:max-w-xl w-full outline-none transition-all duration-200">
+                <div className="p-6 pb-2">
+                    <DialogHeader>
+                        <div className="flex items-center gap-3 mb-2">
+                            <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                                <Bug className="w-5 h-5 text-white" />
+                            </div>
+                            <div>
+                                <DialogTitle className="text-xl font-semibold text-white">Report a Bug / Feedback</DialogTitle>
+                                <DialogDescription className="text-zinc-400 mt-1">
+                                    Found a bug or have a suggestion? Let us know!
+                                </DialogDescription>
+                            </div>
                         </div>
-                        <DialogTitle>Report a Bug / Feedback</DialogTitle>
+                    </DialogHeader>
+
+                    <div className="space-y-4 py-4">
+                        <Textarea
+                            placeholder="Describe the issue or idea..."
+                            className="bg-[#151515] border-white/10 text-gray-200 min-h-[160px] focus-visible:ring-white/20 focus-visible:border-white/20 resize-none rounded-xl p-4 placeholder:text-zinc-600 text-base"
+                            value={message}
+                            onChange={(e) => setMessage(e.target.value)}
+                        />
+
+                        {/* Image Previews */}
+                        {previews.length > 0 && (
+                            <div className="flex gap-2 overflow-x-auto py-2">
+                                {previews.map((src, idx) => (
+                                    <div key={idx} className="relative w-16 h-16 shrink-0 rounded-lg border border-white/10 overflow-hidden group">
+                                        <Image src={src} alt="Preview" fill className="object-cover" />
+                                        <button
+                                            onClick={() => removeImage(idx)}
+                                            className="absolute top-0 right-0 bg-black/60 p-1 rounded-bl-lg hover:bg-red-500/80 transition-colors backdrop-blur-sm"
+                                        >
+                                            <X size={12} className="text-white" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="flex items-center justify-between px-1">
+                            <div
+                                onClick={() => fileInputRef.current?.click()}
+                                className="flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-white cursor-pointer transition-colors px-2 py-1.5 rounded-lg hover:bg-white/5"
+                            >
+                                <ImagePlus size={16} />
+                                <span>Add Screenshots</span>
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    className="hidden"
+                                    multiple
+                                    accept="image/*"
+                                    onChange={handleFileChange}
+                                />
+                            </div>
+                            <span className="text-[10px] font-mono text-zinc-600">{message.length}/1000</span>
+                        </div>
                     </div>
-                    <DialogDescription className="text-gray-400">
-                        Found a bug or have a suggestion? Let us know!
-                    </DialogDescription>
-                </DialogHeader>
 
-                <div className="space-y-4 py-2">
-                    <Textarea
-                        placeholder="Describe the issue or idea..."
-                        className="bg-[#121212] border-white/10 text-gray-200 min-h-[120px] focus-visible:ring-orange-500/50 resize-none"
-                        value={message}
-                        onChange={(e) => setMessage(e.target.value)}
-                    />
-
-                    {/* Image Previews */}
-                    {previews.length > 0 && (
-                        <div className="flex gap-2 overflow-x-auto py-2">
-                            {previews.map((src, idx) => (
-                                <div key={idx} className="relative w-16 h-16 shrink-0 rounded-md border border-white/10 overflow-hidden group">
-                                    <Image src={src} alt="Preview" fill className="object-cover" />
-                                    <button
-                                        onClick={() => removeImage(idx)}
-                                        className="absolute top-0 right-0 bg-black/60 p-0.5 rounded-bl-md hover:bg-red-500/80 transition-colors"
-                                    >
-                                        <X size={12} className="text-white" />
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    <div className="flex items-center justify-between">
-                        <div
-                            onClick={() => fileInputRef.current?.click()}
-                            className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-200 cursor-pointer transition-colors"
+                    <DialogFooter className="pt-2 mt-0">
+                        <Button
+                            variant="ghost"
+                            onClick={handleClose}
+                            disabled={isSubmitting}
+                            className="hover:bg-white/5 hover:text-white text-zinc-400 font-medium"
                         >
-                            <ImagePlus size={16} />
-                            <span>Add Screenshots</span>
-                            <input
-                                type="file"
-                                ref={fileInputRef}
-                                className="hidden"
-                                multiple
-                                accept="image/*"
-                                onChange={handleFileChange}
-                            />
-                        </div>
-                        <span className="text-xs text-gray-500">{message.length}/1000</span>
-                    </div>
+                            Cancel
+                        </Button>
+                        <button
+                            onClick={handleSubmit}
+                            disabled={isSubmitting}
+                            className="glass-button-white h-10 px-4 text-sm font-medium text-black disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        >
+                            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
+                            Send Report
+                        </button>
+                    </DialogFooter>
                 </div>
-
-                <DialogFooter>
-                    <Button variant="ghost" onClick={handleClose} disabled={isSubmitting} className="hover:bg-white/5 hover:text-white">
-                        Cancel
-                    </Button>
-                    <Button
-                        onClick={handleSubmit}
-                        disabled={isSubmitting}
-                        className="bg-orange-600 hover:bg-orange-700 text-white gap-2"
-                    >
-                        {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
-                        Send Report
-                    </Button>
-                </DialogFooter>
             </DialogContent>
         </Dialog>
     );

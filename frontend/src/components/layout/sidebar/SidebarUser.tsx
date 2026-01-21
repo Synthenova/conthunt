@@ -6,9 +6,11 @@ import { cn } from '@/lib/utils';
 import { LogoutButton } from "@/components/logout-button";
 import { useRouter } from 'next/navigation';
 import { useProducts } from '@/contexts/ProductsContext';
-import { Bug, Gift } from 'lucide-react';
 import { FeedbackModal } from '@/components/modals/FeedbackModal';
 import { GiftShareModal } from '@/components/modals/GiftShareModal';
+import { Flame } from 'lucide-react';
+import { motion } from "framer-motion";
+import { useStreak } from "@/hooks/useStreak";
 
 interface SidebarUserProps {
     user: any;
@@ -21,6 +23,7 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
     const { getPlanName, loading: productsLoading } = useProducts();
     const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
     const [isGiftOpen, setIsGiftOpen] = useState(false);
+    const { streak: streakData } = useStreak();
 
     const planDisplayName = profile?.role
         ? getPlanName(profile.role)
@@ -28,6 +31,44 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
 
     return (
         <div className="p-4 border-t border-white/5 mt-auto space-y-2">
+            {/* Streak Item - Moved from Sidebar */}
+            {streakData && streakData.current_streak > 0 && (
+                <button
+                    onClick={() => router.push('/app/profile')}
+                    className={cn(
+                        "flex items-center rounded-xl hover:bg-white/5 cursor-pointer group transition-all text-white p-2 border border-transparent hover:border-white/5",
+                        isCollapsed ? "justify-center aspect-square w-full" : "space-x-3 w-full"
+                    )}
+                    title="View Streak"
+                >
+                    <div className={cn("flex items-center justify-center shrink-0 w-8 h-8", isCollapsed ? "" : "w-8")}>
+                        <div className="relative">
+                            <motion.div
+                                animate={{
+                                    scale: [1, 1.1, 1],
+                                    rotate: [0, -5, 5, -5, 0],
+                                }}
+                                transition={{
+                                    duration: 0.6,
+                                    repeat: Infinity,
+                                    repeatDelay: 3,
+                                }}
+                            >
+                                <Flame className="h-5 w-5 text-white" />
+                            </motion.div>
+                            <span className="absolute -top-1 -right-1 text-[8px] font-bold text-white">
+                                {streakData.current_streak}
+                            </span>
+                        </div>
+                    </div>
+                    {!isCollapsed && (
+                        <span className="text-xs font-semibold text-white">
+                            {streakData.current_streak} day{streakData.current_streak !== 1 ? 's' : ''} streak
+                        </span>
+                    )}
+                </button>
+            )}
+
             <button
                 onClick={() => setIsGiftOpen(true)}
                 className={cn(
@@ -36,8 +77,13 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
                 )}
                 title="Share & gift"
             >
-                <div className={cn("flex items-center justify-center", isCollapsed ? "" : "w-8")}>
-                    <Gift size={16} />
+                <div className={cn("flex items-center justify-center shrink-0 w-8 h-8", isCollapsed ? "" : "w-8")}>
+                    <lord-icon
+                        src="/lordicon/gift.json"
+                        trigger="hover"
+                        style={{ width: 22, height: 22 }}
+                        colors="primary:#d1d5db,secondary:#ffffff"
+                    />
                 </div>
                 {!isCollapsed && (
                     <span className="text-xs font-semibold">Share & gift</span>
@@ -53,8 +99,13 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
                 )}
                 title="Report a bug"
             >
-                <div className={cn("flex items-center justify-center", isCollapsed ? "" : "w-8")}>
-                    <Bug size={16} />
+                <div className={cn("flex items-center justify-center shrink-0 w-8 h-8", isCollapsed ? "" : "w-8")}>
+                    <lord-icon
+                        src="/lordicon/bug.json"
+                        trigger="hover"
+                        style={{ width: 22, height: 22 }}
+                        colors="primary:#9ca3af,secondary:#fb923c"
+                    />
                 </div>
                 {!isCollapsed && (
                     <span className="text-xs font-semibold">Report a bug</span>
