@@ -771,6 +771,10 @@ async def stream_search(
 
     async def event_generator():
         if hub is None:
+            logger.warning(
+                "Stream hub missing; SSE will use per-connection Redis XREAD. search_id=%s",
+                search_id,
+            )
             last_id = "0-0"
             try:
                 while True:

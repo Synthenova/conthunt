@@ -710,6 +710,10 @@ async def stream_chat(
 
     async def event_generator():
         if hub is None:
+            logger.warning(
+                "Stream hub missing; SSE will use per-connection Redis XREAD. chat_id=%s",
+                chat_id,
+            )
             last_id = last_event_id or "0-0"
             try:
                 while True:
