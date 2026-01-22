@@ -252,7 +252,7 @@ export default function LoginPage() {
                     </div>
                 )}
 
-                {!showEmailForm ? (
+                {/* {!showEmailForm ? (
                     <button
                         type="button"
                         onClick={() => setShowEmailForm(true)}
@@ -305,7 +305,7 @@ export default function LoginPage() {
                             {resetLoading ? "sending reset email..." : "forgot password?"}
                         </button>
                     </div>
-                )}
+                )} */}
 
                 {/* Google Sign-in Button */}
                 <button
