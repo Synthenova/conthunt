@@ -32,85 +32,65 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
     return (
         <div className="p-4 border-t border-white/5 mt-auto space-y-2">
             {/* Streak Item - Moved from Sidebar */}
-            {streakData && streakData.current_streak > 0 && (
-                <button
-                    onClick={() => router.push('/app/profile')}
-                    className={cn(
-                        "flex items-center rounded-xl hover:bg-white/5 cursor-pointer group transition-all text-white p-2 border border-transparent hover:border-white/5",
-                        isCollapsed ? "justify-center aspect-square w-full" : "space-x-3 w-full"
+            {/* Footer Actions Row */}
+            {/* Footer Actions - Only visible when collapsed */}
+            {isCollapsed && (
+                <div className="flex flex-col space-y-2">
+                    {/* Streak Item */}
+                    {streakData && streakData.current_streak > 0 && (
+                        <button
+                            onClick={() => router.push('/app/profile')}
+                            className="flex items-center justify-center rounded-xl cursor-pointer group transition-all text-white p-2 border border-transparent aspect-square w-full"
+                            title={`View Streak (${streakData.current_streak} days)`}
+                        >
+                            <div className="relative flex items-center justify-center">
+                                <motion.div
+                                    whileHover={{
+                                        scale: [1, 1.1, 1],
+                                        rotate: [0, -5, 5, -5, 0],
+                                    }}
+                                    transition={{
+                                        duration: 0.6,
+                                    }}
+                                >
+                                    <Flame className="h-5 w-5 text-white" />
+                                </motion.div>
+                                <span className="absolute -top-2 -right-2 text-[9px] font-bold text-white bg-black/50 px-1 rounded-full border border-white/10">
+                                    {streakData.current_streak}
+                                </span>
+                            </div>
+                        </button>
                     )}
-                    title="View Streak"
-                >
-                    <div className={cn("flex items-center justify-center shrink-0 w-8 h-8", isCollapsed ? "" : "w-8")}>
-                        <div className="relative">
-                            <motion.div
-                                animate={{
-                                    scale: [1, 1.1, 1],
-                                    rotate: [0, -5, 5, -5, 0],
-                                }}
-                                transition={{
-                                    duration: 0.6,
-                                    repeat: Infinity,
-                                    repeatDelay: 3,
-                                }}
-                            >
-                                <Flame className="h-5 w-5 text-white" />
-                            </motion.div>
-                            <span className="absolute -top-1 -right-1 text-[8px] font-bold text-white">
-                                {streakData.current_streak}
-                            </span>
-                        </div>
-                    </div>
-                    {!isCollapsed && (
-                        <span className="text-xs font-semibold text-white">
-                            {streakData.current_streak} day{streakData.current_streak !== 1 ? 's' : ''} streak
-                        </span>
-                    )}
-                </button>
+
+                    {/* Gift Button (Hidden) */}
+                    {/* <button
+                        onClick={() => setIsGiftOpen(true)}
+                        className="flex items-center justify-center rounded-xl cursor-pointer group transition-all text-gray-300 hover:text-emerald-400 p-2 border border-transparent aspect-square w-full"
+                        title="Share & gift"
+                    >
+                        <lord-icon
+                            src="/lordicon/gift.json"
+                            trigger="hover"
+                            style={{ width: 22, height: 22 }}
+                            colors="primary:#d1d5db,secondary:#ffffff"
+                        />
+                    </button> */}
+
+                    {/* Bug Report Button */}
+                    <button
+                        onClick={() => setIsFeedbackOpen(true)}
+                        className="flex items-center justify-center rounded-xl cursor-pointer group transition-all text-gray-400 hover:text-orange-400 p-2 border border-transparent aspect-square w-full"
+                        title="Report a bug"
+                    >
+                        <lord-icon
+                            src="/lordicon/bug.json"
+                            trigger="hover"
+                            style={{ width: 22, height: 22 }}
+                            colors="primary:#9ca3af,secondary:#fb923c"
+                        />
+                    </button>
+                </div>
             )}
-
-            <button
-                onClick={() => setIsGiftOpen(true)}
-                className={cn(
-                    "flex items-center rounded-xl hover:bg-white/5 cursor-pointer group transition-all text-gray-300 hover:text-emerald-400 p-2 border border-transparent hover:border-white/5",
-                    isCollapsed ? "justify-center aspect-square w-full" : "space-x-3 w-full"
-                )}
-                title="Share & gift"
-            >
-                <div className={cn("flex items-center justify-center shrink-0 w-8 h-8", isCollapsed ? "" : "w-8")}>
-                    <lord-icon
-                        src="/lordicon/gift.json"
-                        trigger="hover"
-                        style={{ width: 22, height: 22 }}
-                        colors="primary:#d1d5db,secondary:#ffffff"
-                    />
-                </div>
-                {!isCollapsed && (
-                    <span className="text-xs font-semibold">Share & gift</span>
-                )}
-            </button>
-
-            {/* Bug Report Button - Placed above the user profile */}
-            <button
-                onClick={() => setIsFeedbackOpen(true)}
-                className={cn(
-                    "flex items-center rounded-xl hover:bg-white/5 cursor-pointer group transition-all text-gray-400 hover:text-orange-400 p-2 border border-transparent hover:border-white/5",
-                    isCollapsed ? "justify-center aspect-square w-full" : "space-x-3 w-full"
-                )}
-                title="Report a bug"
-            >
-                <div className={cn("flex items-center justify-center shrink-0 w-8 h-8", isCollapsed ? "" : "w-8")}>
-                    <lord-icon
-                        src="/lordicon/bug.json"
-                        trigger="hover"
-                        style={{ width: 22, height: 22 }}
-                        colors="primary:#9ca3af,secondary:#fb923c"
-                    />
-                </div>
-                {!isCollapsed && (
-                    <span className="text-xs font-semibold">Report a bug</span>
-                )}
-            </button>
 
             <div
                 onClick={() => router.push('/app/profile')}

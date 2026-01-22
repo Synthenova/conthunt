@@ -75,17 +75,7 @@ export function TutorialProvider({ children }: TutorialProviderProps) {
     const { data: flowData, refetch } = useOnboardingStatus(activeFlowId || "");
     const actions = useOnboardingActions();
 
-    // Check URL for tutorial param on mount
-    useEffect(() => {
-        const tutorialParam = searchParams.get("tutorial");
-        if (tutorialParam && !activeFlowId) {
-            setActiveFlowId(tutorialParam);
-            // Remove param from URL without navigation
-            const url = new URL(window.location.href);
-            url.searchParams.delete("tutorial");
-            window.history.replaceState({}, "", url.toString());
-        }
-    }, [searchParams, activeFlowId]);
+
 
     // Sync local step with server state
     useEffect(() => {
@@ -126,6 +116,20 @@ export function TutorialProvider({ children }: TutorialProviderProps) {
         },
         [actions, refetch]
     );
+
+    // Check URL for tutorial param on mount
+    useEffect(() => {
+        const tutorialParam = searchParams.get("tutorial");
+        if (tutorialParam && (!activeFlowId || activeFlowId !== tutorialParam)) {
+            // Force start with replay: true to ensure backend resets progress
+            void startFlow(tutorialParam, true);
+
+            // Remove param from URL without navigation
+            const url = new URL(window.location.href);
+            url.searchParams.delete("tutorial");
+            window.history.replaceState({}, "", url.toString());
+        }
+    }, [searchParams, activeFlowId, startFlow]);
 
     const nextStep = useCallback(async () => {
         if (!activeFlowId || !flowData?.flow) return;
