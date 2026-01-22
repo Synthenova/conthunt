@@ -15,7 +15,7 @@ from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import InjectedState
 
 from app.core import get_settings, logger
-from app.agent.model_factory import init_chat_model
+from app.agent.model_factory import init_chat_model, init_chat_model_rated
 
 settings = get_settings()
 
@@ -435,10 +435,13 @@ async def search(
 
         configurable = config.get("configurable", {}) if config else {}
         chat_id = configurable.get("chat_id")
+        redis_client = configurable.get("redis_client")
         
-        
-        # 1. Initialize Gemini 3 Pro for intent detection
-        llm = init_chat_model("google/gemini-3-pro-preview")
+        # 1. Initialize Gemini 3 Pro for intent detection (with rate limiting)
+        if redis_client:
+            llm = await init_chat_model_rated("google/gemini-3-pro-preview", redis_client)
+        else:
+            llm = init_chat_model("google/gemini-3-pro-preview")
         llm = llm.bind_tools([{"google_search": {}}])
         structured_llm = llm.with_structured_output(SearchPlan)
 

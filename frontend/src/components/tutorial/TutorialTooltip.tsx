@@ -33,7 +33,7 @@ interface TooltipPosition {
 
 const TOOLTIP_WIDTH = 320;
 const TOOLTIP_HEIGHT = 180;
-const OFFSET = 16;
+const OFFSET = 24; // Increased for better visual separation
 const EDGE_PADDING = 16;
 
 function calculatePosition(targetRect: DOMRect | null): TooltipPosition {
@@ -101,7 +101,21 @@ function SpotlightOverlay({ targetRect }: { targetRect: DOMRect | null }) {
         );
     }
 
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
     const padding = 8;
+    const border = 4; // Add extra padding for border visibility safety
+
+    // Calculate constrained bounds
+    const rawX = targetRect.left - padding;
+    const rawY = targetRect.top - padding;
+    const rawRight = targetRect.right + padding;
+    const rawBottom = targetRect.bottom + padding;
+
+    const x = Math.max(border, rawX);
+    const y = Math.max(border, rawY);
+    const w = Math.min(viewportWidth - border, rawRight) - x;
+    const h = Math.min(viewportHeight - border, rawBottom) - y;
 
     return (
         <div className="fixed inset-0 z-[9998] pointer-events-none">
@@ -111,10 +125,10 @@ function SpotlightOverlay({ targetRect }: { targetRect: DOMRect | null }) {
                     <mask id="spotlight-mask">
                         <rect x="0" y="0" width="100%" height="100%" fill="white" />
                         <rect
-                            x={targetRect.left - padding}
-                            y={targetRect.top - padding}
-                            width={targetRect.width + padding * 2}
-                            height={targetRect.height + padding * 2}
+                            x={x}
+                            y={y}
+                            width={w}
+                            height={h}
                             rx="12"
                             fill="black"
                         />
@@ -133,10 +147,10 @@ function SpotlightOverlay({ targetRect }: { targetRect: DOMRect | null }) {
             <div
                 className="absolute rounded-xl border-2 border-primary shadow-[0_0_20px_rgba(255,255,255,0.3)] transition-all duration-300"
                 style={{
-                    left: targetRect.left - padding,
-                    top: targetRect.top - padding,
-                    width: targetRect.width + padding * 2,
-                    height: targetRect.height + padding * 2,
+                    left: x,
+                    top: y,
+                    width: w,
+                    height: h,
                 }}
             />
         </div>

@@ -1,10 +1,13 @@
 """Background media downloader."""
 import asyncio
+import hashlib
+from io import BytesIO
 from typing import List
 
 from uuid import UUID
 
 import httpx
+from PIL import Image
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -24,6 +27,41 @@ def get_download_semaphore() -> asyncio.Semaphore:
         settings = get_settings()
         _download_semaphore = asyncio.Semaphore(settings.MEDIA_MAX_CONCURRENCY)
     return _download_semaphore
+
+
+def _should_optimize_image(asset_type: str, mime_type: str) -> bool:
+    settings = get_settings()
+    if not settings.MEDIA_OPTIMIZE_IMAGES:
+        return False
+    if not mime_type or not mime_type.startswith("image/"):
+        return False
+    return asset_type in {"thumbnail", "cover", "image"}
+
+
+def _optimize_image_bytes(raw_bytes: bytes) -> tuple[bytes, str, str]:
+    settings = get_settings()
+    target_format = settings.MEDIA_IMAGE_FORMAT.lower().strip()
+    quality = settings.MEDIA_IMAGE_QUALITY
+
+    with Image.open(BytesIO(raw_bytes)) as img:
+        img.load()
+
+        if target_format in {"jpeg", "jpg"}:
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                img = img.convert("RGB")
+            out_format = "JPEG"
+            out_mime = "image/jpeg"
+            out_ext = "jpg"
+            save_kwargs = {"quality": quality, "optimize": True, "progressive": True}
+        else:
+            out_format = "WEBP"
+            out_mime = "image/webp"
+            out_ext = "webp"
+            save_kwargs = {"quality": quality}
+
+        output = BytesIO()
+        img.save(output, format=out_format, **save_kwargs)
+        return output.getvalue(), out_mime, out_ext
 
 
 async def claim_asset_for_download(
@@ -137,15 +175,43 @@ async def download_single_asset(
         
         # Determine file extension
         ext = get_file_extension(source_url, mime_type)
-        
-        # Use asset_id in key (hash is stored in DB for deduplication)
-        gcs_key = f"media/{platform}/{external_id}/{asset_type}/{asset_id}.{ext}"
-        gcs_uri, sha256_hash, size_bytes = await async_gcs_client.upload_blob_streaming(
-            bucket_name=settings.GCS_BUCKET_MEDIA,
-            key=gcs_key,
-            response=response,
-            content_type=mime_type,
-        )
+
+        # --- Optional image optimization (comment out this block to revert to streaming) ---
+        if _should_optimize_image(asset_type, mime_type):
+            raw_bytes = await response.aread()
+            out_mime_type = mime_type
+            out_ext = ext
+            upload_bytes = raw_bytes
+
+            try:
+                optimized_bytes, out_mime_type, out_ext = _optimize_image_bytes(raw_bytes)
+                upload_bytes = optimized_bytes
+            except Exception as exc:
+                logger.warning(
+                    "Image optimize failed for asset %s, uploading original bytes: %s",
+                    asset_id,
+                    exc,
+                )
+
+            gcs_key = f"media/{platform}/{external_id}/{asset_type}/{asset_id}.{out_ext}"
+            gcs_uri = await async_gcs_client.upload_blob(
+                bucket_name=settings.GCS_BUCKET_MEDIA,
+                key=gcs_key,
+                data=upload_bytes,
+                content_type=out_mime_type,
+            )
+            sha256_hash = hashlib.sha256(upload_bytes).hexdigest()
+            size_bytes = len(upload_bytes)
+        else:
+            # Use asset_id in key (hash is stored in DB for deduplication)
+            gcs_key = f"media/{platform}/{external_id}/{asset_type}/{asset_id}.{ext}"
+            gcs_uri, sha256_hash, size_bytes = await async_gcs_client.upload_blob_streaming(
+                bucket_name=settings.GCS_BUCKET_MEDIA,
+                key=gcs_key,
+                response=response,
+                content_type=mime_type,
+            )
+        # --- End optional image optimization ---
         
         # Update database
         async with get_db_connection() as conn:

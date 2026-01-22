@@ -433,7 +433,7 @@ export default function BoardDetailPage() {
                                             ))}
                                         </div>
                                     ) : transformedItems.length === 0 ? (
-                                        <BoardGlassCard className="m-2 p-12 text-center flex flex-col items-center gap-4">
+                                        <div className="m-2 p-12 text-center flex flex-col items-center gap-4">
                                             <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
                                                 <FolderOpen className="h-8 w-8 text-muted-foreground" />
                                             </div>
@@ -447,7 +447,7 @@ export default function BoardDetailPage() {
                                                     Go to Search
                                                 </Link>
                                             </Button>
-                                        </BoardGlassCard>
+                                        </div>
                                     ) : (
                                         <SelectableResultsGrid
                                             results={flatResults}
@@ -591,7 +591,7 @@ export default function BoardDetailPage() {
                                 <div ref={resultsScrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 px-2">
 
                                     {transformedItems.length === 0 ? (
-                                        <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4">
+                                        <div className="p-12 text-center flex flex-col items-center gap-4">
                                             <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
                                                 <FolderOpen className="h-8 w-8 text-muted-foreground" />
                                             </div>
@@ -605,7 +605,7 @@ export default function BoardDetailPage() {
                                                     Go to Search
                                                 </Link>
                                             </Button>
-                                        </BoardGlassCard>
+                                        </div>
                                     ) : isInsightsLoading && !hasInsights ? (
                                         <div className="grid gap-6 lg:grid-cols-2">
                                             {[...Array(4)].map((_, i) => (

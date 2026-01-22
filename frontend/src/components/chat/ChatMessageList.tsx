@@ -24,7 +24,7 @@ import { ChatLoader } from './ChatLoader';
 import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { ContentDrawer } from '@/components/twelvelabs/ContentDrawer';
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Loader2, Sparkles, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus, Coins } from 'lucide-react';
+import { Loader2, Sparkles, Sparkle, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus, Coins } from 'lucide-react';
 
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 
@@ -76,7 +76,7 @@ function ThinkingTrigger({ tools }: { tools: ToolCallInfo[] }) {
                             <span>{searchCount}</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                            <Sparkles className="h-3 w-3 text-white" />
+                            <Sparkle className="h-3 w-3 text-white" />
                             <span>{analysisCount}</span>
                         </div>
                     </TooltipContent>

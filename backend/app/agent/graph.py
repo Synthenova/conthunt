@@ -11,6 +11,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from app.agent.model_factory import (
     get_model_provider,
     init_chat_model,
+    init_chat_model_rated,
     normalize_messages_for_provider,
 )
 from app.agent.tools import (
@@ -49,7 +50,7 @@ Guidelines:
    - **CRITICAL:** DO NOT call `get_search_items()` for a search you JUST started in this turn. The search takes time.
    - **CRITICAL:** DO NOT tell the user "I am showing you results" or "I found these videos" immediately after starting a search. Just say "Your search has initiated, please look at the canvas for results" or similar.
    - If you have search IDs from *previous* turns that are not loaded, you may try `get_search_items(search_id)` ONCE.
-   - **IMPORTANT:** When you call `get_search_items()` for previous searches, DO NOT report this to the user unless they explicitly asked for it. Keep the information internal to your context. The user does not need to know you fetched the items again.
+   - **IMPORTANT:** When you call `get_search_items()` for previous searches, DO NOT report this to the user unless they explicitly asked for it. Keep the information internal to your context. The user does not need to know you fetched the items.
 
 
 **Handling @mentions:**
@@ -97,10 +98,18 @@ async def call_model(state: MessagesState, config: RunnableConfig):
     else:
         model_name = (config.get("configurable") or {}).get("model_name")
     image_urls = set((config.get("configurable") or {}).get("image_urls") or [])
+    redis_client = (config.get("configurable") or {}).get("redis_client")
+    
     provider = get_model_provider(model_name)
     if provider == "google":
         messages = _strip_stale_image_blocks(messages, image_urls)
-    llm = init_chat_model(model_name, temperature=0.5)
+    
+    # Use rate-limited model initialization if Redis is available
+    if redis_client:
+        llm = await init_chat_model_rated(model_name, redis_client, temperature=0.5)
+    else:
+        llm = init_chat_model(model_name, temperature=0.5)
+    
     messages = normalize_messages_for_provider(messages, model_name)
     model = llm.bind_tools(tools)
     

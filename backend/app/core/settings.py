@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     MEDIA_DOWNLOAD_ENABLED: bool = True
     MEDIA_MAX_CONCURRENCY: int = 4
     MEDIA_HTTP_TIMEOUT_S: int = 60
+    MEDIA_OPTIMIZE_IMAGES: bool = True
+    MEDIA_IMAGE_FORMAT: str = "webp"  # webp or jpeg
+    MEDIA_IMAGE_QUALITY: int = 75
     RAW_UPLOAD_ENABLED: bool = True
 
     # TwelveLabs Video Analysis

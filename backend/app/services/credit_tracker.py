@@ -20,9 +20,9 @@ FEATURE_CREDITS = {
 
 # Role to monthly credits mapping (matches Dodo product metadata)
 ROLE_CREDITS = {
-    "free": 50,
-    "creator": 1000,
-    "pro_research": 3000,
+    "free": 60,
+    "creator": 1050,
+    "pro_research": 3300,
 }
 
 # Credit period duration (30 days regardless of billing cycle)
@@ -352,6 +352,17 @@ class CreditTracker:
                 # Check if we need to advance the period (30 days passed)
                 period_start = await self._advance_credit_period_if_needed(conn, user_id, period_start)
             
+            # Load monthly usage limits per feature for this role.
+            limits_result = await conn.execute(
+                text("""
+                SELECT feature, limit_count
+                FROM usage_limits
+                WHERE plan_role = :role AND period = 'monthly'
+                """),
+                {"role": role}
+            )
+            usage_limits = {row[0]: row[1] for row in limits_result.fetchall()}
+
             # Get usage per feature within current credit period
             result = await conn.execute(
                 text("""
@@ -370,11 +381,23 @@ class CreditTracker:
                 features[feature] = {
                     "uses": uses,
                     "credits_spent": credits,
-                    "cap": None,
+                    "cap": usage_limits.get(feature),
                     "remaining": None,
                 }
                 if credits > 0:
                     total_credits_used += credits
+
+            # Add any limited features with zero usage.
+            for feature, cap in usage_limits.items():
+                if feature in features:
+                    features[feature]["remaining"] = max(0, cap - features[feature]["uses"])
+                    continue
+                features[feature] = {
+                    "uses": 0,
+                    "credits_spent": 0,
+                    "cap": cap,
+                    "remaining": cap,
+                }
             
             # Calculate next reset date
             next_reset = period_start + timedelta(days=CREDIT_PERIOD_DAYS)

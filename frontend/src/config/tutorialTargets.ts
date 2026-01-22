@@ -27,8 +27,7 @@ export const TUTORIAL_TARGETS: Record<TutorialTargetKey, string> = {
     "chat_tour.video_click": "[data-tutorial='video_card']:first-of-type",
     "chat_tour.analyse": "[data-tutorial='analyse_button']",
     "chat_tour.select_videos": "[data-tutorial='video_checkbox']:first-of-type",
-    "chat_tour.add_to_chat": "[data-tutorial='add_to_chat']",
-    "chat_tour.add_to_board": "[data-tutorial='add_to_board']",
+    "chat_tour.selection_bar": "[data-tutorial='selection_bar']",
 
     // Boards Tour (list page)
     "boards_tour.click_board": "[data-tutorial='board_card']:first-of-type",
@@ -82,10 +81,9 @@ export const TUTORIAL_INTERACTIONS: Partial<Record<TutorialTargetKey, Interactio
     // Chat
     "chat_tour.intro": "next_button",
     "chat_tour.canvas": "next_button",
-    "chat_tour.tabs": "click",
+    "chat_tour.tabs": "next_button",
     "chat_tour.select_videos": "click",
-    "chat_tour.add_to_board": "next_button",
-    "chat_tour.add_to_chat": "click",
+    "chat_tour.selection_bar": "next_button",
     "chat_tour.video_click": "click",
     "chat_tour.analyse": "click",
 

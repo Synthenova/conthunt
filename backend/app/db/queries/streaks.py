@@ -407,7 +407,7 @@ async def grant_reward(
             text("""
             INSERT INTO reward_balances (user_id, reward_feature, balance, updated_at)
             VALUES (:user_id, :reward_feature, :reward_feature_amount, NOW())
-            ON CONFLICT (user_id, reward_feature) DO UPDATE
+            ON CONFLICT (user_id, reward_feature) WHERE reward_feature IS NOT NULL DO UPDATE
             SET balance = reward_balances.balance + EXCLUDED.balance,
                 updated_at = NOW()
             """),
