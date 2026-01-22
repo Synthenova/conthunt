@@ -6,7 +6,9 @@ import { ChatToggleButton } from "./ChatToggleButton";
 
 export function ChatSidebarGate({ maxWidth }: { maxWidth?: number } = {}) {
     const pathname = usePathname();
-    const hideChat = pathname === "/app" || pathname === "/app/";
+    const hideChat = pathname === "/app"
+        || pathname === "/app/"
+        || pathname === "/app/profile";
 
     if (hideChat) return null;
 
