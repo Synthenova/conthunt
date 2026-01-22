@@ -287,13 +287,13 @@ async def analyze_video(
     source_url = media_asset.get("source_url", "") if media_asset else ""
     is_youtube = "youtube.com" in source_url or "youtu.be" in source_url    
     
-    if not is_youtube:
-        # Trigger 12Labs Indexing in Background (only for non-YouTube)
-        await cloud_tasks.create_http_task(
-            queue_name=settings.QUEUE_TWELVELABS,
-            relative_uri="/v1/tasks/twelvelabs/index",
-            payload={"media_asset_id": str(media_asset_id)}
-        )
+    # if not is_youtube:
+    #     # Trigger 12Labs Indexing in Background (only for non-YouTube)
+    #     await cloud_tasks.create_http_task(
+    #         queue_name=settings.QUEUE_TWELVELABS,
+    #         relative_uri="/v1/tasks/twelvelabs/index",
+    #         payload={"media_asset_id": str(media_asset_id)}
+    #     )
     
     # Use centralized service to enforce credit consumption
     return await analysis_service.trigger_paid_analysis(
