@@ -21,7 +21,7 @@ export const TUTORIAL_TARGETS: Record<TutorialTargetKey, string> = {
     "home_tour.send_button": "[data-tutorial='send_button']",
 
     // Chat Tour
-    "chat_tour.intro": "", // No target - centered tooltip
+    "chat_tour.intro": "[data-tutorial='chat_sidebar']",
     "chat_tour.canvas": "[data-tutorial='chat_canvas']",
     "chat_tour.tabs": "[data-tutorial='chat_tabs']",
     "chat_tour.video_click": "[data-tutorial='video_card']:first-of-type",
@@ -57,6 +57,7 @@ export function getTutorialTarget(flowId: string, stepId: string): string | null
 export const TUTORIAL_POSITIONS: Partial<Record<TutorialTargetKey, "top" | "bottom" | "left" | "right">> = {
     "home_tour.search_input": "top",
     "home_tour.send_button": "top",
+    "chat_tour.intro": "left",
     "chat_tour.tabs": "bottom",
 };
 

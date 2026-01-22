@@ -250,6 +250,7 @@ export function ChatSidebar({ maxWidth }: { maxWidth?: number }) {
                 style={{ ['--sidebar-width' as any]: `${Math.max(0, Math.min(sidebarWidth, maxWidth ?? sidebarWidth))}px` }}
                 onDrop={handleSidebarDrop}
                 onDragOver={handleSidebarDragOver}
+                data-tutorial="chat_sidebar"
             >
                 {/* Drag Overlay */}
                 {isSidebarDragOver && (

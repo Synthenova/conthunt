@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useBoards } from "@/hooks/useBoards";
@@ -28,10 +29,15 @@ export function ContentDrawer({
     resumeTime = 0,
 }: ContentDrawerProps) {
     const { viewportRef, mediaHeight, isMediaCollapsed, handleWheel, handleScroll } = useMediaSizing({ isOpen, item });
+    const queryClient = useQueryClient();
     const { analysisResult, analyzing, polling, error, loadingMessage, handleAnalyze } = useContentAnalysis({
         item,
         isOpen,
         analysisDisabled,
+        onAnalysisComplete: () => {
+            queryClient.invalidateQueries({ queryKey: ["boardItems"] });
+            queryClient.invalidateQueries({ queryKey: ["boards"] });
+        }
     });
 
     const { boards, isLoadingBoards, createBoard, addToBoard, isAddingToBoard, isCreatingBoard, refetchBoards } = useBoards({

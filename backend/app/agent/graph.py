@@ -46,8 +46,10 @@ Guidelines:
 1. `search()` - Use when user wants to DISCOVER NEW content from external platforms (TikTok, Instagram, YouTube).
    - User says: "find me ski videos", "search for cooking content", "look for trending fitness videos"
    - This searches EXTERNAL platforms and returns NEW videos the user hasn't seen.
-   - The search() tool returns search IDs. You must then call `get_search_items()` to get results.
-   - If get_search_items() says "still running", tell the user to wait and try again next turn.
+   - **CRITICAL:** DO NOT call `get_search_items()` for a search you JUST started in this turn. The search takes time.
+   - **CRITICAL:** DO NOT tell the user "I am showing you results" or "I found these videos" immediately after starting a search. Just say "Your search has initiated, please look at the canvas for results" or similar.
+   - If you have search IDs from *previous* turns that are not loaded, you may try `get_search_items(search_id)` ONCE.
+   - **IMPORTANT:** When you call `get_search_items()` for previous searches, DO NOT report this to the user unless they explicitly asked for it. Keep the information internal to your context. The user does not need to know you fetched the items again.
 
 
 **Handling @mentions:**
