@@ -187,6 +187,7 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
                 onHoverStateChange={(isHovering) => {
                     hoverStartRef.current = isHovering ? performance.now() : null;
                 }}
+                onError={() => onError?.(item.id)}
             />
         </div>
     );

@@ -87,6 +87,7 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                     {/* <Search className="h-6 w-6 text-zinc-400 mt-0.5" />  Removed as per request */}
                     <textarea
                         value={message}
+                        data-tutorial="search_input"
                         onChange={(e) => handleMessageChange(e.target.value)}
                         onKeyDown={handleKeyDown}
                         placeholder="Viral videos of mouth watering foods"
@@ -158,6 +159,7 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                     {/* Submit Button Image */}
                     <button
                         onClick={handleSubmit}
+                        data-tutorial="send_button"
                         disabled={isSubmitting || !message.trim()}
                         className={cn(
                             "relative group/submit rounded-full overflow-hidden transition-all duration-300 -mr-5 w-12 h-12 flex items-center justify-center bg-transparent",
