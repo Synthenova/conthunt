@@ -65,6 +65,7 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
+    REDIS_MAX_CONNECTIONS: int = 15  # 15 × 2 instances = 30 (free tier limit)
 
     # Openrouter
     OPENAI_BASE_URL: str = "https://openrouter.ai/api/v1"
