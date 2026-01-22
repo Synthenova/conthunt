@@ -17,6 +17,7 @@ interface MediaCardProps {
     showBadge?: boolean;
     onHoverTimeChange?: (seconds: number) => void;
     onHoverStateChange?: (isHovering: boolean) => void;
+    onError?: () => void;
 }
 
 export function MediaCard({
@@ -25,6 +26,7 @@ export function MediaCard({
     showBadge = true,
     onHoverTimeChange,
     onHoverStateChange,
+    onError,
 }: MediaCardProps) {
     const cardRef = useRef<HTMLDivElement>(null);
     const [isVisible, setIsVisible] = useState(false);
@@ -289,6 +291,7 @@ export function MediaCard({
                                 // For other videos: hide when playing
                                 isPlaying && (youtubeId ? youtube.isPrimed : videoUrl) ? 'opacity-0' : 'opacity-100'
                             )}
+                            onImageError={onError}
                             referrerPolicy="no-referrer"
                         />
 
@@ -319,6 +322,7 @@ export function MediaCard({
                                         onHoverTimeChange?.(videoRef.current.currentTime);
                                     }
                                 }}
+                                onError={onError}
                             />
                         )}
 

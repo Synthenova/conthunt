@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useEffect, useRef, useState, ReactNode } from "react";
+import { useMemo, useEffect, useRef, useState, ReactNode, useCallback } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VirtualizedResultsGrid } from "./VirtualizedResultsGrid";
 import { getResponsiveColumns } from "./gridUtils";
@@ -56,15 +56,35 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
         };
     }, [scrollRef]);
 
-    const itemsById = useMemo(() => {
+    const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+
+    const handleMediaError = useCallback((id: string) => {
+        setHiddenIds((prev) => {
+            const next = new Set(prev);
+            next.add(id);
+            return next;
+        });
+    }, []);
+
+    const visibleResults = useMemo(() => {
+        if (hiddenIds.size === 0) return results;
+        return results.filter(item => !hiddenIds.has(item.id));
+    }, [results, hiddenIds]);
+
+    // We use a ref to hold the map so we can pass a stable reference to child components.
+    // This prevents them from re-rendering just because the map *content* changed,
+    // as long as they don't *need* the new content immediately for rendering (SelectableMediaCard mainly needs it for drag/drop).
+    const itemsByIdRef = useRef<Record<string, any>>({});
+
+    useEffect(() => {
         const map: Record<string, any> = {};
-        results.forEach((item) => {
+        visibleResults.forEach((item) => {
             if (item?.id) {
                 map[item.id] = item;
             }
         });
-        return map;
-    }, [results]);
+        itemsByIdRef.current = map;
+    }, [visibleResults]);
 
     let content: ReactNode;
     if (loading) {
@@ -96,10 +116,11 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
     } else {
         content = (
             <VirtualizedResultsGrid
-                results={results}
+                results={visibleResults}
                 analysisDisabled={analysisDisabled}
-                itemsById={itemsById}
+                itemsByIdRef={itemsByIdRef} // Pass ref instead of value
                 scrollRef={resolvedScrollRef}
+                onMediaError={handleMediaError}
             />
         );
     }

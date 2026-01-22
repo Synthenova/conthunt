@@ -82,13 +82,15 @@ function useResponsiveColumns(
 export function VirtualizedResultsGrid({
     results,
     analysisDisabled = false,
-    itemsById,
+    itemsByIdRef,
     scrollRef,
+    onMediaError,
 }: {
     results: any[];
     analysisDisabled?: boolean;
-    itemsById: Record<string, any>;
+    itemsByIdRef: React.MutableRefObject<Record<string, any>>;
     scrollRef: React.RefObject<HTMLDivElement | null>;
+    onMediaError?: (id: string) => void;
 }) {
     const parentRef = useRef<HTMLDivElement>(null);
 
@@ -321,8 +323,9 @@ export function VirtualizedResultsGrid({
                                         <SelectableMediaCard
                                             item={item}
                                             platform={item.platform || "unknown"}
-                                            itemsById={itemsById}
+                                            itemsByIdRef={itemsByIdRef}
                                             onOpen={handleOpen}
+                                            onError={onMediaError}
                                         />
                                     </motion.div>
                                 ))}
