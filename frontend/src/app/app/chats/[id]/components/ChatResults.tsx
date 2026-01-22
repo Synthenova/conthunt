@@ -16,6 +16,7 @@ interface ChatResultsProps {
     clientDateFilter: ClientDateFilter;
     selectedPlatforms: string[];
     resultsScrollRef: React.RefObject<HTMLDivElement | null>;
+    isSearchEmpty: boolean;
 }
 
 export function ChatResults({
@@ -28,8 +29,39 @@ export function ChatResults({
     clientSort,
     clientDateFilter,
     selectedPlatforms,
-    resultsScrollRef
+    resultsScrollRef,
+    isSearchEmpty
 }: ChatResultsProps) {
+    const emptyState = isSearchEmpty ? (
+        <div className="flex flex-col items-center justify-center min-h-[400px] text-center p-8">
+            <img
+                src="/images/image.png"
+                alt="Logo"
+                loading="eager"
+                decoding="async"
+                className="h-24 w-24 rounded-full bg-white/5 p-3 mb-4"
+            />
+            <h3 className="text-xl font-semibold mb-2">Empty results</h3>
+            <p className="text-muted-foreground max-w-sm">
+                Try a different search or adjust your filters.
+            </p>
+        </div>
+    ) : (
+        <div className="flex flex-col items-center justify-center min-h-[320px] text-center p-8">
+            <img
+                src="/images/image.png"
+                alt="Logo"
+                loading="eager"
+                decoding="async"
+                className="h-20 w-20 rounded-full bg-white/5 p-3 mb-4"
+            />
+            <h3 className="text-lg font-semibold mb-2">No results match your filters</h3>
+            <p className="text-muted-foreground max-w-sm">
+                Try removing a filter or load more results.
+            </p>
+        </div>
+    );
+
     return (
         <div className="mt-0 flex-1 min-h-0 flex flex-col">
             <SelectableResultsGrid
@@ -38,8 +70,9 @@ export function ChatResults({
                 loading={loading}
                 analysisDisabled={false}
                 scrollRef={resultsScrollRef}
+                emptyState={emptyState}
                 footer={
-                    filteredResults.length > 0 && hasMore ? (
+                    !isSearchEmpty && hasMore ? (
                         <LoadMoreButton
                             onLoadMore={onLoadMore}
                             hasMore={hasMore}
