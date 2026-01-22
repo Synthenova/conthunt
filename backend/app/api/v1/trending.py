@@ -126,7 +126,7 @@ async def get_tiktok_trending(
     """
     settings = get_settings()
     redis_client = await get_redis_client(request)
-    cache_key = "trending:tiktok:feed:v3"  # Bump cache version for new format
+    cache_key = "trending:tiktok:feed:v4"  # Bump cache version for new format
     
     # Helper to proxy URLs through our backend to avoid CORS/HEIC issues
     # Uses API_BASE_URL from settings instead of request.base_url to work in prod
@@ -226,7 +226,7 @@ async def get_tiktok_trending(
             }
 
             # Cache for 12 hours - store with raw URLs
-            await redis_client.setex(cache_key, 43200, json.dumps({**result, "cached": True}))
+            await redis_client.setex(cache_key, 3600, json.dumps({**result, "cached": True}))
             
             # Proxify URLs before returning
             result["items"] = proxify_items(result["items"])

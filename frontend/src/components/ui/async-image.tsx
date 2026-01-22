@@ -6,9 +6,10 @@ import { cn } from "@/lib/utils";
 interface AsyncImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
     src: string;
     className?: string;
+    onImageError?: () => void;
 }
 
-export function AsyncImage({ src, className, alt, ...props }: AsyncImageProps) {
+export function AsyncImage({ src, className, alt, onImageError, ...props }: AsyncImageProps) {
     const [loaded, setLoaded] = useState(false);
     const [currentSrc, setCurrentSrc] = useState<string>(src);
     const [isConverting, setIsConverting] = useState(false);
@@ -57,7 +58,10 @@ export function AsyncImage({ src, className, alt, ...props }: AsyncImageProps) {
                 setCurrentSrc(objectUrl);
             } catch (error) {
                 console.error("[AsyncImage] HEIC conversion failed:", error);
-                if (active && !isKnownHeic) setError(true);
+                if (active && !isKnownHeic) {
+                    setError(true);
+                    onImageError?.();
+                }
             } finally {
                 if (active) setIsConverting(false);
             }
@@ -81,6 +85,7 @@ export function AsyncImage({ src, className, alt, ...props }: AsyncImageProps) {
         // Prevent infinite loops if fallback also fails or during conversion
         if (isConverting || isKnownHeic || currentSrc.startsWith("blob:")) {
             setError(true);
+            onImageError?.();
             return;
         }
 
@@ -116,9 +121,11 @@ export function AsyncImage({ src, className, alt, ...props }: AsyncImageProps) {
                 setCurrentSrc(newUrl);
             } else {
                 setError(true);
+                onImageError?.();
             }
         } catch (e) {
             setError(true);
+            onImageError?.();
         } finally {
             setIsConverting(false);
         }

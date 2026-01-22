@@ -14,12 +14,14 @@ interface SelectableMediaCardProps {
     item: any;
     platform: string;
     onOpen?: (item: any, resumeTime: number) => void;
-    itemsById?: Record<string, any>;
+    // We use a ref to avoid re-rendering every card when new items are appended
+    itemsByIdRef?: React.MutableRefObject<Record<string, any>>;
+    onError?: (id: string) => void;
 }
 
 const MEDIA_DRAG_TYPE = 'application/x-conthunt-media';
 
-export const SelectableMediaCard = memo(function SelectableMediaCard({ item, platform, onOpen, itemsById = {} }: SelectableMediaCardProps) {
+export const SelectableMediaCard = memo(function SelectableMediaCard({ item, platform, onOpen, itemsByIdRef, onError }: SelectableMediaCardProps) {
     const { selectedItems, toggleItemSelection } = useSearchStore();
     const isSelected = selectedItems.includes(item.id);
     const selectionMode = selectedItems.length > 0;
@@ -39,8 +41,9 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
 
     const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
         e.stopPropagation();
+        const itemsMap = itemsByIdRef?.current || {};
         const selected = (selectionMode && isSelected)
-            ? selectedItems.map((id) => itemsById[id]).filter(Boolean)
+            ? selectedItems.map((id) => itemsMap[id]).filter(Boolean)
             : [];
         const items = selected.length ? selected : [item];
 
@@ -184,6 +187,7 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
                 onHoverStateChange={(isHovering) => {
                     hoverStartRef.current = isHovering ? performance.now() : null;
                 }}
+                onError={() => onError?.(item.id)}
             />
         </div>
     );

@@ -77,7 +77,7 @@ export function TutorialReplayDropdown() {
                     Replay a Tutorial
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator className="bg-white/10" />
-                {flows?.map((flow) => (
+                {flows?.filter(flow => !["chat_tour", "board_detail_tour"].includes(flow.id)).map((flow) => (
                     <DropdownMenuItem
                         key={flow.id}
                         onClick={() => handleReplay(flow.id)}
