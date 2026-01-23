@@ -23,7 +23,7 @@ export const SidebarUser = ({ user, profile, isCollapsed }: SidebarUserProps) =>
     const { getPlanName, loading: productsLoading } = useProducts();
     const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
     const [isGiftOpen, setIsGiftOpen] = useState(false);
-    const { streak: streakData } = useStreak();
+    const { streak: streakData } = useStreak({ type: "search" });
 
     const planDisplayName = profile?.role
         ? getPlanName(profile.role)
