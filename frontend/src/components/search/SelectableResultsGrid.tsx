@@ -11,9 +11,10 @@ interface SelectableResultsGridProps {
     analysisDisabled?: boolean;
     scrollRef?: React.RefObject<HTMLDivElement | null>;
     footer?: ReactNode;
+    emptyState?: ReactNode;
 }
 
-export function SelectableResultsGrid({ results, loading, analysisDisabled = false, scrollRef, footer }: SelectableResultsGridProps) {
+export function SelectableResultsGrid({ results, loading, analysisDisabled = false, scrollRef, footer, emptyState }: SelectableResultsGridProps) {
     const internalScrollRef = useRef<HTMLDivElement>(null);
     const resolvedScrollRef = scrollRef ?? internalScrollRef;
     const [skeletonColumns, setSkeletonColumns] = useState(4);
@@ -102,7 +103,7 @@ export function SelectableResultsGrid({ results, loading, analysisDisabled = fal
             </div>
         );
     } else if (!results || results.length === 0) {
-        content = (
+        content = emptyState ?? (
             <div className="flex flex-col items-center justify-center min-h-[400px] text-center p-8">
                 <div className="h-24 w-24 rounded-full bg-white/5 flex items-center justify-center mb-4">
                     <span className="text-4xl">🔍</span>

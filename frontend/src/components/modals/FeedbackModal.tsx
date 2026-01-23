@@ -102,7 +102,7 @@ export function FeedbackModal({ isOpen, onClose }: FeedbackModalProps) {
                     <div className="space-y-4 py-4">
                         <Textarea
                             placeholder="Describe the issue or idea..."
-                            className="bg-[#151515] border-white/10 text-gray-200 min-h-[160px] focus-visible:ring-white/20 focus-visible:border-white/20 resize-none rounded-xl p-4 placeholder:text-zinc-600 text-base"
+                            className="bg-[#151515] border-white/10 text-gray-200 min-h-[160px] focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-white/10 resize-none rounded-xl p-4 placeholder:text-zinc-600 text-base"
                             value={message}
                             onChange={(e) => setMessage(e.target.value)}
                         />

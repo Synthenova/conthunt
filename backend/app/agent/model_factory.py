@@ -1,11 +1,13 @@
 """Model initialization factory for chat models."""
 import os
-from typing import Any, Iterable, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
+import redis.asyncio as redis
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
 from app.core import get_settings
+from app.agent.rate_limiter import get_rate_limiter
 
 DEFAULT_MODEL_NAME = "google/gemini-3-flash-preview"
 SUPPORTED_PROVIDERS = {"openrouter", "google"}
@@ -141,3 +143,40 @@ def normalize_messages_for_provider(
             normalized_messages.append(_copy_message_with_content(msg, normalized))
 
     return normalized_messages
+
+
+async def init_chat_model_rated(
+    model_name: str | None,
+    redis_client: redis.Redis,
+    temperature: float = 0.5,
+    timeout: float = 30.0,
+):
+    """
+    Initialize a chat model with rate limiting.
+    
+    Acquires a rate limit slot before returning the model.
+    Use this for all LLM calls to ensure global rate limits are respected.
+    
+    Args:
+        model_name: Full model name (e.g., "google/gemini-3-flash-preview")
+        redis_client: Redis client for rate limiting
+        temperature: Model temperature
+        timeout: Max seconds to wait for rate limit
+        
+    Returns:
+        Initialized chat model
+        
+    Raises:
+        RuntimeError: If rate limit acquisition times out
+    """
+    # Normalize model name for rate limiting
+    if not model_name:
+        model_name = DEFAULT_MODEL_NAME
+    
+    # Acquire rate limit slot
+    limiter = get_rate_limiter(redis_client)
+    await limiter.acquire(model_name, timeout=timeout)
+    
+    # Return the model
+    return init_chat_model(model_name, temperature=temperature)
+

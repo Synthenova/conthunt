@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { useBoards } from "@/hooks/useBoards";
 import { useSearchStore } from "@/lib/store";
 import { useChatStore } from "@/lib/chatStore";
@@ -432,7 +433,7 @@ export default function BoardDetailPage() {
                                             ))}
                                         </div>
                                     ) : transformedItems.length === 0 ? (
-                                        <BoardGlassCard className="m-2 p-12 text-center flex flex-col items-center gap-4">
+                                        <div className="m-2 p-12 text-center flex flex-col items-center gap-4">
                                             <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
                                                 <FolderOpen className="h-8 w-8 text-muted-foreground" />
                                             </div>
@@ -446,7 +447,7 @@ export default function BoardDetailPage() {
                                                     Go to Search
                                                 </Link>
                                             </Button>
-                                        </BoardGlassCard>
+                                        </div>
                                     ) : (
                                         <SelectableResultsGrid
                                             results={flatResults}
@@ -577,7 +578,7 @@ export default function BoardDetailPage() {
                                                     </TooltipTrigger>
                                                     <TooltipContent className="bg-white text-black border-none shadow-xl font-medium">
                                                         {transformedItems.filter(item => !item.is_analyzed).length > 0
-                                                            ? `${transformedItems.filter(item => !item.is_analyzed).length} credits will be used`
+                                                            ? `${transformedItems.filter(item => !item.is_analyzed).length * 2} credits will be used`
                                                             : "No credits will be used"}
                                                     </TooltipContent>
                                                 </Tooltip>
@@ -590,7 +591,7 @@ export default function BoardDetailPage() {
                                 <div ref={resultsScrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 px-2">
 
                                     {transformedItems.length === 0 ? (
-                                        <BoardGlassCard className="p-12 text-center flex flex-col items-center gap-4">
+                                        <div className="p-12 text-center flex flex-col items-center gap-4">
                                             <div className="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center">
                                                 <FolderOpen className="h-8 w-8 text-muted-foreground" />
                                             </div>
@@ -604,7 +605,7 @@ export default function BoardDetailPage() {
                                                     Go to Search
                                                 </Link>
                                             </Button>
-                                        </BoardGlassCard>
+                                        </div>
                                     ) : isInsightsLoading && !hasInsights ? (
                                         <div className="grid gap-6 lg:grid-cols-2">
                                             {[...Array(4)].map((_, i) => (
@@ -623,28 +624,48 @@ export default function BoardDetailPage() {
                                         </div>
                                     ) : !hasInsights ? (
                                         <div className="min-h-[50vh] flex flex-col items-center justify-center text-center gap-8 py-20 px-4">
-                                            <div className="h-20 w-20 rounded-2xl bg-white/5 flex items-center justify-center">
-                                                {(isProcessingInsights || isRefreshingInsights) ? (
-                                                    <Loader2 className="h-10 w-10 text-white/70 animate-spin" />
-                                                ) : (
+                                            {(isProcessingInsights || isRefreshingInsights) ? (
+                                                <div className="relative">
+                                                    <div
+                                                        className="absolute rounded-full border-2 border-transparent border-t-white animate-spin"
+                                                        style={{
+                                                            width: '72px',
+                                                            height: '72px',
+                                                            top: '-4px',
+                                                            left: '-4px',
+                                                        }}
+                                                    />
+                                                    <div className="h-16 w-16 rounded-full overflow-hidden bg-white/5 flex items-center justify-center">
+                                                        <Image
+                                                            src="/images/image.png"
+                                                            alt="Logo"
+                                                            width={54}
+                                                            height={54}
+                                                            priority
+                                                            className="object-contain"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="h-20 w-20 rounded-2xl bg-white/5 flex items-center justify-center">
                                                     <Sparkles className="h-10 w-10 text-white/30" />
-                                                )}
-                                            </div>
+                                                </div>
+                                            )}
                                             <div className="space-y-3 max-w-md">
                                                 <h3 className="text-2xl font-semibold text-white">
                                                     {(isProcessingInsights || isRefreshingInsights)
                                                         ? (totalVideos > 0 && (analyzedVideos + failedVideos) >= totalVideos
-                                                            ? "Generating insights..."
-                                                            : "Analyzing videos...")
+                                                            ? "Generating Insights"
+                                                            : "Analyzing Videos")
                                                         : "Ready to analyze"}
                                                 </h3>
                                                 <p className="text-base text-muted-foreground leading-relaxed">
                                                     {isProcessingInsights && totalVideos > 0
                                                         ? ((analyzedVideos + failedVideos) >= totalVideos
-                                                            ? "All videos analyzed. Creating your insights..."
-                                                            : `Analyzing ${analyzedVideos + failedVideos}/${totalVideos} videos...`)
+                                                            ? "All videos analyzed. Creating your insights."
+                                                            : `${analyzedVideos + failedVideos}/${totalVideos} videos done. Come back in a few minutes.`)
                                                         : (isRefreshingInsights
-                                                            ? "Starting analysis..."
+                                                            ? "Preparing analysis."
                                                             : "Uncover hooks, angles, and patterns across this board in 2–3 minutes.")}
                                                 </p>
                                                 {isProcessingInsights && totalVideos > 0 && (analyzedVideos + failedVideos) < totalVideos && (
@@ -675,7 +696,7 @@ export default function BoardDetailPage() {
                                                     </TooltipTrigger>
                                                     <TooltipContent className="bg-white text-black border-none shadow-xl font-medium">
                                                         {transformedItems.filter(item => !item.is_analyzed).length > 0
-                                                            ? `${transformedItems.filter(item => !item.is_analyzed).length} credits will be used`
+                                                            ? `${transformedItems.filter(item => !item.is_analyzed).length * 2} credits will be used`
                                                             : "No credits will be used"}
                                                     </TooltipContent>
                                                 </Tooltip>
@@ -685,11 +706,52 @@ export default function BoardDetailPage() {
                                         <div className="relative">
                                             {(isProcessingInsights || isRefreshingInsights || isInsightsFetching) && (
                                                 <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/40 backdrop-blur-sm">
-                                                    <div className="flex flex-col items-center gap-4">
-                                                        <Loader2 className="h-8 w-8 text-white/70 animate-spin" />
-                                                        <span className="text-sm text-white/80 font-medium">
-                                                            {insightsStatus === "queued" ? "Starting..." : "Updating..."}
-                                                        </span>
+                                                    <div className="flex flex-col items-center justify-center text-center gap-6 p-8">
+                                                        <div className="relative">
+                                                            <div
+                                                                className="absolute rounded-full border-2 border-transparent border-t-white animate-spin"
+                                                                style={{
+                                                                    width: '72px',
+                                                                    height: '72px',
+                                                                    top: '-4px',
+                                                                    left: '-4px',
+                                                                }}
+                                                            />
+                                                            <div className="h-16 w-16 rounded-full overflow-hidden bg-white/5 flex items-center justify-center">
+                                                                <Image
+                                                                    src="/images/image.png"
+                                                                    alt="Logo"
+                                                                    width={54}
+                                                                    height={54}
+                                                                    priority
+                                                                    className="object-contain"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        <div className="space-y-3 max-w-md">
+                                                            <h3 className="text-xl font-semibold text-white">
+                                                                {totalVideos > 0 && (analyzedVideos + failedVideos) >= totalVideos
+                                                                    ? "Generating Insights"
+                                                                    : "Analyzing Videos"}
+                                                            </h3>
+                                                            <p className="text-sm text-muted-foreground leading-relaxed">
+                                                                {totalVideos > 0
+                                                                    ? ((analyzedVideos + failedVideos) >= totalVideos
+                                                                        ? "All videos analyzed. Creating your insights."
+                                                                        : `${analyzedVideos + failedVideos}/${totalVideos} videos done. Come back in a few minutes.`)
+                                                                    : "Preparing analysis."}
+                                                            </p>
+                                                            {totalVideos > 0 && (analyzedVideos + failedVideos) < totalVideos && (
+                                                                <div className="w-full max-w-xs mx-auto mt-4">
+                                                                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                                                                        <div
+                                                                            className="h-full rounded-full bg-gradient-to-r from-primary/80 to-primary/60 transition-all duration-500"
+                                                                            style={{ width: `${totalVideos > 0 ? ((analyzedVideos + failedVideos) / totalVideos) * 100 : 0}%` }}
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
                                             )}

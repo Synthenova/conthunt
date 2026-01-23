@@ -107,33 +107,29 @@ async def get_board_media_assets_since(
     board_id: UUID,
     since: Optional[datetime] = None,
 ) -> List[dict]:
-    if since is None:
-        result = await conn.execute(
-            text("""
-                SELECT ma.id, bi.added_at
-                FROM board_items bi
-                JOIN media_assets ma
-                  ON ma.content_item_id = bi.content_item_id
-                 AND ma.asset_type = 'video'
-                WHERE bi.board_id = :board_id
-                ORDER BY bi.added_at DESC
-            """),
-            {"board_id": board_id}
-        )
-    else:
-        result = await conn.execute(
-            text("""
-                SELECT ma.id, bi.added_at
-                FROM board_items bi
-                JOIN media_assets ma
-                  ON ma.content_item_id = bi.content_item_id
-                 AND ma.asset_type = 'video'
-                WHERE bi.board_id = :board_id
-                  AND bi.added_at > :since
-                ORDER BY bi.added_at DESC
-            """),
-            {"board_id": board_id, "since": since}
-        )
+    params = {"board_id": board_id}
+    since_clause = ""
+    if since:
+        since_clause = "AND bi.added_at > :since"
+        params["since"] = since
+
+    result = await conn.execute(
+        text(f"""
+            SELECT ma.id, bi.added_at
+            FROM board_items bi
+            JOIN LATERAL (
+                SELECT id
+                FROM media_assets
+                WHERE content_item_id = bi.content_item_id
+                  AND asset_type = 'video'
+                LIMIT 1
+            ) ma ON true
+            WHERE bi.board_id = :board_id
+            {since_clause}
+            ORDER BY bi.added_at DESC
+        """),
+        params
+    )
     return [
         {"media_asset_id": row[0], "added_at": row[1]}
         for row in result.fetchall()
@@ -149,9 +145,9 @@ async def get_board_insights_progress(
     result = await conn.execute(
         text("""
             SELECT 
-                COUNT(DISTINCT ma.id) AS total_videos,
-                COUNT(DISTINCT CASE WHEN va.status = 'completed' THEN va.media_asset_id END) AS analyzed_videos,
-                COUNT(DISTINCT CASE WHEN va.status = 'failed' THEN va.media_asset_id END) AS failed_videos
+                COUNT(DISTINCT bi.content_item_id) AS total_videos,
+                COUNT(DISTINCT CASE WHEN va.status = 'completed' THEN bi.content_item_id END) AS analyzed_videos,
+                COUNT(DISTINCT CASE WHEN va.status = 'failed' THEN bi.content_item_id END) AS failed_videos
             FROM board_items bi
             JOIN media_assets ma
               ON ma.content_item_id = bi.content_item_id

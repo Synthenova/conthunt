@@ -205,6 +205,7 @@ export default function ChatPage() {
         selectedPlatforms,
         setSelectedPlatforms,
     } = useClientResultSort(activeResults, { resultsAreFlat: true });
+    const isSearchEmpty = activeResults.length === 0;
 
     useEffect(() => {
         setClientFilters({
@@ -396,6 +397,7 @@ export default function ChatPage() {
                                                 clientDateFilter={clientDateFilter}
                                                 selectedPlatforms={selectedPlatforms}
                                                 resultsScrollRef={resultsScrollRef}
+                                                isSearchEmpty={isSearchEmpty}
                                             />
                                         )}
                                     </section>

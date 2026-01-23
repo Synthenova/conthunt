@@ -15,7 +15,7 @@ from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import InjectedState
 
 from app.core import get_settings, logger
-from app.agent.model_factory import init_chat_model
+from app.agent.model_factory import init_chat_model, init_chat_model_rated
 
 settings = get_settings()
 
@@ -384,10 +384,6 @@ class TikTokKeywordFilters(BaseModel):
 
 
 class SearchFilters(BaseModel):
-    platforms: Optional[List[Literal["tiktok_top", "tiktok_keyword"]]] = Field(
-        default=None,
-        description="Optional platform slugs to search.",
-    )
     tiktok_top: Optional[TikTokTopFilters] = None
     tiktok_keyword: Optional[TikTokKeywordFilters] = None
 
@@ -439,10 +435,13 @@ async def search(
 
         configurable = config.get("configurable", {}) if config else {}
         chat_id = configurable.get("chat_id")
+        redis_client = configurable.get("redis_client")
         
-        
-        # 1. Initialize Gemini 3 Pro for intent detection
-        llm = init_chat_model("google/gemini-3-pro-preview")
+        # 1. Initialize Gemini 3 Pro for intent detection (with rate limiting)
+        if redis_client:
+            llm = await init_chat_model_rated("google/gemini-3-pro-preview", redis_client)
+        else:
+            llm = init_chat_model("google/gemini-3-pro-preview")
         llm = llm.bind_tools([{"google_search": {}}])
         structured_llm = llm.with_structured_output(SearchPlan)
 
@@ -457,9 +456,7 @@ async def search(
         For each query, provide ONLY the keyword.
         Focus on finding content related to the user's request. Use the google_search if necessary for more details.
 
-        If the user explicitly requests filters (date, sort, platforms), include them in `filters`.
-        Use platform slugs: tiktok_top, tiktok_keyword.
-        Leave `platforms` empty to mean "all platforms".
+        If the user explicitly requests filters (date, sort), include them in `filters`.
         Allowed values:
         - publish_time/date_posted: this-week, yesterday, this-month, last-3-months, last-6-months, all-time
         - sort_by: relevance, most-liked, date-posted
@@ -479,7 +476,7 @@ async def search(
         llm_filters = response.filters
         llm_filter_inputs = _llm_filters_to_inputs(llm_filters) if llm_filters else {}
         effective_filters = _merge_filter_inputs(config_filters, llm_filter_inputs)
-        platforms_list = llm_filters.platforms if llm_filters and llm_filters.platforms else AVAILABLE_PLATFORMS
+        platforms_list = AVAILABLE_PLATFORMS
         logger.info(f"Generated search queries: {queries}")
         logger.info(f"Generated filters: {llm_filters}")
         logger.info(f"Config filters: {config_filters}")
@@ -577,7 +574,7 @@ async def search(
         return {
             "search_ids": search_ids,
             "generated_queries": results_info,
-            "message": f"I have started {len(search_ids)} searches for you: {', '.join([q['keyword'] for q in results_info])}. Use get_search_items(search_id) to retrieve results once complete. Please report strictly the started searches to the user.",
+            "message": f"I have started {len(search_ids)} searches for you: {', '.join([q['keyword'] for q in results_info])}. Do NOT fetch results in this turn.",
             "errors": errors if errors else None
         }
     except Exception as e:

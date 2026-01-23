@@ -211,6 +211,7 @@ export function SelectionBar({
                     backdropFilter: 'blur(10px)',
                     border: '1px solid rgba(255, 255, 255, 0.1)'
                 }}
+                data-tutorial="selection_bar"
             >
                 {/* Selection Count */}
                 <div className="flex items-center gap-2">

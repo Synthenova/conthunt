@@ -73,15 +73,9 @@ ONBOARDING_FLOWS: Dict[str, dict] = {
                 "content": "Select multiple videos to perform batch actions."
             },
             {
-                "id": "add_to_board",
-                "title": "Add to Board",
-                "content": "Save selected items to a board for later.",
-                "cta": {"label": "Next", "href": "#"} 
-            },
-            {
-                "id": "add_to_chat",
-                "title": "Add to Chat",
-                "content": "Add your selection to the conversation for AI assistance."
+                "id": "selection_bar",
+                "title": "Selection Actions",
+                "content": "Use this bar to add selected videos to a board or chat for further analysis."
             },
             {
                 "id": "video_click",

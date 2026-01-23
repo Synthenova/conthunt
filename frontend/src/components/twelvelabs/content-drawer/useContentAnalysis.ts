@@ -22,9 +22,10 @@ interface UseContentAnalysisOptions {
     item: any | null;
     isOpen: boolean;
     analysisDisabled?: boolean;
+    onAnalysisComplete?: () => void;
 }
 
-export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: UseContentAnalysisOptions) {
+export function useContentAnalysis({ item, isOpen, analysisDisabled = false, onAnalysisComplete }: UseContentAnalysisOptions) {
     const [analyzing, setAnalyzing] = useState(false);
     const [polling, setPolling] = useState(false);
     const [checkingExisting, setCheckingExisting] = useState(false);
@@ -131,6 +132,9 @@ export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: U
                 if (data?.status !== "processing") {
                     setPolling(false);
                     clearInterval(pollInterval);
+                    if (data?.status === "completed") {
+                        onAnalysisComplete?.();
+                    }
                 }
             } catch (err) {
                 console.error("Polling error:", err);
@@ -138,7 +142,7 @@ export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: U
         }, ANALYSIS_POLL_INTERVAL_MS);
 
         return () => clearInterval(pollInterval);
-    }, [polling, fetchAnalysis]);
+    }, [polling, fetchAnalysis, onAnalysisComplete]);
 
     useEffect(() => {
         if (isOpen && item) {
@@ -148,7 +152,7 @@ export function useContentAnalysis({ item, isOpen, analysisDisabled = false }: U
             setPolling(false);
             setCheckingExisting(false);
             analysisNotReadyRetries.current = 0;
-            
+
             // Auto-fetch existing analysis if user has already accessed it (GET - no credit charge)
             if (!analysisDisabled) {
                 setCheckingExisting(true);

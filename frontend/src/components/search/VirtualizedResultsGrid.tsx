@@ -161,7 +161,7 @@ export function VirtualizedResultsGrid({
         count: rows.length,
         getScrollElement: () => scrollRef.current,
         estimateSize: estimateRowHeight,
-        overscan: 6,
+        overscan: 3,
         enabled: true,
     });
 

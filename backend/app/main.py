@@ -32,13 +32,16 @@ async def lifespan(app: FastAPI):
     try:
         await init_db()
         logger.debug("Database connection verified")
-        app.state.redis = redis.from_url(
+        
+        # Use BlockingConnectionPool to wait for connections instead of failing
+        from redis.asyncio.connection import BlockingConnectionPool
+        redis_pool = BlockingConnectionPool.from_url(
             settings.REDIS_URL,
+            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            timeout=10.0,  # Wait up to 10s for a connection
             decode_responses=True,
-            max_connections=8,
-            socket_keepalive=True,
-            health_check_interval=30,
         )
+        app.state.redis = redis.Redis(connection_pool=redis_pool)
         max_conn = getattr(app.state.redis.connection_pool, "max_connections", None)
         logger.info("Redis client initialized (max_connections=%s)", max_conn)
         app.state.stream_hub = StreamFanoutHub(app.state.redis, logger)

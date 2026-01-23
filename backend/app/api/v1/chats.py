@@ -172,6 +172,7 @@ async def stream_generator_to_redis(
                 "model_name": model_name,
                 "image_urls": image_urls or [],
                 "filters": filters or {},
+                "redis_client": r,  # Pass Redis for rate limiting
             }
         }
         tool_run_ids = set()

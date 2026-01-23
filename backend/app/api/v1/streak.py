@@ -131,9 +131,12 @@ async def claim_reward(
             raise HTTPException(status_code=404, detail="Milestone not found")
 
         reward_feature = milestone.get("reward_feature")
-        reward_amount = milestone.get("reward_amount")
-        if not reward_feature or not reward_amount or reward_amount <= 0:
+        reward_credits = milestone.get("reward_credits", 0)
+        reward_feature_amount = milestone.get("reward_feature_amount", 0)
+        if reward_credits <= 0 and reward_feature_amount <= 0:
             raise HTTPException(status_code=400, detail="Milestone reward is not configured")
+        if reward_feature_amount > 0 and not reward_feature:
+            raise HTTPException(status_code=400, detail="Milestone reward feature is not configured")
 
         if streak["current_streak"] < days_required:
             raise HTTPException(status_code=400, detail="Milestone not yet reached")
@@ -147,7 +150,8 @@ async def claim_reward(
                 "reason": "already_claimed",
                 "reward": {
                     "feature": reward_feature,
-                    "amount": reward_amount,
+                    "credits": reward_credits,
+                    "feature_amount": reward_feature_amount,
                     "days_required": days_required,
                 },
             }
@@ -156,8 +160,9 @@ async def claim_reward(
             "claimed": True,
             "reward": {
                 "feature": reward_feature,
-                "amount": reward_amount,
+                "credits": reward_credits,
+                "feature_amount": reward_feature_amount,
                 "days_required": days_required,
             },
-            "balance": grant["balance"],
+            "balances": grant,
         }

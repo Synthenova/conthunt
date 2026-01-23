@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     MEDIA_DOWNLOAD_ENABLED: bool = True
     MEDIA_MAX_CONCURRENCY: int = 4
     MEDIA_HTTP_TIMEOUT_S: int = 60
+    MEDIA_OPTIMIZE_IMAGES: bool = True
+    MEDIA_IMAGE_FORMAT: str = "webp"  # webp or jpeg
+    MEDIA_IMAGE_QUALITY: int = 75
     RAW_UPLOAD_ENABLED: bool = True
 
     # TwelveLabs Video Analysis
@@ -62,6 +65,7 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
+    REDIS_MAX_CONNECTIONS: int = 15  # 15 × 2 instances = 30 (free tier limit)
 
     # Openrouter
     OPENAI_BASE_URL: str = "https://openrouter.ai/api/v1"

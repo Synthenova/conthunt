@@ -21,14 +21,13 @@ export const TUTORIAL_TARGETS: Record<TutorialTargetKey, string> = {
     "home_tour.send_button": "[data-tutorial='send_button']",
 
     // Chat Tour
-    "chat_tour.intro": "", // No target - centered tooltip
+    "chat_tour.intro": "[data-tutorial='chat_sidebar']",
     "chat_tour.canvas": "[data-tutorial='chat_canvas']",
     "chat_tour.tabs": "[data-tutorial='chat_tabs']",
     "chat_tour.video_click": "[data-tutorial='video_card']:first-of-type",
     "chat_tour.analyse": "[data-tutorial='analyse_button']",
     "chat_tour.select_videos": "[data-tutorial='video_checkbox']:first-of-type",
-    "chat_tour.add_to_chat": "[data-tutorial='add_to_chat']",
-    "chat_tour.add_to_board": "[data-tutorial='add_to_board']",
+    "chat_tour.selection_bar": "[data-tutorial='selection_bar']",
 
     // Boards Tour (list page)
     "boards_tour.click_board": "[data-tutorial='board_card']:first-of-type",
@@ -57,6 +56,7 @@ export function getTutorialTarget(flowId: string, stepId: string): string | null
 export const TUTORIAL_POSITIONS: Partial<Record<TutorialTargetKey, "top" | "bottom" | "left" | "right">> = {
     "home_tour.search_input": "top",
     "home_tour.send_button": "top",
+    "chat_tour.intro": "left",
     "chat_tour.tabs": "bottom",
 };
 
@@ -81,10 +81,9 @@ export const TUTORIAL_INTERACTIONS: Partial<Record<TutorialTargetKey, Interactio
     // Chat
     "chat_tour.intro": "next_button",
     "chat_tour.canvas": "next_button",
-    "chat_tour.tabs": "click",
+    "chat_tour.tabs": "next_button",
     "chat_tour.select_videos": "click",
-    "chat_tour.add_to_board": "next_button",
-    "chat_tour.add_to_chat": "click",
+    "chat_tour.selection_bar": "next_button",
     "chat_tour.video_click": "click",
     "chat_tour.analyse": "click",
 

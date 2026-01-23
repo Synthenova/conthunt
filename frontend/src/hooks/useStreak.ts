@@ -8,7 +8,8 @@ export interface StreakMilestone {
     reward_description: string;
     icon_name: string;
     reward_feature?: string | null;
-    reward_amount?: number | null;
+    reward_credits?: number | null;
+    reward_feature_amount?: number | null;
     completed: boolean;
     claimed?: boolean;
     claimable?: boolean;
@@ -92,8 +93,13 @@ async function recordAppOpen(): Promise<{ success: boolean; current_streak: numb
 
 async function claimReward(type: string, daysRequired: number): Promise<{
     claimed: boolean;
-    reward?: { feature: string; amount: number; days_required: number };
-    balance?: number;
+    reward?: {
+        feature: string | null;
+        credits: number;
+        feature_amount: number;
+        days_required: number;
+    };
+    balances?: { credits_balance: number; feature_balance: number };
     reason?: string;
 }> {
     if (!auth) throw new Error("Auth not initialized");
