@@ -440,11 +440,11 @@ async def search(
         redis_client = configurable.get("redis_client")
         
         # 1. Initialize Gemini 3 Pro for intent detection (with rate limiting)
-        if redis_client:
-            llm = await init_chat_model_rated("google/gemini-3-flash-preview", redis_client)
-        else:
-            llm = init_chat_model("google/gemini-3-flash-preview")
-        llm = llm.bind_tools([{"google_search": {}}])
+        # if redis_client:
+        #     llm = await init_chat_model_rated("google/gemini-3-flash-preview", redis_client)
+        # else:
+        llm = init_chat_model("google/gemini-3-flash-preview")
+        # llm = llm.bind_tools([{"google_search": {}}])
         structured_llm = llm.with_structured_output(SearchPlan)
 
         # 2. Extract messages for context

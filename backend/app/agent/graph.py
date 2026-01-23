@@ -105,10 +105,10 @@ async def call_model(state: MessagesState, config: RunnableConfig):
         messages = _strip_stale_image_blocks(messages, image_urls)
     
     # Use rate-limited model initialization if Redis is available
-    if redis_client:
-        llm = await init_chat_model_rated(model_name, redis_client, temperature=0.5)
-    else:
-        llm = init_chat_model(model_name, temperature=0.5)
+    # if redis_client:
+    #     llm = await init_chat_model_rated(model_name, redis_client, temperature=0.5)
+    # else:
+    llm = init_chat_model(model_name, temperature=0.5)
     
     messages = normalize_messages_for_provider(messages, model_name)
     model = llm.bind_tools(tools)
