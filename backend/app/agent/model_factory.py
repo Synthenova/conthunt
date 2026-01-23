@@ -56,9 +56,8 @@ def init_chat_model(model_name: str | None, temperature: float = 0.5):
 
     return ChatGoogleGenerativeAI(
         model=resolved_name,
-        temperature=temperature,
-        project=settings.GCLOUD_PROJECT,
-        vertexai=True,
+        temperature=temperature,        
+        api_key=settings.GOOGLE_API_KEY,
     )
 
 
