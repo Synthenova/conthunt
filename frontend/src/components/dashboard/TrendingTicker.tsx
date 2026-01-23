@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface TrendingTickerProps {
     label: string;
@@ -41,6 +42,23 @@ export function TrendingTicker({ label, hashtags, trend, onClick }: TrendingTick
                 <span className="font-medium text-[14px] md:text-[16px] leading-tight text-center tracking-[-0.02em] text-[#616161] whitespace-nowrap px-2">
                     {hashtags}
                 </span>
+            </div>
+        </div>
+    );
+}
+
+export function TrendingTickerSkeleton() {
+    return (
+        <div className="flex flex-col items-center justify-center relative min-w-[200px] h-[52px]">
+            {/* Top Row: Icon + Label */}
+            <div className="flex flex-row justify-center items-center gap-[5px] h-[24px] pr-[10px]">
+                <Skeleton className="w-[14px] h-[14px] rounded-full bg-white/10" />
+                <Skeleton className="h-[18px] w-[120px] bg-white/10" />
+            </div>
+
+            {/* Bottom Row: Hashtags */}
+            <div className="flex items-center justify-center mt-1">
+                <Skeleton className="h-[16px] w-[160px] bg-white/10" />
             </div>
         </div>
     );

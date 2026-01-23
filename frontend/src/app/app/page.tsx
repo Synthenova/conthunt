@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTutorialAutoStart } from "@/hooks/useTutorialAutoStart";
 import { HomeSearchBox } from "@/components/dashboard/HomeSearchBox";
-import { TrendingTicker } from "@/components/dashboard/TrendingTicker";
+import { TrendingTicker, TrendingTickerSkeleton } from "@/components/dashboard/TrendingTicker";
 import { VideoMarquee } from "@/components/dashboard/VideoMarquee";
 import { authFetch, BACKEND_URL } from "@/lib/api";
 import { auth } from "@/lib/firebaseClient";
@@ -104,15 +104,21 @@ export default function HomePage() {
 
                 {/* Trending Tickers Stack */}
                 <div className="mt-[calc(var(--spacing)*34)] w-full max-w-[96rem] flex flex-wrap justify-center gap-x-6 gap-y-8 max-h-[160px] overflow-hidden content-start">
-                    {displayItems.map((ticker, index) => (
-                        <TrendingTicker
-                            key={index}
-                            label={ticker.label}
-                            hashtags={ticker.hashtags}
-                            trend={ticker.trend}
-                            onClick={() => handleTickerClick(ticker.label, ticker.hashtags)}
-                        />
-                    ))}
+                    {isLoading ? (
+                        Array.from({ length: 12 }).map((_, index) => (
+                            <TrendingTickerSkeleton key={index} />
+                        ))
+                    ) : (
+                        displayItems.map((ticker, index) => (
+                            <TrendingTicker
+                                key={index}
+                                label={ticker.label}
+                                hashtags={ticker.hashtags}
+                                trend={ticker.trend}
+                                onClick={() => handleTickerClick(ticker.label, ticker.hashtags)}
+                            />
+                        ))
+                    )}
                 </div>
 
             </div>
