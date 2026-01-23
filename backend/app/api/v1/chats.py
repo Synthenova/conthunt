@@ -194,7 +194,10 @@ async def stream_generator_to_redis(
                 await r.xadd(stream_key, {"data": json.dumps(payload, default=str)})
                 content_buffer = ""
         
+        logger.info(f"Starting graph.astream_events for chat {chat_id}")
         async for ev in graph.astream_events(inputs, config=config, version="v2"):
+            # logger.info(f"Event received: {ev.get('event')}")
+
             ev_type = ev.get("event")
             data = ev.get("data", {}) or {}
             run_id = ev.get("run_id")
@@ -291,6 +294,7 @@ async def stream_generator_to_redis(
             if payload:
                 await r.xadd(stream_key, {"data": json.dumps(payload, default=str)})
 
+        logger.info("Stream loop completed")
         # Flush any remaining buffered content before sending done
         await flush_buffer()
         await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
@@ -558,7 +562,7 @@ async def send_message(
     auth_token = auth_header.split(" ")[1]
 
     send_request = SendMessageRequest.model_validate(await req_obj.json())
-    logger.info("send message", send_request.filters)
+    logger.info("send message %s", send_request.filters)
 
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)

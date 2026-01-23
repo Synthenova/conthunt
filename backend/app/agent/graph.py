@@ -93,10 +93,10 @@ async def call_model(state: MessagesState, config: RunnableConfig):
     system_prompt = BASE_SYSTEM_PROMPT
 
     # If this is the first message (no history), force the stronger model
-    if len(messages) <= 1:
-        model_name = "google/gemini-3-pro-preview"
-    else:
-        model_name = (config.get("configurable") or {}).get("model_name")
+    # if len(messages) <= 1:
+    #     model_name = "google/gemini-3-pro-preview"
+    # else:
+    model_name = (config.get("configurable") or {}).get("model_name")
     image_urls = set((config.get("configurable") or {}).get("image_urls") or [])
     redis_client = (config.get("configurable") or {}).get("redis_client")
     

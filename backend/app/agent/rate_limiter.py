@@ -139,7 +139,7 @@ class ModelRateLimiter:
                 wait_hint = result[1]
                 wait_time = min(max(0.5, wait_hint), 2.0)  # Clamp to 0.5-2s
 
-                logger.debug(
+                logger.info(
                     "Rate limit hit for %s (limit=%d), waiting %.1fs",
                     model_name, limit, wait_time
                 )

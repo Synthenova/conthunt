@@ -31,7 +31,8 @@ llm = ChatGoogleGenerativeAI(
     model="gemini-3-flash-preview",
     temperature=0.7,
     project=settings.GCP_PROJECT,
-    vertexai=True
+    vertexai=True,
+    max_retires=10
 )
 
 # Bind Structured Output
