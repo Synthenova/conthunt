@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     GCLOUD_PROJECT: str = "conthunt-dev"
     GCP_PROJECT: str = "conthunt-dev"
     GCP_REGION: str = "us-central1"
+    GOOGLE_API_KEY: str
     
     # Cloud Tasks
     CLOUD_TASKS_SA_EMAIL: str = "tasks-invoker@conthunt-dev.iam.gserviceaccount.com"
