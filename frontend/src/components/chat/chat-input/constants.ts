@@ -3,6 +3,8 @@ export const MEDIA_DRAG_TYPE = 'application/x-conthunt-media';
 export const CHIP_TITLE_LIMIT = 10;
 
 export const MODEL_OPTIONS = [
+
+    // { label: 'Gemini 3 Flash', value: 'google/gemini-3-flash-preview' },
     { label: 'Grok 4.1 Fast (xAI)', value: 'openrouter/x-ai/grok-4.1-fast' },
     { label: 'Gemini 3 Flash', value: 'google/gemini-3-flash-preview' },
     { label: 'MiMo-V2-Flash (Xiaomi, free)', value: 'openrouter/xiaomi/mimo-v2-flash:free' },

@@ -10,6 +10,7 @@ from app.core import get_settings
 from app.agent.rate_limiter import get_rate_limiter
 
 DEFAULT_MODEL_NAME = "openrouter/x-ai/grok-4.1-fast"
+DEFAULT_MODEL_NAME = "google/gemini-3-flash-preview"
 SUPPORTED_PROVIDERS = {"openrouter", "google"}
 
 # Model options - keep in sync with frontend/src/components/chat/chat-input/constants.ts
