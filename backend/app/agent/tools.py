@@ -444,7 +444,7 @@ async def search(
         #     llm = await init_chat_model_rated("google/gemini-3-flash-preview", redis_client)
         # else:
         llm = init_chat_model("google/gemini-3-flash-preview")
-        # llm = llm.bind_tools([{"google_search": {}}])
+        llm = llm.bind_tools([{"google_search": {}}])
         structured_llm = llm.with_structured_output(SearchPlan)
 
         # 2. Extract messages for context
