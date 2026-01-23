@@ -6,7 +6,6 @@ export const MODEL_OPTIONS = [
 
     { label: 'Gemini 3 Flash', value: 'google/gemini-3-flash-preview' },
     { label: 'Grok 4.1 Fast (xAI)', value: 'openrouter/x-ai/grok-4.1-fast' },
-    // { label: 'Gemini 3 Flash', value: 'google/gemini-3-flash-preview' },
     { label: 'MiMo-V2-Flash (Xiaomi, free)', value: 'openrouter/xiaomi/mimo-v2-flash:free' },
     { label: 'GPT-5.2 (OpenAI)', value: 'openrouter/openai/gpt-5.2' },
     { label: 'GPT-5.1 (OpenAI)', value: 'openrouter/openai/gpt-5.1' },
