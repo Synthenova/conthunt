@@ -195,7 +195,7 @@ function PromptInputActions({
 
 export type PromptInputActionProps = {
   className?: string
-  tooltip: React.ReactNode
+  tooltip?: React.ReactNode
   children: React.ReactNode
   side?: "top" | "bottom" | "left" | "right"
 } & React.ComponentProps<typeof Tooltip>
@@ -218,9 +218,11 @@ function PromptInputAction({
       >
         {children}
       </TooltipTrigger>
-      <TooltipContent side={side} className={className}>
-        {tooltip}
-      </TooltipContent>
+      {tooltip && (
+        <TooltipContent side={side} className={className}>
+          {tooltip}
+        </TooltipContent>
+      )}
     </Tooltip>
   )
 }

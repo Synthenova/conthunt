@@ -52,12 +52,14 @@ def init_chat_model(model_name: str | None, temperature: float = 0.5):
             temperature=temperature,
             openai_api_base=settings.OPENAI_BASE_URL,
             api_key=settings.OPENAI_API_KEY,
+            max_retries=10,
         )
 
     return ChatGoogleGenerativeAI(
         model=resolved_name,
         temperature=temperature,        
         api_key=settings.GOOGLE_API_KEY,
+        max_retries=10,
     )
 
 
