@@ -46,6 +46,8 @@ steps:
       - '--set-secrets=SCRAPECREATORS_API_KEY=SCRAPECREATORS_API_KEY:latest'
       - '--set-secrets=SCRAPECREATORS_BASE_URL=SCRAPECREATORS_BASE_URL:latest'
       - '--set-secrets=REDIS_URL=REDIS_URL:latest'
+      - '--set-secrets=REDIS_MAX_CONNECTIONS=REDIS_MAX_CONNECTIONS:latest'
+      - '--set-secrets=GOOGLE_API_KEY=GOOGLE_API_KEY:latest'
       - '--set-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest'
       - '--set-secrets=OPENAI_BASE_URL=OPENAI_BASE_URL:latest'
       - '--set-secrets=LOG_LEVEL=LOG_LEVEL:latest'
