@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Square } from 'lucide-react';
+// import { ArrowUp, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PromptInputAction } from '@/components/ui/prompt-input';
 
@@ -14,17 +14,15 @@ interface ActionButtonsProps {
 export function ActionButtons({ isStreaming, canSend, onSend, onStop }: ActionButtonsProps) {
     if (isStreaming) {
         return (
-            <PromptInputAction tooltip="Stop generating">
-                <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8 rounded-full"
-                    onClick={onStop}
-                    aria-label="Stop generating"
-                >
-                    <Square className="h-4 w-4 fill-current" />
-                </Button>
-            </PromptInputAction>
+            <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 rounded-full disabled:cursor-not-allowed disabled:pointer-events-auto disabled:opacity-100"
+                aria-label="Generating"
+                disabled={true}
+            >
+                <div className="w-4 h-4 border-2 border-zinc-500/30 border-t-zinc-500 rounded-full animate-spin" />
+            </Button>
         );
     }
 
@@ -33,7 +31,7 @@ export function ActionButtons({ isStreaming, canSend, onSend, onStop }: ActionBu
             <Button
                 size="icon"
                 variant="ghost"
-                className="h-10 w-10 rounded-full hover:bg-transparent"
+                className="h-10 w-10 rounded-full hover:bg-transparent disabled:cursor-not-allowed disabled:pointer-events-auto"
                 onClick={onSend}
                 disabled={!canSend}
                 aria-label="Send message"

@@ -21,12 +21,11 @@ settings = get_settings()
 
 
 def _get_api_base_url() -> str:
-    """Get API base URL for internal/external calls."""
-    env_base_url = os.getenv("API_BASE_URL") or settings.API_BASE_URL
-    if env_base_url:
-        return env_base_url.rstrip("/") + "/v1"
-
-    # Cloud Run sets PORT env var; default to 8000 for local dev
+    """Get API base URL for internal tools calls.
+    
+    Always use localhost for internal communication within the container
+    to avoid network overhead and loopback issues.
+    """
     port = os.getenv("PORT", "8000")
     return f"http://localhost:{port}/v1"
 
