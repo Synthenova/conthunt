@@ -129,7 +129,7 @@ async def get_usage_series(
                 usage AS (
                     SELECT date_trunc('{trunc}', created_at) AS bucket,
                            COUNT(*) FILTER (WHERE feature = 'search_query') AS searches,
-                           COALESCE(SUM(quantity), 0) AS credits
+                           COALESCE(SUM(quantity) FILTER (WHERE feature <> 'search_query'), 0) AS credits
                     FROM usage_logs
                     WHERE user_id = :user_id
                       AND created_at >= :start_ts
