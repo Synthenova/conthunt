@@ -32,7 +32,8 @@ llm = ChatGoogleGenerativeAI(
     temperature=0.7,
     project=settings.GCP_PROJECT,
     vertexai=True,
-    max_retries=10
+    max_retries=10,
+    location='global'
 )
 
 # Bind Structured Output

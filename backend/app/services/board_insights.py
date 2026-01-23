@@ -231,6 +231,7 @@ async def execute_board_insights(
         temperature=0.4,
         project=settings.GCP_PROJECT,
         vertexai=True,
+        location='global'
     )
     structured_llm = llm.with_structured_output(BoardInsightsResult)
 

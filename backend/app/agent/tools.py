@@ -11,7 +11,7 @@ import httpx
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.prebuilt import InjectedState
 
 from app.core import get_settings, logger
@@ -483,10 +483,35 @@ async def search(
         - sort_by: relevance, most-liked, date-posted
         """)
         
+        # Combine history into one human message
+        history_parts = []
+        for msg in messages:
+            content_str = ""
+            if msg.type == "human":
+                content_str = str(msg.content)
+                prefix = "User: "
+            elif msg.type == "ai":
+                if isinstance(msg.content, list):
+                    parts = []
+                    for block in msg.content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            parts.append(block.get("text", ""))
+                        elif isinstance(block, str):
+                            parts.append(block)
+                    content_str = "\n".join(parts)
+                else:
+                    content_str = str(msg.content)
+                prefix = "AI: "
+            
+            if content_str and content_str.strip():
+                history_parts.append(f"{prefix}{content_str.strip()}")
+        
+        combined_content = "\n".join(history_parts)
+        logger.info(f"Combined content: {combined_content}")
         # Invoke the model
         try:
            # We pass the conversation history + system prompt
-           response = await structured_llm.ainvoke([system_msg] + messages)
+           response = await structured_llm.ainvoke([system_msg, HumanMessage(content=combined_content)])
         except Exception as llm_err:
              return {"error": f"Failed to generate search keywords: {str(llm_err)}"}
 

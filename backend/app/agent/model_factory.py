@@ -59,8 +59,9 @@ def init_chat_model(model_name: str | None, temperature: float = 0.5):
         model=resolved_name,
         temperature=temperature,
         project=settings.GCP_PROJECT,
-        vertexai=True,       
+        vertexai=True,
         max_retries=10,
+        location='global'
     )
 
 
