@@ -137,6 +137,7 @@ export default function ProfilePage() {
     const totalCredits = profile?.credits?.total ?? 0;
     const creditsUsed = profile?.credits?.used ?? 0;
     const creditsRemaining = profile?.credits?.remaining ?? Math.max(0, totalCredits - creditsUsed);
+    const nonSearchCreditsUsed = Math.max(0, creditsUsed - searchUsed);
     const analysisCreditsTotal = Math.max(0, totalCredits - searchLimit);
     const analysisCreditsUsed = Math.max(0, creditsUsed - searchUsed);
     const analysisCreditsRemaining = Math.max(
@@ -158,12 +159,12 @@ export default function ProfilePage() {
     });
 
     const dailyUsage = useMemo(
-        () => dailyUsageQuery.data ?? buildUsageSeries(7, "day", searchUsed, creditsUsed),
-        [dailyUsageQuery.data, searchUsed, creditsUsed]
+        () => dailyUsageQuery.data ?? buildUsageSeries(7, "day", searchUsed, nonSearchCreditsUsed),
+        [dailyUsageQuery.data, searchUsed, nonSearchCreditsUsed]
     );
     const monthlyUsage = useMemo(
-        () => monthlyUsageQuery.data ?? buildUsageSeries(6, "month", searchUsed, creditsUsed),
-        [monthlyUsageQuery.data, searchUsed, creditsUsed]
+        () => monthlyUsageQuery.data ?? buildUsageSeries(6, "month", searchUsed, nonSearchCreditsUsed),
+        [monthlyUsageQuery.data, searchUsed, nonSearchCreditsUsed]
     );
     const usageData = usageRange === "daily" ? dailyUsage : monthlyUsage;
 
