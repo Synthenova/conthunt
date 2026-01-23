@@ -9,13 +9,13 @@ from langchain_openai import ChatOpenAI
 from app.core import get_settings
 from app.agent.rate_limiter import get_rate_limiter
 
-DEFAULT_MODEL_NAME = "google/gemini-3-flash-preview"
+DEFAULT_MODEL_NAME = "openrouter/x-ai/grok-4.1-fast"
 SUPPORTED_PROVIDERS = {"openrouter", "google"}
 
 # Model options - keep in sync with frontend/src/components/chat/chat-input/constants.ts
 MODEL_OPTIONS = [
-    {"label": "Gemini 3 Flash", "value": "google/gemini-3-flash-preview"},    
     {"label": "Grok 4.1 Fast (xAI)", "value": "openrouter/x-ai/grok-4.1-fast"},
+    {"label": "Gemini 3 Flash", "value": "google/gemini-3-flash-preview"},    
     {"label": "MiMo-V2-Flash (Xiaomi, free)", "value": "openrouter/xiaomi/mimo-v2-flash:free"},
     {"label": "GPT-5.2 (OpenAI)", "value": "openrouter/openai/gpt-5.2"},
     {"label": "GPT-5.1 (OpenAI)", "value": "openrouter/openai/gpt-5.1"},
