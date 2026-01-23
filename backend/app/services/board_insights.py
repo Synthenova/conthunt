@@ -229,7 +229,8 @@ async def execute_board_insights(
     llm = ChatGoogleGenerativeAI(
         model="gemini-3-flash-preview",
         temperature=0.4,
-        api_key=settings.GOOGLE_API_KEY,
+        project=settings.GCP_PROJECT,
+        vertexai=True,
     )
     structured_llm = llm.with_structured_output(BoardInsightsResult)
 

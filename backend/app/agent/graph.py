@@ -93,10 +93,10 @@ async def call_model(state: MessagesState, config: RunnableConfig):
     system_prompt = BASE_SYSTEM_PROMPT
 
     # If this is the first message (no history), force the stronger model
-    if len(messages) <= 1:
-        model_name = "google/gemini-3-pro-preview"
-    else:
-        model_name = (config.get("configurable") or {}).get("model_name")
+    # if len(messages) <= 1:
+    #     model_name = "google/gemini-3-pro-preview"
+    # else:
+    model_name = (config.get("configurable") or {}).get("model_name")
     image_urls = set((config.get("configurable") or {}).get("image_urls") or [])
     redis_client = (config.get("configurable") or {}).get("redis_client")
     
@@ -105,10 +105,10 @@ async def call_model(state: MessagesState, config: RunnableConfig):
         messages = _strip_stale_image_blocks(messages, image_urls)
     
     # Use rate-limited model initialization if Redis is available
-    if redis_client:
-        llm = await init_chat_model_rated(model_name, redis_client, temperature=0.5)
-    else:
-        llm = init_chat_model(model_name, temperature=0.5)
+    # if redis_client:
+    #     llm = await init_chat_model_rated(model_name, redis_client, temperature=0.5)
+    # else:
+    llm = init_chat_model(model_name, temperature=0.5)
     
     messages = normalize_messages_for_provider(messages, model_name)
     model = llm.bind_tools(tools)

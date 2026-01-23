@@ -22,12 +22,14 @@ settings = get_settings()
 
 def _get_api_base_url() -> str:
     """Get API base URL for internal/external calls."""
-    env_base_url = os.getenv("API_BASE_URL") or settings.API_BASE_URL
-    if env_base_url:
-        return env_base_url.rstrip("/") + "/v1"
+    # env_base_url = os.getenv("API_BASE_URL") or settings.API_BASE_URL
+    # if env_base_url:
+    #     logger.info(f"API base URL: {env_base_url}")
+    #     return env_base_url.rstrip("/") + "/v1"
 
     # Cloud Run sets PORT env var; default to 8000 for local dev
-    port = os.getenv("PORT", "8080")
+    logger.info(f"API base URL outside")
+    port = os.getenv("PORT", "8000")
     return f"http://localhost:{port}/v1"
 
 
@@ -438,11 +440,11 @@ async def search(
         redis_client = configurable.get("redis_client")
         
         # 1. Initialize Gemini 3 Pro for intent detection (with rate limiting)
-        if redis_client:
-            llm = await init_chat_model_rated("google/gemini-3-pro-preview", redis_client)
-        else:
-            llm = init_chat_model("google/gemini-3-pro-preview")
-        llm = llm.bind_tools([{"google_search": {}}])
+        # if redis_client:
+        #     llm = await init_chat_model_rated("google/gemini-3-flash-preview", redis_client)
+        # else:
+        llm = init_chat_model("google/gemini-3-flash-preview")
+        # llm = llm.bind_tools([{"google_search": {}}])
         structured_llm = llm.with_structured_output(SearchPlan)
 
         # 2. Extract messages for context
@@ -451,10 +453,29 @@ async def search(
         
         # 3. Generate keywords
         system_msg = SystemMessage(content="""
-        You are a search expert. Analyze the conversation history and user request to understand their intent.
-        Generate 3 to 5 distinct, high-quality search queries that will help the user find what they are looking for.
-        For each query, provide ONLY the keyword.
-        Focus on finding content related to the user's request. Use the google_search if necessary for more details.
+        You are an expert search keyword generator specialized in discovering inspirational short-form videos across any niche or topic (e.g., marketing, fitness, cooking, fashion, tech, beauty, education, comedy, travel).
+
+        Note: These keyword combinations will be used in a downstream LLM system (e.g., Gemini with grounding) that has direct web search access. Optimize them to perform strongly in web searches, surfacing native short-form video results effectively.
+
+        Task: For any user request seeking short-form video ideas, examples, or inspiration (viral content, funny skits, tutorials, challenges, hooks, etc.), generate exactly 5 concise keyword combinations.
+
+        - 2 hyper-niche: Extremely focused on the highest-signal, most authentic/viral elements from the request (e.g., raw relatable moments or peak format matches).
+        - 3 niche: Highly accurate and specific, capturing core themes with slight variations.
+
+        Step-by-step thinking (do this internally before outputting):
+        1. Decompose the user's request: Identify main themes (e.g., viral style, humor, tutorials, challenges, creative ideas), desired formats (POV, skit, reaction, day-in-the-life, hook, fail, transformation), and any sub-aspects (authenticity, low-budget, relatable struggles, surprises).
+        2. Infer common short-form video patterns for the niche: Use creator-style phrases that appear in real video titles (e.g., "POV ...", "day I tried ...", "funny ... fail", "before after ...", "trying viral ...").
+        3. Keep combinations short and compound (3-8 words max). Focus purely on descriptive core keywords.
+        4. Hashtags: Include only if they naturally boost relevance in the niche (e.g., popular trend tags); never force them.
+        5. Prioritize phrases that surface native, authentic videos via web search: Avoid anything that pulls articles, lists, or compilations (no "best", "top", "examples", "ideas list").
+        6. Diversify across the request's key angles (e.g., humor, virality, tutorials, relatability) while staying tightly on-topic.
+
+        Few-shot examples of ideal combinations (adapt to current request; these show style only):
+        - POV first day gym beginner funny
+        - trying viral coffee recipe fail reaction
+        - day in life freelance designer routine
+        - before after minimal makeup transformation
+        - funny couple argument skit relatable
 
         If the user explicitly requests filters (date, sort), include them in `filters`.
         Allowed values:
