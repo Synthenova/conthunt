@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import { whopsdk } from "@/lib/whop-sdk";
+import { getWhopSdk } from "@/lib/whop-server";
 import ExperienceBootstrap from "./ExperienceBootstrap";
 
 export default async function ExperiencePage({
@@ -8,6 +8,8 @@ export default async function ExperiencePage({
     params: Promise<{ experienceId: string }>
 }) {
     const { experienceId } = await params;
+
+    const whopsdk = getWhopSdk();
 
     // 1) Verify Whop user token from request headers
     // The header 'x-whop-user-token' is automatically sent by the iframe
