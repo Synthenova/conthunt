@@ -39,6 +39,7 @@ steps:
       - '--region=us-central1'
       - '--platform=managed'
       - '--allow-unauthenticated'
+      - '--set-secrets=WHOP_API_KEY=WHOP_API_KEY:latest'
 
 availableSecrets:
   secretManager:
