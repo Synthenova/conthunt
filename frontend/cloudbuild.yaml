@@ -22,6 +22,8 @@ steps:
       - '--env=NEXT_PUBLIC_FIREBASE_PROJECT_ID=$PROJECT_ID'
       - '--env=NEXT_PUBLIC_FIREBASE_APP_ID'
       - '--env=NEXT_PUBLIC_BACKEND_URL'
+      - '--env=NEXT_PUBLIC_WHOP_APP_ID'
+      - '--env=WHOP_API_KEY'
 
   # ==========================================
   # 2. Deploy Frontend
