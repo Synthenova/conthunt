@@ -9,6 +9,11 @@ import { signOut } from "firebase/auth";
  */
 
 export function getBackendUrl(): string {
+    // Use Next rewrites in the browser to avoid CORS/mixed-content issues.
+    if (typeof window !== "undefined") {
+        return "";
+    }
+
     let url = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
     // Force HTTPS for Cloud Run deployments to prevent Mixed Content errors
     if (url.includes('run.app') && url.startsWith('http:')) {

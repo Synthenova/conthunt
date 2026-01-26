@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     GCLOUD_PROJECT: str = "conthunt-dev"
     GCP_PROJECT: str = "conthunt-dev"
     GCP_REGION: str = "us-central1"
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""
     # GOOGLE_API_KEY: str
     
     # Cloud Tasks
@@ -88,6 +89,13 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM_EMAIL: str = "lamrin@synthenova.xyz"
+
+    # Whop Integration
+    WHOP_API_KEY: str = ""
+    WHOP_WEBHOOK_SECRET: str = ""
+    WHOP_APP_ID: str = ""
+    WHOP_PRODUCT_PRO: str = ""     # prod_XXX for Pro Research
+    WHOP_PRODUCT_CREATOR: str = "" # prod_XXX for Creator Pass
 
     class Config:
         # Pydantic loads from the first file found in this list, OR merges them depending on library version.

@@ -3,6 +3,7 @@ import os
 from typing import Optional
 from typing_extensions import TypedDict
 from uuid import UUID
+from app.core.settings import get_settings
 
 import firebase_admin
 from firebase_admin import auth, credentials
@@ -10,6 +11,7 @@ from fastapi import Header, HTTPException, Depends
 
 _app = None
 
+app_settings = get_settings()
 
 class AuthUser(TypedDict):
     """Authenticated user context."""
@@ -25,14 +27,20 @@ def init_firebase():
         return _app
 
     try:
-        _app = firebase_admin.initialize_app(options={
-            "projectId": os.getenv("GCLOUD_PROJECT", "conthunt-dev")
+        # Check for explicit credentials path (Local Dev)
+        cred_path = app_settings.GOOGLE_APPLICATION_CREDENTIALS        
+        cred = None
+        if cred_path and os.path.exists(cred_path):
+            cred = credentials.Certificate(cred_path)
+        
+        _app = firebase_admin.initialize_app(credential=cred, options={
+            "projectId": app_settings.GCLOUD_PROJECT
         })
     except ValueError:
         _app = firebase_admin.get_app()
     return _app
 
-
+# Initialize on module load
 init_firebase()
 
 

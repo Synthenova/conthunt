@@ -19,6 +19,8 @@ from app.api.v1 import (
     onboarding,
     feedback,
     trending,
+    auth_whop,
+    webhooks_whop,
 )
 
 router = APIRouter(prefix="/v1")
@@ -39,3 +41,5 @@ router.include_router(streak.router, tags=["streak"])
 router.include_router(onboarding.router, tags=["onboarding"])
 router.include_router(feedback.router, tags=["feedback"])
 router.include_router(trending.router, tags=["trending"])
+router.include_router(auth_whop.router)
+router.include_router(webhooks_whop.router)
