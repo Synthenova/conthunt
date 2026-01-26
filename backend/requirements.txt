@@ -108,13 +108,13 @@ orjson==3.11.5
 ormsgpack==1.12.1
 packaging==25.0
 pg8000==1.31.5
+pillow==12.1.0
 propcache==0.4.1
 proto-plus==1.26.1
 protobuf==6.33.2
 psycopg==3.3.2
 psycopg-binary==3.3.2
 psycopg-pool==3.3.0
-psycopg2-binary
 pyarrow==22.0.0
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
@@ -128,7 +128,6 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-multipart==0.0.21
 PyYAML==6.0.3
-Pillow==12.1.0
 redis==7.1.0
 regex==2025.11.3
 requests==2.32.5
@@ -162,6 +161,7 @@ validators==0.35.0
 watchfiles==1.1.1
 websockets==15.0.1
 wheel==0.45.1
+whop-sdk==0.0.24
 wrapt==1.17.3
 xxhash==3.6.0
 yarl==1.22.0

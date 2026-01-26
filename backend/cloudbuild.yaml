@@ -71,6 +71,17 @@ steps:
       - '--set-secrets=FRONTEND_RETURN_URL=FRONTEND_RETURN_URL:latest'
       - '--set-secrets=OTEL_SERVICE_NAME=OTEL_SERVICE_NAME:latest'
       - '--set-secrets=OTEL_RESOURCE_ATTRIBUTES=OTEL_RESOURCE_ATTRIBUTES:latest'
+      - '--set-secrets=SMTP_HOST=SMTP_HOST:latest'
+      - '--set-secrets=SMTP_PORT=SMTP_PORT:latest'
+      - '--set-secrets=SMTP_USER=SMTP_USER:latest'
+      - '--set-secrets=SMTP_PASSWORD=SMTP_PASSWORD:latest'
+      - '--set-secrets=SMTP_FROM_EMAIL=SMTP_FROM_EMAIL:latest'
+      - '--set-secrets=WHOP_API_KEY=WHOP_API_KEY:latest'
+      - '--set-secrets=WHOP_WEBHOOK_SECRET=WHOP_WEBHOOK_SECRET:latest'
+      - '--set-secrets=WHOP_APP_ID=WHOP_APP_ID:latest'
+      - '--set-secrets=WHOP_COMPANY_ID=WHOP_COMPANY_ID:latest'
+      - '--set-secrets=WHOP_PRODUCT_PRO=WHOP_PRODUCT_PRO:latest'
+      - '--set-secrets=WHOP_PRODUCT_CREATOR=WHOP_PRODUCT_CREATOR:latest'
       # Standard Env vars we might want explicit
       - '--set-env-vars=GCP_PROJECT=$PROJECT_ID,GCLOUD_PROJECT=$PROJECT_ID'
 

@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ImagePlus, X, Rocket, Loader2, Bug } from "lucide-react";
 import Image from 'next/image';
 import { toast } from 'sonner';
+import { BACKEND_URL } from "@/lib/api";
 
 interface FeedbackModalProps {
     isOpen: boolean;
@@ -54,7 +55,7 @@ export function FeedbackModal({ isOpen, onClose }: FeedbackModalProps) {
                 formData.append("images", image);
             });
 
-            const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/v1/feedback`, {
+            const response = await fetch(`${BACKEND_URL}/v1/feedback`, {
                 method: "POST",
                 body: formData,
             });

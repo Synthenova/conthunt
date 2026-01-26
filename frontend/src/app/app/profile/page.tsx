@@ -244,20 +244,30 @@ export default function ProfilePage() {
 
                     <div className="flex items-center gap-3">
                         <TutorialReplayDropdown />
-                        <Button variant="ghost" size="sm" asChild className="glass-button h-9 px-4 gap-2">
-                            <Link href="/app/billing/return">Manage Plan</Link>
-                        </Button>
-                        {profile?.role !== "pro_research" && (
-                            <Button
-                                size="sm"
-                                asChild
-                                className="glass-button-white h-9 px-4 gap-2 text-black"
-                            >
-                                <Link href="/app/billing/return">
-                                    <Sparkles className="h-4 w-4" />
-                                    Upgrade Plan
-                                </Link>
-                            </Button>
+                        {/* Whop users manage billing on Whop, not here */}
+                        {!profile?.firebase_uid?.startsWith("whop:") && (
+                            <>
+                                <Button variant="ghost" size="sm" asChild className="glass-button h-9 px-4 gap-2">
+                                    <Link href="/app/billing/return">Manage Plan</Link>
+                                </Button>
+                                {profile?.role !== "pro_research" && (
+                                    <Button
+                                        size="sm"
+                                        asChild
+                                        className="glass-button-white h-9 px-4 gap-2 text-black"
+                                    >
+                                        <Link href="/app/billing/return">
+                                            <Sparkles className="h-4 w-4" />
+                                            Upgrade Plan
+                                        </Link>
+                                    </Button>
+                                )}
+                            </>
+                        )}
+                        {profile?.firebase_uid?.startsWith("whop:") && (
+                            <Badge variant="outline" className="border-white/10 text-muted-foreground">
+                                Managed by Whop
+                            </Badge>
                         )}
                     </div>
                 </div>
@@ -484,7 +494,7 @@ export default function ProfilePage() {
                 </GlassPanel>
             </div>
 
-            {profile?.role === "free" && (
+            {profile?.role === "free" && !profile?.firebase_uid?.startsWith("whop:") && (
                 <FadeIn delay={0.4}>
                     <GlassPanel className="relative overflow-hidden p-8 border-white/20 bg-white/5">
                         <div className="absolute top-0 right-0 p-8 opacity-10 blur-2xl pointer-events-none">

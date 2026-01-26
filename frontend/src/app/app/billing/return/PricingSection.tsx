@@ -9,7 +9,7 @@ import { CancelConfirmModal } from "./components/CancelConfirmModal";
 import { Product } from "./types";
 import AppHomeLoading from "../../loading";
 import { FadeIn } from "@/components/ui/animations";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 
 export default function PricingSection() {
     const {
@@ -33,12 +33,14 @@ export default function PricingSection() {
         confirmPlanChange,
         clearPreviewError,
         clearPreviewData,
-        refreshUser
+        refreshUser,
+        profile,
     } = useBilling({ refreshOnMount: true });
 
     const [isAnnual, setIsAnnual] = useState(false);
     const [returnLoading, setReturnLoading] = useState(false);
     const searchParams = useSearchParams();
+    const router = useRouter();
 
     useEffect(() => {
         const subscriptionId = searchParams?.get("subscription_id");
@@ -79,6 +81,13 @@ export default function PricingSection() {
             isMounted = false;
         };
     }, [refreshUser, searchParams, subscription?.status]);
+
+    // Whop User Redirect
+    useEffect(() => {
+        if (profile?.firebase_uid?.startsWith("whop:")) {
+            router.push("/app");
+        }
+    }, [profile, router]);
 
     // Helpers to find products
     const getProduct = (role: string, annual: boolean): Product | undefined => {
@@ -221,7 +230,7 @@ export default function PricingSection() {
         );
     };
 
-    if (loading || userLoading) {
+    if (loading || userLoading || profile?.firebase_uid?.startsWith("whop:")) {
         return <AppHomeLoading />;
     }
 

@@ -9,8 +9,11 @@ export async function POST(req: Request) {
     const csrfHeader = req.headers.get("x-csrf-token") || "";
     const { idToken } = await req.json();
 
+    const isSecure = req.url.startsWith("https") || req.headers.get("x-forwarded-proto") === "https";
+    const isLocalDev = process.env.NODE_ENV !== "production" && !isSecure;
+
     // Minimal CSRF check (double-submit). Firebase recommends CSRF protection.
-    if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    if (!isLocalDev && (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader)) {
         console.error("CSRF Failed:", { csrfCookie, csrfHeader });
         return NextResponse.json({ error: "CSRF check failed" }, { status: 401 });
     }
@@ -34,10 +37,16 @@ export async function POST(req: Request) {
 
         console.log("Session cookie created successfully, setting cookie...");
 
+        // Auto-detect based on protocol (Ngrok/Prod=HTTPS->None, Localhost=HTTP->Lax)
+        const proto = req.headers.get("x-forwarded-proto");
+        const isSecure = req.url.startsWith("https") || proto === "https";
+
+        console.log("DEBUG COOKIE:", { url: req.url, proto, isSecure });
+
         cookieStore.set("session", sessionCookie, {
             httpOnly: true,
-            sameSite: "lax",
-            secure: process.env.NODE_ENV === "production",
+            sameSite: isSecure ? "none" : "lax",
+            secure: isSecure,
             path: "/",
             maxAge: expiresInMs / 1000,
         });

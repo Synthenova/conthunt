@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import firebase, { auth } from "@/lib/firebaseClient";
+import { BACKEND_URL } from "@/lib/api";
 import { GrainGradient } from "@paper-design/shaders-react";
 import { Loader2 } from "lucide-react";
 
@@ -117,7 +118,7 @@ export default function LoginPage() {
                     let idToken = await user.getIdToken();
 
                     // 1. Sync with backend (creates user in DB, sets custom claims)
-                    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+                    const backendUrl = BACKEND_URL;
                     console.log("Syncing with backend...");
                     const syncResp = await fetch(`${backendUrl}/v1/auth/sync`, {
                         method: "POST",

@@ -6,7 +6,10 @@ const PUBLIC_PATHS = [
     "/api/csrf",
     "/api/sessionLogin",
     "/api/sessionLogout",
+    "/v1",
     "/images",
+    "/experiences", // Whop Bootstrap Entry
+    "/api/auth/whop-exchange", // Allow token exchange without session
 ];
 
 export function middleware(req: NextRequest) {
