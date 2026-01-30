@@ -112,8 +112,8 @@ export function VideoMarquee() {
     return (
         <div className="w-full relative overflow-hidden h-[400px] mt-auto group/marquee">
             {/* Gradient Masks */}
-            <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-black to-transparent z-10 pointer-events-none" />
-            <div className="absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-black to-transparent z-10 pointer-events-none" />
+            <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-[#111] to-transparent z-10 pointer-events-none" />
+            <div className="absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-[#111] to-transparent z-10 pointer-events-none" />
 
             {/* Marquee Track */}
             <div
@@ -147,7 +147,7 @@ export function VideoMarquee() {
             </div>
 
             {/* Bottom fade for page integration */}
-            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-black to-transparent pointer-events-none z-20" />
+            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#111] to-transparent pointer-events-none z-20" />
         </div>
     )
 }

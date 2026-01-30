@@ -170,7 +170,7 @@ export default function ProfilePage() {
 
     if (isLoading || !profile || !user) {
         return (
-            <div className="min-h-screen bg-background flex items-center justify-center">
+            <div className="min-h-screen flex items-center justify-center">
                 <div className="relative">
                     <div
                         className="absolute rounded-full border-2 border-transparent border-t-white animate-spin"
@@ -209,7 +209,7 @@ export default function ProfilePage() {
         : "Plan period unavailable";
 
     return (
-        <div className="min-h-full bg-background text-foreground p-6 lg:p-12 max-w-6xl mx-auto space-y-12">
+        <div className="min-h-full text-foreground p-6 lg:p-12 max-w-6xl mx-auto space-y-12">
             <FadeIn>
                 <div className="flex flex-col md:flex-row items-start md:items-center gap-8">
                     <div className="relative">
