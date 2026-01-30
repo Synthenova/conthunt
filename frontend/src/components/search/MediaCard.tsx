@@ -4,12 +4,15 @@ import { AsyncImage } from "@/components/ui/async-image";
 import { GlassCard } from "@/components/ui/glass-card";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Play, Heart, MessageCircle, Share2, Volume2, VolumeX } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useSearchStore } from "@/lib/store";
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 import { useYouTubePlayer } from "@/lib/youtube";
+
+let activeHoverId: string | null = null;
+let activeStopPreview: (() => void) | null = null;
 
 interface MediaCardProps {
     item: any;
@@ -39,6 +42,9 @@ export function MediaCard({
     const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
     const [currentTime, setCurrentTime] = useState(0);
     const youtubeTimeIntervalRef = useRef<number | null>(null);
+    const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
+    const [isVideoReady, setIsVideoReady] = useState(false);
+    const fallbackHoverId = useId();
 
     useEffect(() => {
         const el = cardRef.current;
@@ -67,6 +73,10 @@ export function MediaCard({
     const videoUrl = item.video_url || item.media_url;
     const link = item.url || item.link || item.web_url;
     const platformLabel = formatPlatformLabel(platform);
+    const hoverId = useMemo(
+        () => String(item.id ?? videoUrl ?? link ?? fallbackHoverId),
+        [item.id, videoUrl, link, fallbackHoverId]
+    );
 
     // Stats
     const views = item.view_count || item.play_count || 0;
@@ -145,50 +155,70 @@ export function MediaCard({
         };
     }, [stopYouTubeTimeTracking]);
 
-    const handleHover = useCallback((isHovering: boolean) => {
-        setIsPlaying(isHovering);
-        onHoverStateChange?.(isHovering);
+    const stopPreview = useCallback((releaseOwner: boolean = true) => {
+        setIsPlaying(false);
+        onHoverStateChange?.(false);
 
-        // Handle non-YouTube videos
-        if (videoRef.current && !isYouTube) {
-            if (isHovering) {
-                onHoverTimeChange?.(0);
-                videoRef.current.play().catch(() => { });
-            } else {
+        if (!isYouTube) {
+            setActiveVideoUrl(null);
+            setIsVideoReady(false);
+            if (videoRef.current) {
                 videoRef.current.pause();
                 videoRef.current.currentTime = 0;
-                setCurrentTime(0);
             }
+            setCurrentTime(0);
         }
 
-        // Handle YouTube videos
         if (isYouTube && youtubeId) {
-            if (isHovering) {
-                youtube.play();
-                startYouTubeTimeTracking();
-            } else {
-                stopYouTubeTimeTracking();
-                youtube.pause();
-                youtube.seekTo(0);
-                setCurrentTime(0);
-            }
+            stopYouTubeTimeTracking();
+            youtube.pause();
+            youtube.seekTo(0);
+            setCurrentTime(0);
         }
-    }, [isYouTube, youtubeId, youtube, onHoverStateChange, onHoverTimeChange, startYouTubeTimeTracking, stopYouTubeTimeTracking]);
+
+        if (releaseOwner && activeHoverId === hoverId) {
+            activeHoverId = null;
+            activeStopPreview = null;
+        }
+    }, [hoverId, isYouTube, youtubeId, youtube, onHoverStateChange, stopYouTubeTimeTracking]);
+
+    const startPreview = useCallback(() => {
+        if (activeHoverId !== hoverId) {
+            activeStopPreview?.();
+        }
+
+        activeHoverId = hoverId;
+        activeStopPreview = () => stopPreview(false);
+
+        setIsPlaying(true);
+        onHoverStateChange?.(true);
+
+        if (!isYouTube) {
+            onHoverTimeChange?.(0);
+            setActiveVideoUrl(videoUrl || null);
+            setIsVideoReady(false);
+        }
+
+        if (isYouTube && youtubeId) {
+            youtube.play();
+            startYouTubeTimeTracking();
+        }
+    }, [hoverId, isYouTube, youtubeId, youtube, onHoverStateChange, onHoverTimeChange, startYouTubeTimeTracking, stopPreview, videoUrl]);
 
     useEffect(() => {
         if (!isVisible && isPlaying) {
-            handleHover(false);
+            stopPreview();
         }
-    }, [isVisible, isPlaying, handleHover]);
+    }, [isVisible, isPlaying, stopPreview]);
 
     useEffect(() => {
         const handleVisibility = () => {
             if (document.hidden) {
-                handleHover(false);
+                stopPreview();
             }
         };
         const handleBlur = () => {
-            handleHover(false);
+            stopPreview();
         };
 
         document.addEventListener("visibilitychange", handleVisibility);
@@ -197,7 +227,40 @@ export function MediaCard({
             document.removeEventListener("visibilitychange", handleVisibility);
             window.removeEventListener("blur", handleBlur);
         };
-    }, [handleHover]);
+    }, [stopPreview]);
+
+    useEffect(() => {
+        if (isYouTube) return;
+        const video = videoRef.current;
+        if (!video) return;
+
+        if (activeVideoUrl) {
+            if (video.src !== activeVideoUrl) {
+                video.src = activeVideoUrl;
+            }
+            video.load();
+            if (isPlaying) {
+                video.currentTime = 0;
+                video.play().catch(() => { });
+            }
+        } else {
+            if (!video.paused) {
+                video.pause();
+            }
+            video.removeAttribute("src");
+            video.load();
+            video.currentTime = 0;
+        }
+    }, [activeVideoUrl, isPlaying, isYouTube]);
+
+    useEffect(() => {
+        return () => {
+            if (activeHoverId === hoverId) {
+                activeHoverId = null;
+                activeStopPreview = null;
+            }
+        };
+    }, [hoverId]);
 
     // Sync mute for native video
     useEffect(() => {
@@ -255,18 +318,18 @@ export function MediaCard({
     }, [isScrubbing, handleScrub]);
 
     const handleMouseEnter = useCallback(() => {
-        handleHover(true);
-    }, [handleHover]);
+        startPreview();
+    }, [startPreview]);
 
     const handleMouseLeave = useCallback((e: React.MouseEvent) => {
         // Check if we're actually leaving the card vs entering a child element
         // relatedTarget is the element we're entering - if it's inside the card, ignore
-        const relatedTarget = e.relatedTarget as Node | null;
-        if (relatedTarget && cardRef.current?.contains(relatedTarget)) {
+        const relatedTarget = e.relatedTarget;
+        if (relatedTarget instanceof Node && cardRef.current?.contains(relatedTarget)) {
             return;
         }
-        handleHover(false);
-    }, [handleHover]);
+        stopPreview();
+    }, [stopPreview]);
 
     return (
         <div
@@ -289,7 +352,7 @@ export function MediaCard({
                                 "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
                                 // For YouTube: only hide thumbnail when player is primed (ready to show)
                                 // For other videos: hide when playing
-                                isPlaying && (youtubeId ? youtube.isPrimed : videoUrl) ? 'opacity-0' : 'opacity-100'
+                                isPlaying && (youtubeId ? youtube.isPrimed : isVideoReady) ? 'opacity-0' : 'opacity-100'
                             )}
                             onImageError={onError}
                             referrerPolicy="no-referrer"
@@ -299,7 +362,6 @@ export function MediaCard({
                         {videoUrl && !isYouTube && isVisible && (
                             <video
                                 ref={videoRef}
-                                src={videoUrl}
                                 className={cn(
                                     "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
                                     isPlaying ? 'opacity-100' : 'opacity-0'
@@ -308,6 +370,8 @@ export function MediaCard({
                                 loop
                                 playsInline
                                 preload="metadata"
+                                onLoadedData={() => setIsVideoReady(true)}
+                                onCanPlay={() => setIsVideoReady(true)}
                                 onLoadedMetadata={() => {
                                     if (videoRef.current) {
                                         const dur = videoRef.current.duration;

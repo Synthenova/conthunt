@@ -1,7 +1,7 @@
 """Database query functions for video analysis (Gemini-based)."""
 import json
 from uuid import UUID, uuid4
-
+from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -78,18 +78,15 @@ async def claim_or_create_analysis(
     conn: AsyncConnection,
     media_asset_id: UUID,
     prompt: str,
-) -> tuple[UUID, str, bool]:
+) -> tuple[UUID, str, datetime, bool]:
     """
     Atomically claim or create an analysis record.
     
-    Uses INSERT ON CONFLICT to prevent race conditions where multiple
-    requests try to create/process the same analysis simultaneously.
-    
     Returns:
-        Tuple of (analysis_id, status, was_created)
-        - was_created: True if a new row was inserted, False if existing row was returned/updated.
+        Tuple of (analysis_id, status, created_at, was_created)
     """
     analysis_id = uuid4()
+    # We use a dummy UPDATE to ensure we get the row back on conflict
     result = await conn.execute(
         text("""
             INSERT INTO video_analyses (
@@ -97,11 +94,8 @@ async def claim_or_create_analysis(
             )
             VALUES (:id, :media_asset_id, :prompt, 'queued', :analysis_result)
             ON CONFLICT (media_asset_id) DO UPDATE
-            SET status = CASE
-                WHEN video_analyses.status = 'failed' THEN 'queued'
-                ELSE video_analyses.status
-            END
-            RETURNING id, status, (xmax = 0) AS was_inserted
+            SET media_asset_id = EXCLUDED.media_asset_id
+            RETURNING id, status, created_at, (xmax = 0) AS was_inserted
         """),
         {
             "id": analysis_id,
@@ -111,7 +105,7 @@ async def claim_or_create_analysis(
         }
     )
     row = result.fetchone()
-    return (row[0], row[1], row[2])
+    return (row[0], row[1], row[2], row[3])
 
 
 
@@ -122,6 +116,7 @@ async def update_analysis_status(
     analysis_result: dict | None = None,
     token_usage: int | None = None,
     error: str | None = None,
+    created_at: datetime | None = None,
 ) -> None:
     """Update analysis status and optionally set result or error."""
     updates = ["status = :status"]
@@ -136,6 +131,9 @@ async def update_analysis_status(
     if error is not None:
         updates.append("error = :error")
         params["error"] = error
+    if created_at is not None:
+        updates.append("created_at = :created_at")
+        params["created_at"] = created_at
     
     await conn.execute(
         text(f"""

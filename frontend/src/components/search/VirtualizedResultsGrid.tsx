@@ -131,7 +131,6 @@ export function VirtualizedResultsGrid({
             markResizing("resize-tick");
         },
         onColumnsChange: (prev, next, width) => {
-            console.log("[VirtualizedResultsGrid] cols", prev, "->", next, "width", Math.round(width));
             markResizing("columns-change");
             scheduleMeasure("columns-change");
         },
@@ -177,7 +176,6 @@ export function VirtualizedResultsGrid({
 
     useEffect(() => {
         const handleScrollToItem = async (itemId: string): Promise<boolean> => {
-            console.log('[VirtualizedResultsGrid] handleScrollToItem called for:', itemId);
 
             // 1. Find the item index in the flat results array
             const index = results.findIndex((item) => {
@@ -190,13 +188,11 @@ export function VirtualizedResultsGrid({
             });
 
             if (index === -1) {
-                console.log('[VirtualizedResultsGrid] Item not found in results:', itemId);
                 return false;
             }
 
             // 2. Calculate row index
             const rowIndex = Math.floor(index / columns);
-            console.log('[VirtualizedResultsGrid] Found item at index:', index, 'rowIndex:', rowIndex);
 
             // 3. Scroll to that row (smooth animation)
             virtualizer.scrollToIndex(rowIndex, { align: 'center', behavior: 'smooth' });
@@ -224,7 +220,6 @@ export function VirtualizedResultsGrid({
                     if (currentScrollTop === lastScrollTop) {
                         stableTime += pollIntervalMs;
                         if (stableTime >= stabilityThresholdMs) {
-                            console.log('[VirtualizedResultsGrid] Scroll completed (stable) after', elapsed, 'ms');
                             return true;
                         }
                     } else {
@@ -235,7 +230,6 @@ export function VirtualizedResultsGrid({
                     await new Promise(r => setTimeout(r, pollIntervalMs));
                     elapsed += pollIntervalMs;
                 }
-                console.log('[VirtualizedResultsGrid] Scroll timed out after 3s');
                 return false;
             };
 
@@ -256,8 +250,6 @@ export function VirtualizedResultsGrid({
                 attempts++;
                 await new Promise(r => setTimeout(r, 50));
             }
-
-            console.log('[VirtualizedResultsGrid] Failed to find DOM element after scrolling');
             return false;
         };
 
