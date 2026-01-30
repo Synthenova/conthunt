@@ -10,6 +10,8 @@ const PUBLIC_PATHS = [
     "/images",
     "/experiences", // Whop Bootstrap Entry
     "/api/auth/whop-exchange", // Allow token exchange without session
+    "/oauth", // Whop OAuth callback
+    "/auth", // Auth actions (verify email, reset password)
 ];
 
 export function middleware(req: NextRequest) {

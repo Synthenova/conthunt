@@ -76,3 +76,9 @@ cloud-sql-proxy
 cloud-sql-proxy*
 agent/.langgraph_api
 .claude/settings.local.json
+
+# Agent
+.agents
+.agent
+.codex
+.claude

@@ -85,7 +85,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     aria-label="Close sidebar overlay"
                 />
             )}
-            <main className="flex-1 min-w-0 overflow-auto scrollbar-none transition-all duration-300 relative">
+            <main className="flex-1 min-w-0 overflow-auto scrollbar-none transition-all duration-300 relative bg-[#111]">
                 <Toaster />
                 {children}
             </main>

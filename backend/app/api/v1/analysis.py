@@ -1,6 +1,6 @@
 import logging
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -39,15 +39,19 @@ llm = ChatGoogleGenerativeAI(
 # Bind Structured Output
 structured_llm = llm.with_structured_output(VideoAnalysisResult)
 
-DEFAULT_ANALYSIS_PROMPT = """Analyze this video and extract the following information:
-1. Hook: The attention-grabbing opening (first 3 seconds)
-2. Call to Action: Any requests for viewer engagement (subscribe, like, follow, etc.)
-3. On-screen texts: Any text overlays or captions shown in the video
-4. Key topics: Main subjects or themes discussed
-5. Summary: A brief 2-3 sentence summary of the video content
-6. Hashtags: Suggested hashtags for this content
+DEFAULT_ANALYSIS_PROMPT = """You are an expert Video Analysis AI specialized in extracting comprehensive, structured information from video content. Your task is to analyze the provided video and output a single, valid JSON object containing every possible detail about the video.
 
-Be specific and extract actual content from the video, not generic descriptions."""
+ANALYSIS INSTRUCTIONS:
+1. Watch the video completely and thoroughly
+2. Extract ALL information that is visually or audibly present
+3. Use precise, descriptive language
+4. Include timestamps for all time-based elements
+5. If an element is not present or not discernible, use null or empty array
+6. Be as comprehensive and detailed as possible
+7. Maintain consistent object IDs across scenes, characters, and props
+8. Focus on observable facts, not speculation (unless clearly inferable from context)
+
+Output ONLY the valid JSON object now."""
 
 
 async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, video_uri: str) -> None:
@@ -84,7 +88,14 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
         invoke_duration = time.time() - invoke_start
         
         logger.info(f"[ANALYSIS] Gemini LLM returned in {invoke_duration:.2f}s")
-        logger.info(f"[ANALYSIS] Result summary: {result.summary[:100] if result.summary else 'N/A'}...")
+        # Handle both old (flat summary) and new (nested summary) schemas for safety
+        summary_text = "N/A"
+        if hasattr(result, "overall_assessment") and result.overall_assessment and result.overall_assessment.summary:
+            summary_text = result.overall_assessment.summary
+        elif hasattr(result, "summary") and result.summary:
+            summary_text = result.summary
+            
+        logger.info(f"[ANALYSIS] Result summary: {summary_text[:100]}...")
         
         # 3. Update to completed
         logger.info(f"[ANALYSIS] Updating status to 'completed'...")
@@ -158,19 +169,22 @@ async def run_gemini_analysis(
             raise HTTPException(status_code=400, detail="No video URL available for analysis")
         
         # 2. Atomically claim or create analysis (prevents race conditions)
-        analysis_id, status, was_created = await claim_or_create_analysis(
+        analysis_id, status, created_at, was_created = await claim_or_create_analysis(
             conn,
             media_asset_id=media_asset_id,
             prompt=DEFAULT_ANALYSIS_PROMPT,
         )
-        await conn.commit()
+        
+        # Determine if we should spawn a task
+        should_spawn_task = was_created
         
         # If existing analysis is completed, return cached result
-        if status == "completed":
+        if not was_created and status == "completed":
             existing = await get_video_analysis_by_media_asset(conn, media_asset_id)
             analysis = None
             if existing and existing.get("analysis_result"):
                 analysis = VideoAnalysisResult(**existing["analysis_result"])
+            await conn.commit() # Commit before returning
             return VideoAnalysisResponse(
                 id=analysis_id,
                 media_asset_id=media_asset_id,
@@ -181,18 +195,45 @@ async def run_gemini_analysis(
                 cached=True,
             )
         
-        # If already processing/queued, just return status (task already running)
-        if status in ("processing", "queued") and not was_created:
+        # Check for STALE or FAILED tasks that need rescuing
+        if not was_created:
+            # Check if stuck in "queued" or "processing" for too long (e.g., 10 minutes)
+            is_stale = False
+            if status in ("queued", "processing") and created_at:
+                # Ensure created_at is aware if possible, otherwise handle naive
+                now = datetime.now(timezone.utc) if created_at.tzinfo else datetime.utcnow()
+                time_diff = now - created_at
+                if time_diff.total_seconds() > 600: # 10 minutes
+                    is_stale = True
+                    logger.warning(f"[ANALYSIS] Found stale analysis {analysis_id} (status={status}, age={time_diff.total_seconds()}s). Rescuing.")
+            
+            if status == "failed" or is_stale:
+                # Force reset to 'queued' with new timestamp
+                logger.info(f"[ANALYSIS] Rescuing {status} analysis {analysis_id}")
+                await update_analysis_status(
+                    conn,
+                    analysis_id=analysis_id,
+                    status="queued",
+                    created_at=datetime.utcnow(),
+                    error=None # Clear previous error
+                )
+                should_spawn_task = True
+                status = "queued" # Update local status variable for response
+        
+        await conn.commit()
+        
+        # Return if running and healthy (not just rescued/created)
+        if not should_spawn_task:
             return VideoAnalysisResponse(
                 id=analysis_id,
                 media_asset_id=media_asset_id,
                 status=status,
                 analysis=None,
-                created_at=datetime.utcnow(),
+                created_at=created_at,
                 cached=True,
             )
         
-        logger.info(f"Created/claimed analysis {analysis_id} for media_asset {media_asset_id}")
+        logger.info(f"Created/Rescued analysis {analysis_id} for media_asset {media_asset_id}")
 
     # 3. Check if we need to prioritize the media download
     # Only dispatch priority download if asset is 'pending' (not yet claimed by any downloader)

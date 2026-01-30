@@ -339,7 +339,7 @@ export default function BoardDetailPage() {
                                     style={{ pointerEvents: showHeader ? "auto" : "none" }}
                                     className="w-full overflow-hidden"
                                 >
-                                    <div className="bg-zinc-950/80 backdrop-blur-md px-4 py-4 space-y-6 border-b border-white/5 w-full">
+                                    <div className="backdrop-blur-md px-4 py-4 space-y-6 border-b border-white/5 w-full">
                                         {/* Board Title Row */}
                                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                                             <div>
@@ -476,7 +476,7 @@ export default function BoardDetailPage() {
                                     style={{ pointerEvents: showHeader ? "auto" : "none" }}
                                     className="w-full overflow-hidden"
                                 >
-                                    <div className="bg-zinc-950/80 backdrop-blur-md px-4 py-4 space-y-6 border-b border-white/5 w-full">
+                                    <div className="backdrop-blur-md px-4 py-4 space-y-6 border-b border-white/5 w-full">
                                         {/* Board Title Row */}
                                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                                             <div>

@@ -230,7 +230,7 @@ export default function ChatPage() {
     const lastScrollY = useRef(0);
     const scrollDirection = useRef<"up" | "down" | null>(null);
     const scrollDelta = useRef(0);
-    const DEBUG_HEADER_SCROLL = true;
+    const DEBUG_HEADER_SCROLL = false;
     const HIDE_THRESHOLD_PX = 40;
     const SHOW_THRESHOLD_PX = 24;
 
