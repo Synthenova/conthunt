@@ -36,6 +36,8 @@ class AnalysisTaskPayload(BaseModel):
     analysis_id: UUID
     media_asset_id: UUID
     video_uri: str
+    chat_id: UUID | None = None
+    user_id: UUID | None = None
 
 class TwelveLabsTaskPayload(BaseModel):
     media_asset_id: UUID
@@ -75,6 +77,7 @@ class ChatStreamTaskPayload(BaseModel):
     image_urls: list[str] | None = None
     auth_token: str | None = None
     filters: dict | None = None
+    user_id: UUID | None = None
 
 @router.post("/gemini/analyze")
 async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Request):
@@ -142,7 +145,9 @@ async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Req
         on_fail=_on_fail,
         analysis_id=payload.analysis_id,
         media_asset_id=payload.media_asset_id,
-        video_uri=final_video_uri
+        video_uri=final_video_uri,
+        chat_id=str(payload.chat_id) if payload.chat_id else None,
+        user_id=str(payload.user_id) if payload.user_id else None,
     )
 
 @router.post("/twelvelabs/index")
@@ -379,6 +384,7 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
                 model_name=payload.model_name,
                 image_urls=payload.image_urls or [],
                 filters=payload.filters or {},
+                user_id=str(payload.user_id) if payload.user_id else None,
                 redis_client=redis_client,
             )
         finally:

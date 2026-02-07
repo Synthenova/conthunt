@@ -33,7 +33,7 @@ with PostgresSaver.from_conn_string(postgres_url) as checkpointer:
 
 # Define the model
 llm = ChatOpenAI(
-    model="google/gemini-3-flash", 
+    model="openrouter/google/gemini-3-flash", 
     temperature=0.5, 
     api_key=os.getenv("OPENAI_API_KEY")
 )

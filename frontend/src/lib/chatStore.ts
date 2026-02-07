@@ -24,6 +24,7 @@ export interface Chat {
     updated_at: string;
     context_type?: 'board' | 'search';
     context_id?: string | null;
+    deep_research_enabled?: boolean;
 }
 
 export interface ChatTagPayload {
@@ -82,11 +83,13 @@ interface ChatState {
     streamingMessageId: string | null;
     userMessageId: string | null;
     streamingTools: ToolCallInfo[];
+    chosenVideoIds: string[];
 
     // Streaming actions
     startStreaming: () => void;
     appendDelta: (content: string, messageId?: string) => void;
     setStreamingTools: (tools: ToolCallInfo[]) => void;
+    setChosenVideoIds: (ids: string[]) => void;
     setUserMessageId: (id: string) => void;
     finalizeMessage: () => void;
     resetStreaming: () => void;
@@ -198,6 +201,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     streamingMessageId: null,
     userMessageId: null,
     streamingTools: [],
+    chosenVideoIds: [],
 
     // Streaming actions
     startStreaming: () => set({
@@ -206,12 +210,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingMessageId: null,
         userMessageId: null,
         streamingTools: [],
+        chosenVideoIds: [],
     }),
     appendDelta: (content, messageId) => set((state) => ({
         streamingContent: state.streamingContent + content,
         streamingMessageId: messageId || state.streamingMessageId,
     })),
     setStreamingTools: (tools) => set({ streamingTools: tools }),
+    setChosenVideoIds: (ids) => set({ chosenVideoIds: ids }),
     setUserMessageId: (id) => set({ userMessageId: id }),
     finalizeMessage: () => {
         const state = get();

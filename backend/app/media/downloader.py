@@ -187,11 +187,12 @@ async def download_single_asset(
                 optimized_bytes, out_mime_type, out_ext = _optimize_image_bytes(raw_bytes)
                 upload_bytes = optimized_bytes
             except Exception as exc:
-                logger.warning(
-                    "Image optimize failed for asset %s, uploading original bytes: %s",
-                    asset_id,
-                    exc,
-                )
+                pass
+                # logger.warning(
+                #     "Image optimize failed for asset %s, uploading original bytes: %s",
+                #     asset_id,
+                #     exc,
+                # )
 
             gcs_key = f"media/{platform}/{external_id}/{asset_type}/{asset_id}.{out_ext}"
             gcs_uri = await async_gcs_client.upload_blob(

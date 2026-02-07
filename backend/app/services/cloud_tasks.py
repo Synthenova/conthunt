@@ -115,7 +115,9 @@ class CloudTasksService:
                 await _execute_gemini_analysis(
                     analysis_id=analysis_id,
                     media_asset_id=media_asset_id,
-                    video_uri=payload["video_uri"]
+                    video_uri=payload["video_uri"],
+                    chat_id=payload.get("chat_id"),
+                    user_id=payload.get("user_id"),
                 )
             except Exception as e:
                 logger.error(f"[LOCAL] Gemini analysis failed: {e}", exc_info=True)
@@ -289,6 +291,7 @@ class CloudTasksService:
                         model_name=payload.get("model_name"),
                         image_urls=payload.get("image_urls") or [],
                         filters=payload.get("filters") or {},
+                        user_id=payload.get("user_id"),
                         redis_client=redis_client,
                     )
                 finally:

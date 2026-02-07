@@ -28,6 +28,7 @@ class Chat(BaseModel):
     title: Optional[str] = None
     context_type: Optional[Literal["board", "search"]] = None
     context_id: Optional[UUID] = None
+    deep_research_enabled: bool = False
     status: str
     created_at: datetime
     updated_at: datetime
@@ -45,6 +46,7 @@ class CreateChatRequest(BaseModel):
     context_type: Optional[Literal["board", "search"]] = None
     context_id: Optional[UUID] = None
     tags: Optional[List[ChatTag]] = None
+    deep_research_enabled: bool = False
 
 class SendMessageRequest(BaseModel):
     message: str
@@ -52,7 +54,7 @@ class SendMessageRequest(BaseModel):
     tags: Optional[List[ChatTag]] = None
     model: Optional[str] = None
     image_urls: Optional[List[str]] = None
-    filters: Optional[Dict[str, Dict[str, Any]]] = None
+    filters: Optional[Dict[str, Any]] = None
 
 class RenameChatRequest(BaseModel):
     title: str

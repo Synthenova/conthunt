@@ -69,6 +69,7 @@ export function useCreateChat() {
             contextType?: 'board' | 'search';
             contextId?: string | null;
             tags?: ChatTagPayload[];
+            deepResearchEnabled?: boolean;
         }) => {
             return fetchWithAuth<Chat>(`${BACKEND_URL}/v1/chats`, {
                 method: 'POST',
@@ -77,6 +78,7 @@ export function useCreateChat() {
                     context_type: input?.contextType,
                     context_id: input?.contextId,
                     tags: input?.tags,
+                    deep_research_enabled: input?.deepResearchEnabled || false,
                 }),
             });
         },
@@ -506,6 +508,11 @@ export function useSendMessage() {
                                         }
                                         queryClient.invalidateQueries({ queryKey: key });
                                     }
+                                }
+                                break;
+                            case 'chosen_videos':
+                                if (Array.isArray(data.ids)) {
+                                    useChatStore.getState().setChosenVideoIds(data.ids);
                                 }
                                 break;
                             case 'done':

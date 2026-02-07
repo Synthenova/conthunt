@@ -8,13 +8,16 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str
     DB_SCHEMA: str = "conthunt"
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
+    DB_POOL_TIMEOUT: int = 30
     LOG_LEVEL: str = "DEBUG"
 
     # GCP / Firebase
     GCLOUD_PROJECT: str = "conthunt-dev"
     GCP_PROJECT: str = "conthunt-dev"
     GCP_REGION: str = "us-central1"
-    GOOGLE_APPLICATION_CREDENTIALS: str = ""
+    GOOGLE_APPLICATION_CREDENTIALS_FB: str = ""
     # GOOGLE_API_KEY: str
     
     # Cloud Tasks
@@ -31,6 +34,9 @@ class Settings(BaseSettings):
     QUEUE_SEARCH_WORKER: str = "search-worker-queue"
     QUEUE_CHAT_STREAM: str = "chat-stream-queue"
 
+    # Deep research tuning
+    DEEP_RESEARCH_BATCH_SIZE: int = 50
+    DEEP_RESEARCH_DB_CONCURRENCY: int = 5
 
     # ScrapeCreators API
     SCRAPECREATORS_API_KEY: str
@@ -39,6 +45,7 @@ class Settings(BaseSettings):
     # GCS Buckets
     GCS_BUCKET_RAW: str = "conthunt-dev-raw"
     GCS_BUCKET_MEDIA: str = "conthunt-dev-media"
+    GCS_DEEPAGNT_FS: str = "conthunt-dev-deepagent-fs"
 
     # Cloud CDN
     CDN_SIGNING_KEY_NAME: str = "my-cdn-signing-key"
@@ -68,6 +75,7 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
     REDIS_MAX_CONNECTIONS: int = 15  # 15 × 2 instances = 30 (free tier limit)
+    LLM_GATEWAY_DEBUG: bool = False
 
     # Openrouter
     OPENAI_BASE_URL: str = "https://openrouter.ai/api/v1"

@@ -1,24 +1,32 @@
 import logging
+import asyncio
 from uuid import UUID
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from langchain_google_genai import ChatGoogleGenerativeAI
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, Header
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
+from sse_starlette.sse import EventSourceResponse
+from sqlalchemy import text
 
 from app.core import logger
 from app.auth.firebase import get_current_user
 from app.db.session import get_db_connection
+from app.db import set_rls_user
+from app.agent.model_factory import init_chat_model
 from app.db.queries.analysis import (
     get_video_analysis_by_media_asset,
     update_analysis_status,
 )
 from app.db.queries.content import get_media_asset_by_id
-from app.schemas.analysis import VideoAnalysisResponse, VideoAnalysisResult
+from app.schemas.analysis import VideoAnalysisResponse
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.services.cloud_tasks import cloud_tasks
 from app.core import get_settings
+from app.prompts.video_analysis import DEFAULT_ANALYSIS_PROMPT
+from app.core.redis_client import get_global_redis
+from app.realtime.stream_hub import stream_id_gt
+from app.llm.context import set_llm_context
 
 settings = get_settings()
 
@@ -26,35 +34,46 @@ load_dotenv()
 
 router = APIRouter(tags=["video-analysis"])
 
+import json
+
 # Initialize Gemini Model
-llm = ChatGoogleGenerativeAI(
-    model="gemini-3-flash-preview",
-    temperature=0.7,
-    project=settings.GCP_PROJECT,
-    vertexai=True,
-    max_retries=10,
-    location='global'
-)
-
-# Bind Structured Output
-structured_llm = llm.with_structured_output(VideoAnalysisResult)
-
-DEFAULT_ANALYSIS_PROMPT = """You are an expert Video Analysis AI specialized in extracting comprehensive, structured information from video content. Your task is to analyze the provided video and output a single, valid JSON object containing every possible detail about the video.
-
-ANALYSIS INSTRUCTIONS:
-1. Watch the video completely and thoroughly
-2. Extract ALL information that is visually or audibly present
-3. Use precise, descriptive language
-4. Include timestamps for all time-based elements
-5. If an element is not present or not discernible, use null or empty array
-6. Be as comprehensive and detailed as possible
-7. Maintain consistent object IDs across scenes, characters, and props
-8. Focus on observable facts, not speculation (unless clearly inferable from context)
-
-Output ONLY the valid JSON object now."""
+llm = init_chat_model("google/gemini-2.5-flash-lite-preview-09-2025", temperature=0.7)
 
 
-async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, video_uri: str) -> None:
+
+async def _publish_analysis_event(
+    chat_id: str | None,
+    analysis_id: UUID,
+    media_asset_id: UUID,
+    status: str,
+    error: str | None = None,
+) -> None:
+    if not chat_id:
+        return
+    payload = {
+        "type": "analysis",
+        "analysis_id": str(analysis_id),
+        "media_asset_id": str(media_asset_id),
+        "status": status,
+    }
+    if error:
+        payload["error"] = error
+    try:
+        redis_client = get_global_redis()
+        stream_key = f"analysis:{chat_id}:stream"
+        await redis_client.xadd(stream_key, {"data": json.dumps(payload)})
+        await redis_client.expire(stream_key, 300)
+    except Exception as exc:
+        logger.warning("[ANALYSIS] Failed to publish analysis event: %s", exc)
+
+
+async def _execute_gemini_analysis(
+    analysis_id: UUID,
+    media_asset_id: UUID,
+    video_uri: str,
+    chat_id: str | None = None,
+    user_id: str | None = None,
+) -> None:
     """
     Background task: Run Gemini LLM and update analysis status.
     Called after creating a 'processing' record.
@@ -68,45 +87,48 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
     logger.info(f"[ANALYSIS] Video URI: {video_uri}")
     
     try:
-        # 1. Build Message
+        # 1. Build Message with prompt
         logger.info(f"[ANALYSIS] Building HumanMessage with video...")
         message = HumanMessage(
             content=[
                 {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
                 {      
-                    "type": "media",              
+                    "type": "media",
                     "file_uri": video_uri,
-                    "mime_type": "video/mp4", 
+                    "mime_type": "video/mp4",
                 }
             ]
         )
         
-        # 2. Invoke LLM
-        logger.info(f"[ANALYSIS] Invoking Gemini LLM (structured output)...")
+        # 2. Invoke LLM (plain text output - markdown)
+        logger.info(f"[ANALYSIS] Invoking Gemini LLM (markdown output)...")
         invoke_start = time.time()
-        result: VideoAnalysisResult = await structured_llm.ainvoke([message])
+
+        with set_llm_context(user_id=user_id, route="analysis.video"):
+            response = await llm.ainvoke([message])
+        
+        analysis_markdown = response.content
         invoke_duration = time.time() - invoke_start
         
         logger.info(f"[ANALYSIS] Gemini LLM returned in {invoke_duration:.2f}s")
-        # Handle both old (flat summary) and new (nested summary) schemas for safety
-        summary_text = "N/A"
-        if hasattr(result, "overall_assessment") and result.overall_assessment and result.overall_assessment.summary:
-            summary_text = result.overall_assessment.summary
-        elif hasattr(result, "summary") and result.summary:
-            summary_text = result.summary
-            
-        logger.info(f"[ANALYSIS] Result summary: {summary_text[:100]}...")
+        logger.info(f"[ANALYSIS] Result preview: {analysis_markdown[:200]}...")
         
-        # 3. Update to completed
+        # 3. Update to completed - save as {"analysis": markdown_string}
         logger.info(f"[ANALYSIS] Updating status to 'completed'...")
         async with get_db_connection() as conn:
             await update_analysis_status(
                 conn,
                 analysis_id=analysis_id,
                 status="completed",
-                analysis_result=result.model_dump(),
+                analysis_result={"analysis": analysis_markdown},
             )
             await conn.commit()
+        await _publish_analysis_event(
+            chat_id=chat_id,
+            analysis_id=analysis_id,
+            media_asset_id=media_asset_id,
+            status="completed",
+        )
         
         total_duration = time.time() - start_time
         logger.info(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
@@ -124,6 +146,13 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
                     error=str(e),
                 )
                 await conn.commit()
+            await _publish_analysis_event(
+                chat_id=chat_id,
+                analysis_id=analysis_id,
+                media_asset_id=media_asset_id,
+                status="failed",
+                error=str(e),
+            )
         except Exception as db_err:
             logger.error(f"[ANALYSIS] Failed to update status to failed: {db_err}")
         # Re-raise for Cloud Tasks retry mechanism
@@ -133,7 +162,9 @@ async def _execute_gemini_analysis(analysis_id: UUID, media_asset_id: UUID, vide
 async def run_gemini_analysis(
     media_asset_id: UUID, 
     background_tasks: BackgroundTasks | None = None,
-    use_cloud_tasks: bool = True
+    use_cloud_tasks: bool = True,
+    chat_id: str | None = None,
+    user_id: str | None = None,
 ) -> VideoAnalysisResponse:
     """
     Unified Gemini analysis entry point.
@@ -181,15 +212,16 @@ async def run_gemini_analysis(
         # If existing analysis is completed, return cached result
         if not was_created and status == "completed":
             existing = await get_video_analysis_by_media_asset(conn, media_asset_id)
-            analysis = None
+            analysis_str = None
             if existing and existing.get("analysis_result"):
-                analysis = VideoAnalysisResult(**existing["analysis_result"])
+                analysis_data = existing["analysis_result"]
+                analysis_str = analysis_data.get("analysis") if isinstance(analysis_data, dict) else None
             await conn.commit() # Commit before returning
             return VideoAnalysisResponse(
                 id=analysis_id,
                 media_asset_id=media_asset_id,
                 status="completed",
-                analysis=analysis,
+                analysis=analysis_str,
                 error=existing.get("error") if existing else None,
                 created_at=existing["created_at"] if existing else datetime.utcnow(),
                 cached=True,
@@ -281,13 +313,23 @@ async def run_gemini_analysis(
             payload={
                 "analysis_id": str(analysis_id),
                 "media_asset_id": str(media_asset_id),
-                "video_uri": video_uri
+                "video_uri": video_uri,
+                "chat_id": chat_id,
+                "user_id": user_id,
             }
         )
     else:
         # Legacy/Local mode (fallback)
         import asyncio
-        asyncio.create_task(_execute_gemini_analysis(analysis_id, media_asset_id, video_uri))
+        asyncio.create_task(
+            _execute_gemini_analysis(
+                analysis_id=analysis_id,
+                media_asset_id=media_asset_id,
+                video_uri=video_uri,
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+        )
         logger.info(f"[ANALYSIS] Background task spawned successfully (local asyncio)")
     
     # 5. Return immediately with processing status
@@ -381,16 +423,114 @@ async def get_video_analysis(
             raise HTTPException(status_code=404, detail="Analysis not found")
         
         status = existing.get("status", "completed")
-        analysis = None
+        analysis_str = None
         if status == "completed" and existing.get("analysis_result"):
-            analysis = VideoAnalysisResult(**existing["analysis_result"])
+            analysis_data = existing["analysis_result"]
+            analysis_str = analysis_data.get("analysis") if isinstance(analysis_data, dict) else None
         
         return VideoAnalysisResponse(
             id=existing["id"],
             media_asset_id=media_asset_id,
             status=status,
-            analysis=analysis,
+            analysis=analysis_str,
             error=existing.get("error"),
             created_at=existing["created_at"],
             cached=True,
         )
+
+
+@router.get("/analysis/{chat_id}/stream")
+async def stream_analysis(
+    chat_id: UUID,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    last_event_id: str | None = Header(None, alias="Last-Event-ID"),
+):
+    user_uuid = user["db_user_id"]
+    if not user_uuid:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+
+    # Verify user owns this chat
+    async with get_db_connection() as conn:
+        await set_rls_user(conn, user_uuid)
+        res = await conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM conthunt.chats
+                WHERE id = :chat_id AND deleted_at IS NULL
+                """
+            ),
+            {"chat_id": chat_id},
+        )
+        if not res.fetchone():
+            raise HTTPException(status_code=404, detail="Chat not found")
+
+    stream_key = f"analysis:{chat_id}:stream"
+    hub = getattr(request.app.state, "stream_hub", None)
+    redis_client = get_global_redis()
+
+    async def event_generator():
+        if hub is None:
+            last_id = "0-0"
+            try:
+                while True:
+                    streams = await redis_client.xread(
+                        {stream_key: last_id},
+                        count=50,
+                        block=10000,
+                    )
+                    if not streams:
+                        yield {"event": "ping", "data": ""}
+                        continue
+                    for _, messages in streams:
+                        for msg_id, data_map in messages:
+                            last_id = msg_id
+                            payload_str = data_map.get("data")
+                            yield {
+                                "id": msg_id,
+                                "event": "message",
+                                "data": payload_str,
+                            }
+            except asyncio.CancelledError:
+                pass
+            return
+
+        queue = await hub.subscribe(stream_key)
+        last_sent_id = last_event_id or "0-0"
+        try:
+            min_id = "-" if not last_event_id else f"({last_event_id}"
+            history = await redis_client.xrange(stream_key, min=min_id, max="+")
+            for msg_id, data_map in history:
+                payload_str = data_map.get("data")
+                if payload_str is None:
+                    continue
+                last_sent_id = msg_id
+                yield {
+                    "id": msg_id,
+                    "event": "message",
+                    "data": payload_str,
+                }
+
+            while True:
+                try:
+                    msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
+                except asyncio.TimeoutError:
+                    yield {"event": "ping", "data": ""}
+                    continue
+                if not payload_str:
+                    continue
+                if not stream_id_gt(msg_id, last_sent_id):
+                    continue
+                last_sent_id = msg_id
+                yield {
+                    "id": msg_id,
+                    "event": "message",
+                    "data": payload_str,
+                }
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await hub.unsubscribe(stream_key, queue)
+
+    return EventSourceResponse(event_generator())

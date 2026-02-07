@@ -4,6 +4,7 @@ These tools make authenticated API calls to the backend to fetch
 user data like boards, videos, and analysis.
 """
 import os
+import json
 from uuid import UUID
 from enum import Enum
 from typing import Optional, List, Dict, Any, Annotated, Literal
@@ -16,19 +17,14 @@ from langgraph.prebuilt import InjectedState
 
 from app.core import get_settings, logger
 from app.agent.model_factory import init_chat_model, init_chat_model_rated
+from app.llm.context import set_llm_context
 
 settings = get_settings()
 
 
 def _get_api_base_url() -> str:
     """Get API base URL for internal/external calls."""
-    # env_base_url = os.getenv("API_BASE_URL") or settings.API_BASE_URL
-    # if env_base_url:
-    #     logger.info(f"API base URL: {env_base_url}")
-    #     return env_base_url.rstrip("/") + "/v1"
-
-    # Cloud Run sets PORT env var; default to 8000 for local dev
-    logger.info(f"API base URL outside")
+    
     port = os.getenv("PORT", "8000")
     return f"http://localhost:{port}/v1"
 
@@ -42,6 +38,10 @@ async def _get_headers(config: RunnableConfig) -> Dict[str, str]:
     }
 
 
+def _get_user_id(config: RunnableConfig) -> str | None:
+    return (config.get("configurable", {}) or {}).get("user_id")
+
+
 @tool
 async def report_step(step: str, config: RunnableConfig) -> str:
     """
@@ -53,6 +53,15 @@ async def report_step(step: str, config: RunnableConfig) -> str:
         step: Brief description (e.g., "Analyzing request", "Searching content")
     """
     return "ok"
+
+
+@tool
+async def report_chosen_videos(media_asset_ids: list[str]) -> dict:
+    """
+    Report chosen video IDs for the frontend to render.
+    This emits a tool event that the stream can forward as a structured payload.
+    """
+    return {"chosen_video_ids": media_asset_ids}
 
 
 @tool
@@ -208,29 +217,41 @@ async def get_video_analysis(
     """
     import asyncio
     from firebase_admin import auth as firebase_auth
+    from app.auth.firebase import init_firebase
     from app.services.analysis_service import analysis_service
     from app.db.session import get_db_connection
     from app.db.queries.analysis import get_video_analysis_by_media_asset
-    from app.schemas.analysis import VideoAnalysisResult
     
     try:
         headers = await _get_headers(config)
         if not headers.get("Authorization"):
             return {"error": "Authentication required. Please provide x-auth-token."}
 
+        configurable = config.get("configurable", {}) if config else {}
+        deep_research_enabled = bool((configurable.get("filters") or {}).get("deep_research_enabled"))
+        chat_id = configurable.get("chat_id") if deep_research_enabled else None
+
         # Decode JWT to get user info including db_user_id
-        auth_token = config.get("configurable", {}).get("x-auth-token")
+        auth_token = configurable.get("x-auth-token")
         db_user_id = None
         user_role = "free"
         
         if auth_token:
             try:
+                init_firebase()
                 decoded = firebase_auth.verify_id_token(auth_token)
+                logger.info(
+                    "[get_video_analysis] token verified; claims keys=%s db_user_id=%s role=%s",
+                    list(decoded.keys()),
+                    decoded.get("db_user_id"),
+                    decoded.get("role"),
+                )
                 user_role = decoded.get("role", "free")
                 db_user_id_str = decoded.get("db_user_id")
                 if db_user_id_str:
                     db_user_id = UUID(db_user_id_str)
             except Exception:
+                logger.exception("[get_video_analysis] token verification failed")
                 pass 
         
         # Require db_user_id - users without it need to re-login
@@ -245,7 +266,9 @@ async def get_video_analysis(
                 user_id=db_user_id,
                 user_role=user_role,
                 media_asset_id=media_asset_uuid,
-                context_source="agent_tool"
+                context_source="agent_tool",
+                record_streak=not deep_research_enabled,
+                chat_id=chat_id,
             )
             
             # Convert to dict if needed
@@ -256,51 +279,75 @@ async def get_video_analysis(
             if result.get("status") == "completed" and result.get("analysis"):
                 return result
             
-            # Otherwise, poll for completion (max 60 seconds)
-            # Since we prioritized the upload, it should complete quickly
+            # Otherwise, wait for completion via SSE when deep research is enabled.
             analysis_id = result.get("id")
             if not analysis_id:
-                return result  # Can't poll without ID
-            
-            for attempt in range(12):  # 12 x 5s = 60 seconds
-                await asyncio.sleep(5)
-                
-                async with get_db_connection() as conn:
-                    analysis = await get_video_analysis_by_media_asset(conn, media_asset_uuid)
-                
-                if not analysis:
-                    continue
-                    
-                status = analysis.get("status", "")
-                
-                if status == "completed" and analysis.get("analysis_result"):
-                    return {
-                        "id": str(analysis["id"]),
-                        "media_asset_id": str(media_asset_uuid),
-                        "status": "completed",
-                        "analysis": analysis["analysis_result"],
-                        "error": None,
-                        "cached": True,
-                    }
-                elif status == "failed":
-                    return {
-                        "id": str(analysis["id"]),
-                        "media_asset_id": str(media_asset_uuid),
-                        "status": "failed",
-                        "analysis": None,
-                        "error": analysis.get("error", "Analysis failed"),
-                        "cached": True,
-                    }
-                # Still processing, continue polling
-            
-            # Timeout - return processing status
+                return result  # Can't wait without ID
+
+            if not chat_id:
+                return result
+
+            async def _wait_for_analysis_event() -> dict | None:
+                url = f"{_get_api_base_url()}/analysis/{chat_id}/stream"
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream("GET", url, headers=headers) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            payload = line[5:].strip()
+                            if not payload:
+                                continue
+                            try:
+                                data = json.loads(payload)
+                            except Exception:
+                                continue
+                            if data.get("type") != "analysis":
+                                continue
+                            if data.get("media_asset_id") != str(media_asset_uuid):
+                                continue
+                            return data
+                return None
+
+            event = await _wait_for_analysis_event()
+            if not event:
+                return result
+
+            async with get_db_connection() as conn:
+                analysis = await get_video_analysis_by_media_asset(conn, media_asset_uuid)
+
+            if not analysis:
+                return result
+
+            status = analysis.get("status", "")
+            if status == "completed" and analysis.get("analysis_result"):
+                analysis_data = analysis["analysis_result"]
+                analysis_str = analysis_data.get("analysis") if isinstance(analysis_data, dict) else str(analysis_data)
+                return {
+                    "id": str(analysis["id"]),
+                    "media_asset_id": str(media_asset_uuid),
+                    "status": "completed",
+                    "analysis": analysis_str,  # Markdown string
+                    "error": None,
+                    "cached": True,
+                }
+            if status == "failed":
+                return {
+                    "id": str(analysis["id"]),
+                    "media_asset_id": str(media_asset_uuid),
+                    "status": "failed",
+                    "analysis": None,
+                    "error": analysis.get("error", "Analysis failed"),
+                    "cached": True,
+                }
+
             return {
                 "id": str(analysis_id),
                 "media_asset_id": str(media_asset_uuid),
                 "status": "processing",
                 "analysis": None,
                 "error": None,
-                "message": "Analysis is still processing. The video may still be uploading. Please try again in a moment.",
+                "message": "Analysis is still processing. Please try again in a moment.",
                 "cached": False,
             }
             
@@ -437,13 +484,9 @@ async def search(
 
         configurable = config.get("configurable", {}) if config else {}
         chat_id = configurable.get("chat_id")
-        redis_client = configurable.get("redis_client")
         
-        # 1. Initialize Gemini 3 Pro for intent detection (with rate limiting)
-        # if redis_client:
-        #     llm = await init_chat_model_rated("google/gemini-3-flash-preview", redis_client)
-        # else:
-        llm = init_chat_model("google/gemini-3-flash-preview")
+        # 1. Initialize Gemini 3 Pro for intent detection
+        llm = init_chat_model("openrouter/google/gemini-3-flash-preview")
         llm = llm.bind_tools([{"google_search": {}}])
         structured_llm = llm.with_structured_output(SearchPlan)
 
@@ -513,7 +556,8 @@ Allowed values:
         # Invoke the model
         try:
            # We pass the conversation history + system prompt
-           response = await structured_llm.ainvoke([system_msg, HumanMessage(content=combined_content)])
+           with set_llm_context(user_id=_get_user_id(config), route="search.plan"):
+               response = await structured_llm.ainvoke([system_msg, HumanMessage(content=combined_content)])
         except Exception as llm_err:
              return {"error": f"Failed to generate search keywords: {str(llm_err)}"}
 
@@ -599,10 +643,10 @@ Allowed values:
                 return {"error": f"Failed to start search for '{keyword}': {str(e)}"}
             return None
 
-        # Execute parallel searches
+        # Execute parallel searches (cap at 5 total)
         tasks = []
         # sort_order: -1, -2, -3...
-        for idx, q in enumerate(queries):
+        for idx, q in enumerate(queries[:5]):
             tasks.append(_execute_single_search(q, -(idx + 1)))
         
         results = await asyncio.gather(*tasks)
@@ -633,7 +677,7 @@ Allowed values:
 async def get_search_items(
     search_id: str,
     config: RunnableConfig,
-) -> Dict[str, Any]:
+) -> str | Dict[str, Any]:
     """
     Get video results from a completed search.
     
@@ -674,13 +718,30 @@ async def get_search_items(
             summary_response = await client.get(summary_url, headers=headers)
             summary_response.raise_for_status()
             items = summary_response.json()
-            
-            return {
-                "status": "completed",
-                "query": search_data.get("query"),
-                "items": items,
-                "count": len(items)
-            }
+
+            lines = []
+            lines.append(f"Search: {search_data.get('query')}")
+            lines.append(f"Count: {len(items)}")
+            lines.append("")
+            for idx, item in enumerate(items, start=1):
+                title = (item.get("title") or "Untitled").strip()
+                creator = (item.get("creator_handle") or "unknown").strip()
+                caption = (item.get("primary_text") or "").strip()
+                published_at = item.get("published_at") or "unknown"
+                media_asset_id = item.get("media_asset_id") or "n/a"
+                metrics = item.get("metrics") or {}
+                metric_names = ", ".join(sorted(metrics.keys())) if metrics else "n/a"
+                lines.append(f"{idx}.")
+                lines.append(f"{title}")
+                lines.append(f"{creator}")
+                if caption:
+                    lines.append(f"caption: {caption}")
+                lines.append(f"posted_at: {published_at}")
+                lines.append(f"media_asset_id: {media_asset_id}")
+                lines.append(f"metrics: {metric_names}")
+                lines.append("")
+
+            return "\n".join(lines).strip()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return {"error": f"Search not found: {search_id}"}

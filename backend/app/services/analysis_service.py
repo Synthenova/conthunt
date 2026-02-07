@@ -24,6 +24,8 @@ class AnalysisService:
         media_asset_id: UUID,
         background_tasks: Optional[BackgroundTasks] = None,
         context_source: str = "api",
+        record_streak: bool = True,
+        chat_id: str | None = None,
     ) -> Dict[str, Any]:
         """
         Trigger a paid video analysis.
@@ -74,8 +76,9 @@ class AnalysisService:
             else:
                 logger.info(f"Free re-access: user={user_id} already analyzed asset={media_asset_id}")
 
-            from app.db.queries import streaks as streak_queries
-            await streak_queries.record_activity(conn, user_id, "analysis", timezone=timezone)
+            if record_streak:
+                from app.db.queries import streaks as streak_queries
+                await streak_queries.record_activity(conn, user_id, "analysis", timezone=timezone)
             await conn.commit()
         
         # Trigger unified analysis flow (handles priority downloads, race conditions, etc.)
@@ -83,7 +86,9 @@ class AnalysisService:
         return await run_gemini_analysis(
             media_asset_id=media_asset_id,
             background_tasks=background_tasks,
-            use_cloud_tasks=True
+            use_cloud_tasks=True,
+            chat_id=chat_id,
+            user_id=str(user_id),
         )
 
 

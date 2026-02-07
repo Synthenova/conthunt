@@ -19,6 +19,7 @@ from app.db import init_db, close_db
 from app.realtime.stream_hub import StreamFanoutHub
 from app.api import v1_router
 from app.agent.runtime import create_agent_graph
+from app.llm.gateway import init_gateway
 
 setup_logging(get_log_level())
 settings = get_settings()
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
         app.state.redis = redis.Redis(connection_pool=redis_pool)
         max_conn = getattr(app.state.redis.connection_pool, "max_connections", None)
         logger.info("Redis client initialized (max_connections=%s)", max_conn)
+        init_gateway(app.state.redis)
         app.state.stream_hub = StreamFanoutHub(app.state.redis, logger)
         await app.state.stream_hub.start()
         logger.debug("Stream hub initialized")
@@ -70,6 +72,9 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, '_agent_saver_cm'):
         await app.state._agent_saver_cm.__aexit__(None, None, None)
         logger.debug("Agent checkpointer closed")
+    if hasattr(app.state, '_deep_agent_saver_cm'):
+        await app.state._deep_agent_saver_cm.__aexit__(None, None, None)
+        logger.debug("Deep agent checkpointer closed")
     await close_db()
     logger.debug("Database connections closed")
 

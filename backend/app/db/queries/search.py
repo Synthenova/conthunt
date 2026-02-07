@@ -614,6 +614,8 @@ async def get_search_items_summary(
                 ci.creator_handle,
                 ci.content_type,
                 ci.primary_text,
+                ci.published_at,
+                ci.metrics,
                 ma.id as media_asset_id
             FROM search_results sr
             JOIN content_items ci ON sr.content_item_id = ci.id
@@ -632,7 +634,9 @@ async def get_search_items_summary(
             "creator_handle": row[2],
             "content_type": row[3],
             "primary_text": row[4],
-            "media_asset_id": str(row[5]) if row[5] else None,
+            "published_at": row[5],
+            "metrics": row[6] or {},
+            "media_asset_id": str(row[7]) if row[7] else None,
         })
 
     return items

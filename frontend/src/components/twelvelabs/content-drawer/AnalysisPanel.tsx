@@ -5,6 +5,7 @@ import { ANALYSIS_NOT_READY_MESSAGE } from "./useContentAnalysis";
 import { useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import ReactMarkdown from "react-markdown";
 
 interface AnalysisPanelProps {
     analysisResult: any;
@@ -83,7 +84,25 @@ export function AnalysisPanel({
     if (analysisResult && analysisResult.status === "completed" && analysisResult.analysis) {
         const data = analysisResult.analysis;
 
-        // Check for legacy format
+        // Check if data is a string (new markdown format) or object (legacy JSON format)
+        const isMarkdown = typeof data === "string";
+
+        if (isMarkdown) {
+            // NEW: Render markdown content
+            return (
+                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/10">
+                        <Sparkles className="h-4 w-4 text-blue-400" />
+                        <h3 className="font-semibold text-white">AI Analysis</h3>
+                    </div>
+                    <div className="prose prose-sm prose-invert max-w-none prose-headings:text-zinc-200 prose-headings:font-semibold prose-h2:text-base prose-h2:mt-4 prose-h2:mb-2 prose-h3:text-sm prose-p:text-zinc-300 prose-p:leading-relaxed prose-li:text-zinc-300 prose-strong:text-zinc-200 prose-ul:my-1 prose-li:my-0">
+                        <ReactMarkdown>{data}</ReactMarkdown>
+                    </div>
+                </div>
+            );
+        }
+
+        // LEGACY: Handle old JSON format
         const isLegacy = !data.overall_assessment && (data.hook || data.call_to_action || Array.isArray(data.key_topics));
 
         return (
@@ -129,7 +148,7 @@ export function AnalysisPanel({
                         </div>
                     </div>
                 ) : (
-                    // New V2 View
+                    // V2 JSON View (legacy but not oldest)
                     <>
                         {/* Summary & Themes (High Level) */}
                         <div className="space-y-4">
@@ -335,3 +354,4 @@ function SimpleAccordion({ title, children, icon }: { title: string; children: R
         </Collapsible>
     )
 }
+

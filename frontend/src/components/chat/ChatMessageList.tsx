@@ -543,6 +543,7 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
         isStreaming,
         streamingContent,
         streamingTools,
+        chosenVideoIds,
         canvasResultsMap,
         canvasActiveSearchId,
         setCanvasActiveSearchId,
@@ -834,6 +835,22 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                         <ToolList tools={streamingTools} />
                                     </CollapsibleContent>
                                 </Collapsible>
+                            </div>
+                        </Message>
+                    )}
+
+                    {/* Chosen Videos (Deep Research) */}
+                    {chosenVideoIds.length > 0 && (
+                        <Message key="chosen-videos" className="justify-start">
+                            <div className="w-full max-w-[95%]">
+                                <StackedMediaChips
+                                    chips={chosenVideoIds.map((id) => ({
+                                        id,
+                                        title: "Video",
+                                        platform: "unknown",
+                                    }))}
+                                    onChipClick={(id) => handleChipClick('media', 'media', id)}
+                                />
                             </div>
                         </Message>
                     )}

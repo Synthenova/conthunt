@@ -2,21 +2,20 @@
 import os
 from typing import Any, Iterable, Optional, Tuple
 
-import redis.asyncio as redis
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
 from app.core import get_settings
-from app.agent.rate_limiter import get_rate_limiter
+from app.llm.rate_limited_model import RateLimitedChatModel
 
 DEFAULT_MODEL_NAME = "openrouter/x-ai/grok-4.1-fast"
-DEFAULT_MODEL_NAME = "google/gemini-3-flash-preview"
+DEFAULT_MODEL_NAME = "openrouter/google/gemini-3-flash-preview"
 SUPPORTED_PROVIDERS = {"openrouter", "google"}
 
 # Model options - keep in sync with frontend/src/components/chat/chat-input/constants.ts
 MODEL_OPTIONS = [
     {"label": "Grok 4.1 Fast (xAI)", "value": "openrouter/x-ai/grok-4.1-fast"},
-    {"label": "Gemini 3 Flash", "value": "google/gemini-3-flash-preview"},    
+    {"label": "Gemini 3 Flash", "value": "openrouter/google/gemini-3-flash-preview"},    
     {"label": "MiMo-V2-Flash (Xiaomi, free)", "value": "openrouter/xiaomi/mimo-v2-flash:free"},
     {"label": "GPT-5.2 (OpenAI)", "value": "openrouter/openai/gpt-5.2"},
     {"label": "GPT-5.1 (OpenAI)", "value": "openrouter/openai/gpt-5.1"},
@@ -46,24 +45,27 @@ def _parse_model_name(model_name: str | None) -> Tuple[str, str]:
 def init_chat_model(model_name: str | None, temperature: float = 0.5):
     provider, resolved_name = _parse_model_name(model_name)
     settings = get_settings()
+    full_model_name = f"{provider}/{resolved_name}"
 
     if provider == "openrouter":        
-        return ChatOpenAI(
+        base_model = ChatOpenAI(
             model=resolved_name,
             temperature=temperature,
             openai_api_base=settings.OPENAI_BASE_URL,
             api_key=settings.OPENAI_API_KEY,
-            max_retries=10,
+            max_retries=1,
         )
+        return RateLimitedChatModel(base_model, None, full_model_name)
 
-    return ChatGoogleGenerativeAI(
+    base_model = ChatGoogleGenerativeAI(
         model=resolved_name,
         temperature=temperature,
         project=settings.GCP_PROJECT,
         vertexai=True,
-        max_retries=10,
+        max_retries=1,
         location='global'
     )
+    return RateLimitedChatModel(base_model, None, full_model_name)
 
 
 def get_model_provider(model_name: str | None) -> str:
@@ -151,36 +153,23 @@ def normalize_messages_for_provider(
 
 async def init_chat_model_rated(
     model_name: str | None,
-    redis_client: redis.Redis,
+    redis_client,
     temperature: float = 0.5,
     timeout: float = 30.0,
 ):
     """
-    Initialize a chat model with rate limiting.
-    
-    Acquires a rate limit slot before returning the model.
-    Use this for all LLM calls to ensure global rate limits are respected.
+    Initialize a chat model (kept for API compatibility).
     
     Args:
-        model_name: Full model name (e.g., "google/gemini-3-flash-preview")
-        redis_client: Redis client for rate limiting
+        model_name: Full model name (e.g., "openrouter/google/gemini-3-flash-preview")
+        redis_client: Unused (kept for API compatibility)
         temperature: Model temperature
-        timeout: Max seconds to wait for rate limit
+        timeout: Unused (kept for API compatibility)
         
     Returns:
         Initialized chat model
-        
-    Raises:
-        RuntimeError: If rate limit acquisition times out
     """
-    # Normalize model name for rate limiting
-    if not model_name:
-        model_name = DEFAULT_MODEL_NAME
-    
-    # Acquire rate limit slot
-    limiter = get_rate_limiter(redis_client)
-    await limiter.acquire(model_name, timeout=timeout)
-    
-    # Return the model
+    # Keep parameters for callers that still pass them.
+    _ = redis_client
+    _ = timeout
     return init_chat_model(model_name, temperature=temperature)
-

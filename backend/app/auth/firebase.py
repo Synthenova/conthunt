@@ -28,7 +28,7 @@ def init_firebase():
 
     try:
         # Check for explicit credentials path (Local Dev)
-        cred_path = app_settings.GOOGLE_APPLICATION_CREDENTIALS        
+        cred_path = app_settings.GOOGLE_APPLICATION_CREDENTIALS_FB
         cred = None
         if cred_path and os.path.exists(cred_path):
             cred = credentials.Certificate(cred_path)
@@ -37,7 +37,10 @@ def init_firebase():
             "projectId": app_settings.GCLOUD_PROJECT
         })
     except ValueError:
-        _app = firebase_admin.get_app()
+        try:
+            _app = firebase_admin.get_app()
+        except ValueError:
+            _app = firebase_admin.initialize_app()
     return _app
 
 # Initialize on module load
