@@ -324,16 +324,6 @@ async def stream_generator_to_redis(
                     and not is_tool_internal
                     and (not lc_agent_name or lc_agent_name == "orchestrator")
                 ):
-                    # Log the full event as single-line JSON for inspection.
-                    try:
-                        logger.info(
-                            "Event received: %s %s",
-                            ev_type,
-                            json.dumps(_jsonable(ev), ensure_ascii=False, separators=(",", ":")),
-                        )
-                    except Exception:
-                        logger.info("Event received: %s %s", ev_type, str(ev))
-
                     await r.xadd(
                         stream_key,
                         {"data": json.dumps(_langgraph_event_payload(ev), ensure_ascii=False)},
@@ -845,6 +835,9 @@ async def send_message(
             "filters": effective_filters,
             "user_id": str(user_uuid),
         },
+        # Deep research runs can take 10+ minutes; Cloud Tasks default deadlines can be too short.
+        # Keep this <= Cloud Tasks maximum (commonly 30 minutes for HTTP targets).
+        dispatch_deadline_seconds=1800,
     )
     
     return {"ok": True}

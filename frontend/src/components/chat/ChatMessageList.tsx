@@ -393,8 +393,8 @@ function ToolList({ tools }: { tools: ToolCallInfo[] }) {
                                                 <>
                                                     <div className="flex items-center gap-2">
                                                         <Badge variant="secondary" className="text-[10px]">queries</Badge>
-                                                        <span>{executed.length} executed</span>
-                                                        {failed.length > 0 && <span className="text-red-400">{failed.length} failed</span>}
+                                                        <span>{executed.length + failed.length} executed</span>
+                                                        {/* {failed.length > 0 && <span className="text-red-400">{failed.length} failed</span>} */}
                                                     </div>
                                                     {show.map((r: any, i: number) => (
                                                         <div key={i} className="flex items-center justify-between gap-3">

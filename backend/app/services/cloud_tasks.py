@@ -3,6 +3,7 @@ import asyncio
 import json
 import time
 from google.cloud import tasks_v2
+from google.protobuf import duration_pb2
 from google.protobuf import timestamp_pb2
 
 from app.core import get_settings, logger
@@ -33,7 +34,8 @@ class CloudTasksService:
         queue_name: str,
         relative_uri: str,
         payload: dict | None = None,
-        schedule_seconds: int | None = None
+        schedule_seconds: int | None = None,
+        dispatch_deadline_seconds: int | None = None,
     ) -> str:
         """
         Create a secure HTTP task on Cloud Tasks.
@@ -71,6 +73,11 @@ class CloudTasksService:
             timestamp = timestamp_pb2.Timestamp()
             timestamp.FromSeconds(int(time.time() + schedule_seconds))
             task["schedule_time"] = timestamp
+
+        if dispatch_deadline_seconds:
+            # Cloud Tasks dispatch deadline must be >= handler runtime; Cloud Run timeout
+            # should be configured to be >= this value as well.
+            task["dispatch_deadline"] = duration_pb2.Duration(seconds=int(dispatch_deadline_seconds))
 
         try:
             response = self.client.create_task(request={"parent": parent, "task": task})

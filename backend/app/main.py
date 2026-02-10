@@ -38,6 +38,12 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown."""
     # Startup
     logger.debug("Starting Conthunt backend...")
+    logger.info(
+        "Deep Research config: analysis_concurrency=%s, search_concurrency=%s, model=%s",
+        settings.DEEP_RESEARCH_ANALYSIS_CONCURRENCY,
+        settings.DEEP_RESEARCH_SEARCH_CONCURRENCY,
+        settings.DEEP_RESEARCH_MODEL,
+    )
     try:
         await init_db()
         logger.debug("Database connection verified")
