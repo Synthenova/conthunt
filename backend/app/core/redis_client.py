@@ -20,7 +20,23 @@ def get_app_redis(request: Request) -> redis.Redis:
 
 
 def get_global_redis() -> redis.Redis:
+    """
+    Prefer the app-scoped Redis client (app.state.redis) when available to avoid
+    creating multiple pools per process (which increases idle sockets and
+    connection-limit pressure under SSE).
+    """
     global _global_redis
+    try:
+        # Lazily import to avoid import cycles at module import time.
+        from app.main import app as main_app  # type: ignore
+
+        state_client = getattr(getattr(main_app, "state", None), "redis", None)
+        if state_client is not None:
+            return state_client
+    except Exception:
+        # Fall back to a standalone global client below.
+        pass
+
     if _global_redis is None:
         settings = get_settings()
         from redis.asyncio.connection import BlockingConnectionPool

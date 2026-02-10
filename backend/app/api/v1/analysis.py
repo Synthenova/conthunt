@@ -479,14 +479,22 @@ async def stream_analysis(
 
     stream_key = f"analysis:{chat_id}:stream"
     hub = getattr(request.app.state, "stream_hub", None)
-    redis_client = get_global_redis()
+    # Use the app-scoped Redis client if available; it shares the same pool as the hub.
+    redis_client = getattr(request.app.state, "redis", None) or get_global_redis()
 
     async def event_generator():
         async def catch_up_from_redis(last_id: str):
             nonlocal last_sent_id
             cur = last_id or "0-0"
             while True:
-                streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
+                try:
+                    streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
+                except Exception as exc:
+                    # Most common cause: provider/proxy closes idle pooled sockets.
+                    # Let the loop continue; the next command should acquire a fresh connection.
+                    logger.warning("[ANALYSIS] Redis XREAD failed (catch-up): %s", exc)
+                    await asyncio.sleep(0.2)
+                    return
                 if not streams:
                     return
                 _, messages = streams[0]
@@ -515,11 +523,16 @@ async def stream_analysis(
                 while True:
                     if await request.is_disconnected():
                         return
-                    streams = await redis_client.xread(
-                        {stream_key: last_id},
-                        count=50,
-                        block=10000,
-                    )
+                    try:
+                        streams = await redis_client.xread(
+                            {stream_key: last_id},
+                            count=50,
+                            block=10000,
+                        )
+                    except Exception as exc:
+                        logger.warning("[ANALYSIS] Redis XREAD failed (live): %s", exc)
+                        await asyncio.sleep(0.2)
+                        continue
                     if not streams:
                         yield {"event": "ping", "data": ""}
                         continue
