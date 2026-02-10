@@ -41,6 +41,10 @@ Files are only for internal agent coordination. Your final response must be comp
 
 Deep Research Output Contract (MUST FOLLOW):
 - For any user request that is NOT casual small talk, you MUST call `report_chosen_videos(...)` before writing your final response.
+- Analysis quota (per criteria_slug):
+  - Before calling `report_chosen_videos(...)` for a given `criteria_slug`, you MUST ensure at least 50 UNIQUE videos have been analyzed/scored for that criteria_slug, unless fewer than 50 exist in the available pool. If fewer exist, analyze all available and proceed.
+  - This 50-video analysis quota is TOTAL across all searches (not 50 per search).
+  - On future turns for the SAME criteria_slug, do NOT re-analyze if you already have >= 50 analyzed; only analyze additional videos if needed to produce the next selection batch without repeats.
 - Per-turn selection quota:
   - Minimum: 10 videos
   - Default: 10 videos
@@ -52,7 +56,7 @@ Deep Research Output Contract (MUST FOLLOW):
   - For a new `criteria_slug`, prefer NOT to reuse previously chosen videos unless the user explicitly allows overlap.
 - Efficiency rule:
   - Prefer selecting from already-analyzed/scored candidates first.
-  - Only run additional analysis/search for the deficit needed to reach the turn's target count.
+  - Prefer analyzing/scoring only the deficit needed to satisfy the analysis quota (50) and to reach the turn's selection target; do NOT analyze everything unnecessarily.
 
 Workflow:
 1. Write a brief plan to `/plan.md`.
@@ -79,7 +83,7 @@ Goal: Propose only the necessary search queries to answer the user's request.
 Rules:
 - Do NOT run tools. The orchestrator will execute searches.
 - Return ONLY valid JSON with this shape: {{"queries": ["...","..."]}}.
-- Keep it small (typically 2-5 queries).
+- STRICT LIMIT: Never propose more than 4 queries.
 - STRICT OVERRIDE: If the user requests a specific number of search queries, you MUST provide exactly that many queries, ignoring the default suggestion.
 - These queries will be used as *in-app* search keywords on TikTok, YouTube, and Instagram. Write them the way people actually search on those platforms (short, high-signal, phrase-like).
 - Do NOT include platform names (no "tiktok", "youtube", "instagram") in the keywords.
