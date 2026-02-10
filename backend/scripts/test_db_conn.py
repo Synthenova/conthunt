@@ -1,13 +1,15 @@
 
 import psycopg
 import sys
+import os
 
 # Connection details from .env.local
-DB_USER = "conthunt_service"
-DB_PASS = ""
-DB_HOST = "127.0.0.1"
-DB_PORT = "5433"
-DB_NAME = "postgres"
+DB_USER = os.getenv("DB_USER", "conthunt_service")
+DB_PASS = os.getenv("DB_PASS", "conthunt_local")
+DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+# Default to PgBouncer (Docker compose); Cloud SQL proxy used 5433 historically.
+DB_PORT = os.getenv("DB_PORT", "6432")
+DB_NAME = os.getenv("DB_NAME", "postgres")
 
 try:
     print(f"Connecting to {DB_HOST}:{DB_PORT} as {DB_USER}...")

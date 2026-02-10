@@ -18,6 +18,11 @@ from langgraph.prebuilt import InjectedState
 from app.core import get_settings, logger
 from app.agent.model_factory import init_chat_model, init_chat_model_rated
 from app.llm.context import set_llm_context
+from datetime import datetime, timezone
+
+from app.agent.deep_research import gcs_store
+from app.db import get_db_connection, set_rls_user, queries
+from uuid import UUID
 
 settings = get_settings()
 
@@ -56,12 +61,91 @@ async def report_step(step: str, config: RunnableConfig) -> str:
 
 
 @tool
-async def report_chosen_videos(media_asset_ids: list[str]) -> dict:
+async def report_chosen_videos(
+    chosen: list[dict],
+    criteria_slug: str,
+    config: RunnableConfig,
+) -> dict:
     """
     Report chosen video IDs for the frontend to render.
     This emits a tool event that the stream can forward as a structured payload.
     """
-    return {"chosen_video_ids": media_asset_ids}
+    chat_id = (config.get("configurable") or {}).get("chat_id")
+    criteria_slug = (criteria_slug or "").strip()
+    if not criteria_slug:
+        return {"error": "criteria_slug is required"}
+
+    # Normalize chosen payload
+    normalized = []
+    chosen_video_ids: list[str] = []
+    for row in chosen or []:
+        if not isinstance(row, dict):
+            continue
+        mid = (row.get("media_asset_id") or "").strip()
+        if not mid:
+            continue
+        reason = str(row.get("reason") or "").strip()
+        normalized.append({"media_asset_id": mid, "reason": reason})
+        chosen_video_ids.append(mid)
+
+    def _safe_slug(s: str) -> str:
+        import re
+
+        s = s.lower()
+        s = re.sub(r"[^a-z0-9_-]+", "-", s).strip("-")
+        return s or "criteria"
+
+    safe_slug = _safe_slug(criteria_slug)
+
+    saved_as = None
+    items = []
+    if chat_id:
+        # Build grid-ready items so the frontend can render instantly in the Deep Research tab.
+        user_uuid = (config.get("configurable") or {}).get("user_id")
+        if user_uuid:
+            try:
+                async with get_db_connection() as conn:
+                    await set_rls_user(conn, UUID(str(user_uuid)))
+                    ids = [UUID(mid) for mid in chosen_video_ids]
+                    items = await queries.get_search_result_items_for_media_asset_ids(conn, ids)
+            except Exception:
+                items = []
+
+        # Write chosen-vids-<criteria_slug>-NNN.json at root; never edit existing files.
+        prefix = f"chosen-vids-{safe_slug}-"
+        existing = await gcs_store.list_paths(str(chat_id), prefix)
+        max_n = 0
+        for p in existing:
+            # Only root files chosen-vids-001.json etc
+            if "/" in p:
+                continue
+            if not p.startswith(prefix) or not p.endswith(".json"):
+                continue
+            try:
+                num = int(p[len(prefix):-len(".json")])
+            except Exception:
+                continue
+            max_n = max(max_n, num)
+        saved_as = f"{prefix}{max_n + 1:03d}.json"
+        await gcs_store.write_json(
+            str(chat_id),
+            saved_as,
+            {
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+                "criteria_slug": criteria_slug,
+                "chosen": normalized,
+                "chosen_video_ids": chosen_video_ids,
+                "items": items,
+            },
+        )
+
+    return {
+        "criteria_slug": criteria_slug,
+        "chosen": normalized,
+        "chosen_video_ids": chosen_video_ids,
+        "saved_as": saved_as,
+        "items": items,
+    }
 
 
 @tool
@@ -239,13 +323,7 @@ async def get_video_analysis(
         if auth_token:
             try:
                 init_firebase()
-                decoded = firebase_auth.verify_id_token(auth_token)
-                logger.info(
-                    "[get_video_analysis] token verified; claims keys=%s db_user_id=%s role=%s",
-                    list(decoded.keys()),
-                    decoded.get("db_user_id"),
-                    decoded.get("role"),
-                )
+                decoded = firebase_auth.verify_id_token(auth_token)                
                 user_role = decoded.get("role", "free")
                 db_user_id_str = decoded.get("db_user_id")
                 if db_user_id_str:
@@ -486,7 +564,7 @@ async def search(
         chat_id = configurable.get("chat_id")
         
         # 1. Initialize Gemini 3 Pro for intent detection
-        llm = init_chat_model("openrouter/google/gemini-3-flash-preview")
+        llm = init_chat_model("google/gemini-3-flash-preview")
         llm = llm.bind_tools([{"google_search": {}}])
         structured_llm = llm.with_structured_output(SearchPlan)
 

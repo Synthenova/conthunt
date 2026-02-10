@@ -1,14 +1,14 @@
 """Model initialization factory for chat models."""
 import os
 from typing import Any, Iterable, Optional, Tuple
+from functools import wraps
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
 from app.core import get_settings
-from app.llm.rate_limited_model import RateLimitedChatModel
+from app.llm.global_rate_limiter import enforce_model_global_limits
 
-DEFAULT_MODEL_NAME = "openrouter/x-ai/grok-4.1-fast"
 DEFAULT_MODEL_NAME = "openrouter/google/gemini-3-flash-preview"
 SUPPORTED_PROVIDERS = {"openrouter", "google"}
 
@@ -45,27 +45,128 @@ def _parse_model_name(model_name: str | None) -> Tuple[str, str]:
 def init_chat_model(model_name: str | None, temperature: float = 0.5):
     provider, resolved_name = _parse_model_name(model_name)
     settings = get_settings()
-    full_model_name = f"{provider}/{resolved_name}"
+    model_key = f"{provider}/{resolved_name}"
 
     if provider == "openrouter":        
-        base_model = ChatOpenAI(
+        llm = ChatOpenAI(
             model=resolved_name,
             temperature=temperature,
             openai_api_base=settings.OPENAI_BASE_URL,
             api_key=settings.OPENAI_API_KEY,
-            max_retries=1,
+            max_retries=1            
         )
-        return RateLimitedChatModel(base_model, None, full_model_name)
+        return _attach_global_llm_limits(llm, model_key=model_key)
 
-    base_model = ChatGoogleGenerativeAI(
+    llm = ChatGoogleGenerativeAI(
         model=resolved_name,
         temperature=temperature,
         project=settings.GCP_PROJECT,
         vertexai=True,
         max_retries=1,
-        location='global'
+        location='global'        
     )
-    return RateLimitedChatModel(base_model, None, full_model_name)
+    return _attach_global_llm_limits(llm, model_key=model_key)
+
+
+def _extract_completion_tokens_hint(kwargs: dict) -> int | None:
+    # Common conventions across providers / wrappers.
+    for k in ("max_output_tokens", "max_tokens", "max_completion_tokens"):
+        v = kwargs.get(k)
+        if v is None:
+            continue
+        try:
+            return int(v)
+        except Exception:
+            return None
+    return None
+
+
+def _mark_wrapped(obj: Any) -> bool:
+    """
+    Return True if we successfully marked the object as wrapped.
+    If attribute setting is blocked, we still proceed without the marker (best effort).
+    """
+    try:
+        if getattr(obj, "__conthunt_rl_wrapped__", False):
+            return True
+        setattr(obj, "__conthunt_rl_wrapped__", True)
+        return True
+    except Exception:
+        try:
+            if getattr(obj, "__conthunt_rl_wrapped__", False):
+                return True
+        except Exception:
+            pass
+        return False
+
+
+def _attach_global_llm_limits(obj: Any, *, model_key: str):
+    """
+    Attach per-model global rate limiting to the runnable/model instance.
+
+    We wrap instance methods (ainvoke/astream + bind_tools/with_structured_output)
+    so downstream transformations keep the limiter.
+    """
+    if obj is None:
+        return obj
+
+    # Avoid double wrapping when possible.
+    try:
+        if getattr(obj, "__conthunt_rl_wrapped__", False):
+            return obj
+    except Exception:
+        pass
+
+    _mark_wrapped(obj)
+
+    # Wrap async invoke
+    if hasattr(obj, "ainvoke"):
+        orig_ainvoke = getattr(obj, "ainvoke")
+
+        @wraps(orig_ainvoke)
+        async def _ainvoke_limited(input, *args, **kwargs):
+            hint = _extract_completion_tokens_hint(kwargs)
+            await enforce_model_global_limits(model_key=model_key, messages=input, completion_tokens_hint=hint)
+            return await orig_ainvoke(input, *args, **kwargs)
+
+        try:
+            setattr(obj, "ainvoke", _ainvoke_limited)
+        except Exception:
+            pass
+
+    # Wrap async stream
+    if hasattr(obj, "astream"):
+        orig_astream = getattr(obj, "astream")
+
+        @wraps(orig_astream)
+        async def _astream_limited(input, *args, **kwargs):
+            hint = _extract_completion_tokens_hint(kwargs)
+            await enforce_model_global_limits(model_key=model_key, messages=input, completion_tokens_hint=hint)
+            async for chunk in orig_astream(input, *args, **kwargs):
+                yield chunk
+
+        try:
+            setattr(obj, "astream", _astream_limited)
+        except Exception:
+            pass
+
+    # Preserve wrapper across common LangChain transformations.
+    for method_name in ("bind_tools", "with_structured_output"):
+        if not hasattr(obj, method_name):
+            continue
+        orig = getattr(obj, method_name)
+
+        @wraps(orig)
+        def _wrapped(*args, __orig=orig, **kwargs):
+            res = __orig(*args, **kwargs)
+            return _attach_global_llm_limits(res, model_key=model_key)
+
+        try:
+            setattr(obj, method_name, _wrapped)
+        except Exception:
+            pass
+
+    return obj
 
 
 def get_model_provider(model_name: str | None) -> str:

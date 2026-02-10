@@ -7,6 +7,7 @@ import { auth } from '@/lib/firebaseClient';
 import { useChatStore, Chat, ChatMessage, ChatTagPayload } from '@/lib/chatStore';
 import type { PlatformInputs } from '@/lib/clientFilters';
 import { BACKEND_URL, authFetch } from '@/lib/api';
+import { transformSearchResults } from '@/lib/transformers';
 
 async function waitForAuth() {
     return new Promise<typeof auth.currentUser>((resolve) => {
@@ -418,6 +419,7 @@ export function useSendMessage() {
                                 useChatStore.setState(state => ({
                                     streamingTools: [...state.streamingTools, {
                                         name: data.tool,
+                                        runId: data.run_id,
                                         input: data.input,
                                         hasResult: false,
                                         isStreaming: true
@@ -428,14 +430,20 @@ export function useSendMessage() {
                                 // Update matching tool in streaming tools with result
                                 useChatStore.setState(state => {
                                     const tools = [...state.streamingTools];
-                                    // Find last tool with matching name that doesn't have result
-                                    // We create a reversed COPY to find index, so we don't mutate 'tools'
-                                    const reversedTools = [...tools].reverse();
-                                    const index = reversedTools.findIndex(t => t.name === data.tool && !t.hasResult);
+                                    // Prefer run_id match (stable), fallback to last tool with matching name.
+                                    let realIndex = -1;
+                                    if (data.run_id) {
+                                        realIndex = tools.findIndex(t => t.runId === data.run_id);
+                                    }
+                                    if (realIndex === -1) {
+                                        const reversedTools = [...tools].reverse();
+                                        const index = reversedTools.findIndex(t => t.name === data.tool && !t.hasResult);
+                                        if (index !== -1) {
+                                            realIndex = tools.length - 1 - index;
+                                        }
+                                    }
 
-                                    if (index !== -1) {
-                                        // Calculate index in original array
-                                        const realIndex = tools.length - 1 - index;
+                                    if (realIndex !== -1) {
                                         tools[realIndex] = {
                                             ...tools[realIndex],
                                             hasResult: true,
@@ -513,6 +521,10 @@ export function useSendMessage() {
                             case 'chosen_videos':
                                 if (Array.isArray(data.ids)) {
                                     useChatStore.getState().setChosenVideoIds(data.ids);
+                                }
+                                if (Array.isArray(data.items)) {
+                                    const transformed = transformSearchResults(data.items);
+                                    useChatStore.getState().appendDeepResearchResults(transformed);
                                 }
                                 break;
                             case 'done':

@@ -84,6 +84,7 @@ from app.db.queries.content import (
     get_video_media_asset_for_content_item,
     get_media_asset_by_id,
     get_media_asset_with_content,
+    get_search_result_items_for_media_asset_ids,
 )
 
 # User queries

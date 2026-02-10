@@ -6,13 +6,32 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # Database
+    APP_ENV: str
     DATABASE_URL: str
     DB_SCHEMA: str = "conthunt"
+    # PgBouncer transaction pooling requires avoiding per-session state and prepared statement caches.
+    # Values: "session" or "transaction"
+    DB_PGBOUNCER_MODE: str = "session"
+    # If true, disable SQLAlchemy pooling and rely on PgBouncer for pooling/multiplexing.
+    # This avoids app-side QueuePool timeouts under high concurrency (e.g., deep research fanout).
+    DB_USE_NULLPOOL: bool = True
+    # Global DB backpressure (Redis ZSET + Lua). Fail-open by design if Redis is down.
+    DB_SEMAPHORE_ENABLED: bool = True
+    DB_SEM_KEY_PREFIX: str = "sem:db"
+    DB_SEM_TTL_MS: int = 10_000
+    DB_SEM_API_LIMIT: int = 7
+    DB_SEM_TASKS_LIMIT: int = 13
+    # Wait budgets for acquiring a DB slot. Keep these large enough to queue under burst
+    # instead of failing fast with 429/503.
+    DB_SEM_API_MAX_WAIT_MS: int = 5_000
+    DB_SEM_TASKS_MAX_WAIT_MS: int = 20_000
+    # Cloud Run can scale horizontally; keep per-instance pools small to avoid exceeding
+    # Cloud SQL connection caps when max instances are active.
     DB_POOL_SIZE: int = 5
-    DB_MAX_OVERFLOW: int = 5
-    DB_POOL_TIMEOUT: int = 30
+    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_TIMEOUT: int = 10
     LOG_LEVEL: str = "DEBUG"
-
+    
     # GCP / Firebase
     GCLOUD_PROJECT: str = "conthunt-dev"
     GCP_PROJECT: str = "conthunt-dev"
@@ -35,8 +54,10 @@ class Settings(BaseSettings):
     QUEUE_CHAT_STREAM: str = "chat-stream-queue"
 
     # Deep research tuning
-    DEEP_RESEARCH_BATCH_SIZE: int = 50
-    DEEP_RESEARCH_DB_CONCURRENCY: int = 5
+    DEEP_RESEARCH_ANALYSIS_CONCURRENCY: int = 10
+    DEEP_RESEARCH_SEARCH_CONCURRENCY: int = 5
+    DEEP_RESEARCH_MODEL: str = "openrouter/google/gemini-3-flash-preview"
+    LANGGRAPH_RECURSION_LIMIT: int = 100
 
     # ScrapeCreators API
     SCRAPECREATORS_API_KEY: str
@@ -46,11 +67,9 @@ class Settings(BaseSettings):
     GCS_BUCKET_RAW: str = "conthunt-dev-raw"
     GCS_BUCKET_MEDIA: str = "conthunt-dev-media"
     GCS_DEEPAGNT_FS: str = "conthunt-dev-deepagent-fs"
-
-    # Cloud CDN
-    CDN_SIGNING_KEY_NAME: str = "my-cdn-signing-key"
-    CDN_SIGNING_KEY_VALUE: str = ""
-    CDN_URL_PREFIX: str = "http://34.120.120.120/" # Placeholder, user must set in env
+    # Local signing only: absolute path to a service account JSON key file.
+    # Example (Cloud Run secret mount): /secrets/gcs_signer.json
+    GCS_SIGNER_KEY_PATH: str = ""
 
     # Media download behavior
     MEDIA_DOWNLOAD_ENABLED: bool = True
@@ -64,7 +83,6 @@ class Settings(BaseSettings):
     # TwelveLabs Video Analysis
     TWELVELABS_API_KEY: str = ""
     TWELVELABS_INDEX_ID: str = "" # Static Index ID
-    TWELVELABS_DEFAULT_INDEX_NAME: str = "conthunt-videos"
     TWELVELABS_UPLOAD_TIMEOUT: int = 120  # seconds
     TWELVELABS_INDEX_TIMEOUT: int = 180  # seconds
 
@@ -75,11 +93,35 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
     REDIS_MAX_CONNECTIONS: int = 15  # 15 × 2 instances = 30 (free tier limit)
-    LLM_GATEWAY_DEBUG: bool = False
+
+    # Redis Streams (SSE replay buffer)
+    # These are for "live-ish" updates only; DB remains the durable source of truth.
+    REDIS_STREAM_TTL_S_CHAT: int = 60 * 60  # 1 hour
+    REDIS_STREAM_TTL_S_SEARCH: int = 60 * 60  # 1 hour
+    REDIS_STREAM_MAXLEN_CHAT: int = 10_000
+    REDIS_STREAM_MAXLEN_SEARCH: int = 5_000
+    REDIS_STREAM_MAXLEN_SEARCH_MORE: int = 5_000
 
     # Openrouter
     OPENAI_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENAI_API_KEY: str = ""
+
+    # LLM rate limits (per model, global across instances)
+    # Provider hard-limits are per model; keys are derived from canonical `provider/resolved_name`.
+    LLM_MODEL_GLOBAL_RPM: int = 1000
+    LLM_MODEL_GLOBAL_TPM: int = 1_000_000
+    LLM_MODEL_GLOBAL_RPD: int = 10_000
+    # Must be >= worst-case estimated tokens for a single call, otherwise large calls can never pass.
+    LLM_MODEL_GLOBAL_TPM_BURST: int = 200_000
+
+    # Wait budgets for wait-and-retry smoothing.
+    LLM_LIMIT_TIMEOUT_START_INTERACTIVE_S: float = 5.0
+    LLM_LIMIT_TIMEOUT_TOKENS_INTERACTIVE_S: float = 5.0
+    LLM_LIMIT_TIMEOUT_START_BACKGROUND_S: float = 30.0
+    LLM_LIMIT_TIMEOUT_TOKENS_BACKGROUND_S: float = 30.0
+
+    # Token estimation (fallback when callers don't provide max tokens).
+    LLM_EST_COMPLETION_TOKENS_DEFAULT: int = 1024
 
     # OpenTelemetry
     OTEL_SERVICE_NAME: str = ""

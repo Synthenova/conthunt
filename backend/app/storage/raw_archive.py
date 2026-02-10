@@ -11,6 +11,7 @@ async def upload_raw_json_gz(
     platform: str,
     search_id: UUID,
     raw_json: dict,
+    key_override: str | None = None,
 ) -> Optional[str]:
     """
     Upload raw API response as gzipped JSON to GCS.
@@ -25,8 +26,11 @@ async def upload_raw_json_gz(
         logger.debug(f"Raw upload disabled, skipping for search {search_id}")
         return None
     
-    now = datetime.utcnow()
-    key = f"raw/{platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
+    if key_override:
+        key = key_override
+    else:
+        now = datetime.utcnow()
+        key = f"raw/{platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
     
     try:
         uri = await async_gcs_client.upload_json_gz(
@@ -46,6 +50,7 @@ async def upload_raw_compressed(
     platform: str,
     search_id: UUID,
     compressed_data: bytes,
+    key_override: str | None = None,
 ) -> Optional[str]:
     """
     Upload already-compressed gzip data to GCS.
@@ -60,8 +65,11 @@ async def upload_raw_compressed(
         logger.debug(f"Raw upload disabled, skipping for search {search_id}")
         return None
     
-    now = datetime.utcnow()
-    key = f"raw/{platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
+    if key_override:
+        key = key_override
+    else:
+        now = datetime.utcnow()
+        key = f"raw/{platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
     
     try:
         uri = await async_gcs_client.upload_compressed_gz(

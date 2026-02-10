@@ -1,0 +1,68 @@
+services:
+  postgres:
+    # Match pg_dump "Dumped from database version 17.x" baselines.
+    image: postgres:17
+    container_name: conthunt-postgres
+    environment:
+      POSTGRES_USER: conthunt_service
+      POSTGRES_PASSWORD: conthunt_local
+      POSTGRES_DB: postgres
+      # Force MD5 auth so PgBouncer's md5 auth works (matches many Cloud SQL setups).
+      POSTGRES_INITDB_ARGS: --auth-host=md5 --auth-local=trust
+    # "Realistic enough" constraints: coarse caps to resemble your Cloud SQL shape.
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - password_encryption=md5
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conthunt_service -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    # Cloud SQL: 1 vCPU, ~628MB
+    cpus: "1.0"
+    mem_limit: 628m
+
+  pgbouncer:
+    build:
+      context: ./pgbouncer
+      dockerfile: Dockerfile
+    container_name: conthunt-pgbouncer
+    user: pgbouncer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6432:6432"
+    volumes:
+      - ./pgbouncer/pgbouncer.docker.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.docker.txt:/etc/pgbouncer/userlist.txt:ro
+    # PgBouncer VM: e2-micro (2 vCPU, 1GB)
+    cpus: "2.0"
+    mem_limit: 1g
+
+  migrate:
+    image: python:3.12-slim
+    profiles: ["tools"]
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    environment:
+      # Run migrations directly against Postgres (not through PgBouncer).
+      DATABASE_URL: postgresql+psycopg://conthunt_service:conthunt_local@postgres:5432/postgres
+      DB_SCHEMA: conthunt
+    depends_on:
+      - postgres
+    entrypoint: ["bash", "-lc"]
+    command: ["pip install -r requirements.migrations.txt && alembic upgrade head"]

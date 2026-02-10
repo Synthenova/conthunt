@@ -5,6 +5,7 @@ FastAPI application with multi-platform content search,
 Cloud SQL storage, and GCS media archival.
 """
 from contextlib import asynccontextmanager
+import math
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,14 @@ from app.db import init_db, close_db
 from app.realtime.stream_hub import StreamFanoutHub
 from app.api import v1_router
 from app.agent.runtime import create_agent_graph
-from app.llm.gateway import init_gateway
+from app.db.db_semaphore import (
+    DBSemaphore,
+    SemaphoreConfig,
+    db_kind_override,
+    set_global_db_semaphore,
+)
+from app.llm.global_rate_limiter import LlmRateLimited
+
 
 setup_logging(get_log_level())
 settings = get_settings()
@@ -45,10 +53,41 @@ async def lifespan(app: FastAPI):
         app.state.redis = redis.Redis(connection_pool=redis_pool)
         max_conn = getattr(app.state.redis.connection_pool, "max_connections", None)
         logger.info("Redis client initialized (max_connections=%s)", max_conn)
-        init_gateway(app.state.redis)
+
+        # Initialize global DB semaphore (fail-open if anything goes wrong).
+        if getattr(settings, "DB_SEMAPHORE_ENABLED", False):
+            try:
+                cfg = SemaphoreConfig(
+                    app_env=settings.APP_ENV,
+                    key_prefix=settings.DB_SEM_KEY_PREFIX,
+                    ttl_ms=settings.DB_SEM_TTL_MS,
+                    api_limit=settings.DB_SEM_API_LIMIT,
+                    tasks_limit=settings.DB_SEM_TASKS_LIMIT,
+                )
+                sem = DBSemaphore(app.state.redis, cfg)
+                await sem.init()
+                app.state.db_semaphore = sem
+                set_global_db_semaphore(sem)
+                logger.info(
+                    "DB semaphore enabled (env=%s api_limit=%s tasks_limit=%s ttl_ms=%s)",
+                    settings.APP_ENV,
+                    settings.DB_SEM_API_LIMIT,
+                    settings.DB_SEM_TASKS_LIMIT,
+                    settings.DB_SEM_TTL_MS,
+                )
+            except Exception as exc:
+                logger.warning("DB semaphore init failed (fail-open): %s", exc, exc_info=True)
+                app.state.db_semaphore = None
+                set_global_db_semaphore(None)
+        else:
+            app.state.db_semaphore = None
+            set_global_db_semaphore(None)
+
         app.state.stream_hub = StreamFanoutHub(app.state.redis, logger)
         await app.state.stream_hub.start()
         logger.debug("Stream hub initialized")
+
+        # Centralized writer/outbox removed.
         
         # Initialize agent graph with Postgres checkpointer
         graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
@@ -87,6 +126,36 @@ app = FastAPI(
 )
 
 setup_telemetry(app)
+
+
+@app.exception_handler(LlmRateLimited)
+async def _llm_rate_limited_handler(request, exc: LlmRateLimited):
+    from fastapi.responses import JSONResponse
+
+    headers: dict[str, str] = {}
+    if exc.retry_after_s is not None:
+        try:
+            headers["Retry-After"] = str(int(math.ceil(float(exc.retry_after_s))))
+        except Exception:
+            pass
+
+    return JSONResponse(
+        status_code=429,
+        headers=headers,
+        content={
+            "error": "LLM_RATE_LIMITED",
+            "kind": exc.kind,
+            "model": exc.model_key,
+            "route": exc.route,
+        },
+    )
+
+# Middleware: mark DB work as "tasks" for /v1/tasks/*, else "api".
+@app.middleware("http")
+async def _db_kind_middleware(request, call_next):
+    kind = "tasks" if request.url.path.startswith("/v1/tasks/") else "api"
+    with db_kind_override(kind):
+        return await call_next(request)
 
 # Honor X-Forwarded-* headers from Cloud Run so redirects keep HTTPS.
 # app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")

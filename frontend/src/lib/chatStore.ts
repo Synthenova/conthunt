@@ -3,6 +3,7 @@ import type { ClientFilters } from '@/lib/clientFilters';
 
 export interface ToolCallInfo {
     name: string;
+    runId?: string;
     input?: Record<string, unknown>;
     hasResult: boolean;
     result?: string;
@@ -84,12 +85,15 @@ interface ChatState {
     userMessageId: string | null;
     streamingTools: ToolCallInfo[];
     chosenVideoIds: string[];
+    deepResearchResults: any[]; // FlatMediaItem[] (kept untyped here)
 
     // Streaming actions
     startStreaming: () => void;
     appendDelta: (content: string, messageId?: string) => void;
     setStreamingTools: (tools: ToolCallInfo[]) => void;
     setChosenVideoIds: (ids: string[]) => void;
+    appendDeepResearchResults: (items: any[]) => void;
+    clearDeepResearchResults: () => void;
     setUserMessageId: (id: string) => void;
     finalizeMessage: () => void;
     resetStreaming: () => void;
@@ -170,6 +174,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             canvasSearchKeywords: {},
             isNewChatPending: false,
             pendingNewChatTags: [],
+            deepResearchResults: [],
         };
     }),
     resetToNewChat: (options) => set({
@@ -180,6 +185,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         canvasSearchKeywords: {},
         isNewChatPending: true,
         pendingNewChatTags: options?.pendingTags || [],
+        deepResearchResults: [],
     }),
     pendingNewChatTags: [],
 
@@ -202,6 +208,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     userMessageId: null,
     streamingTools: [],
     chosenVideoIds: [],
+    deepResearchResults: [],
 
     // Streaming actions
     startStreaming: () => set({
@@ -218,6 +225,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
     setStreamingTools: (tools) => set({ streamingTools: tools }),
     setChosenVideoIds: (ids) => set({ chosenVideoIds: ids }),
+    appendDeepResearchResults: (items) => set((state) => {
+        const prev = state.deepResearchResults || [];
+        const next = [...prev];
+        const seen = new Set(next.map((x: any) => x?.id).filter(Boolean));
+        (items || []).forEach((it: any) => {
+            const id = it?.id;
+            if (!id || seen.has(id)) return;
+            seen.add(id);
+            next.push(it);
+        });
+        return { deepResearchResults: next };
+    }),
+    clearDeepResearchResults: () => set({ deepResearchResults: [] }),
     setUserMessageId: (id) => set({ userMessageId: id }),
     finalizeMessage: () => {
         const state = get();

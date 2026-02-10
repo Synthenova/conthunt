@@ -13,8 +13,6 @@ from app.agent.model_factory import (
     init_chat_model,
     normalize_messages_for_provider,
 )
-from app.llm.rate_limited_model import RateLimitedChatModel
-from langchain_core.runnables.base import Runnable
 from app.agent.tools import (
     get_video_analysis,
     get_board_items,
@@ -107,30 +105,13 @@ async def call_model(state: MessagesState, config: RunnableConfig):
     
     messages = normalize_messages_for_provider(messages, model_name)
     model = llm.bind_tools(tools)
-
-    class _RateLimitedRunnable(Runnable):
-        def __init__(self, inner: RateLimitedChatModel):
-            self.inner = inner
-
-        def invoke(self, input, config=None):
-            raise RuntimeError("Sync invoke not supported for RateLimitedChatModel")
-
-        async def ainvoke(self, input, config=None):
-            return await self.inner.ainvoke(input, config=config)
-
-        async def astream(self, input, config=None):
-            async for chunk in self.inner.astream(input, config=config):
-                yield chunk
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         MessagesPlaceholder(variable_name="messages"),
     ])
     
-    if isinstance(model, RateLimitedChatModel):
-        chain = prompt | _RateLimitedRunnable(model)
-    else:
-        chain = prompt | model
+    chain = prompt | model
     response = await chain.ainvoke({"messages": messages}, config=config)
     return {"messages": [response]}
 

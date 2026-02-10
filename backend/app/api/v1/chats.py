@@ -44,6 +44,93 @@ from app.realtime.stream_hub import stream_id_gt
 router = APIRouter()
 settings = get_settings()
 
+def _is_terminal_payload(payload_str: str | None) -> bool:
+    if not payload_str:
+        return False
+    # Chat stream producers send {"type":"done"} and {"type":"error", ...}
+    return ('"type": "done"' in payload_str) or ('"type": "error"' in payload_str)
+
+def _jsonable(obj):
+    """
+    Best-effort conversion of LangGraph/LangChain objects to JSON-safe primitives.
+    This is for debug/inspection streaming (deep research mode), not persistence.
+    """
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, dict):
+        return {str(k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_jsonable(v) for v in obj]
+
+    # Pydantic v2
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return _jsonable(model_dump())
+        except Exception:
+            pass
+
+    # Pydantic v1
+    as_dict = getattr(obj, "dict", None)
+    if callable(as_dict):
+        try:
+            return _jsonable(as_dict())
+        except Exception:
+            pass
+
+    # LangChain message-ish objects (AIMessageChunk, ToolMessage, etc.)
+    if hasattr(obj, "content") or hasattr(obj, "tool_calls"):
+        out = {}
+        for key in (
+            "type",
+            "id",
+            "name",
+            "content",
+            "tool_calls",
+            "additional_kwargs",
+            "response_metadata",
+            "usage_metadata",
+        ):
+            if hasattr(obj, key):
+                try:
+                    out[key] = _jsonable(getattr(obj, key))
+                except Exception:
+                    out[key] = None
+        if out:
+            return out
+
+    try:
+        return str(obj)
+    except Exception:
+        return repr(obj)
+
+
+def _langgraph_event_payload(ev: dict) -> dict:
+    """Normalized "raw" LangGraph event payload for frontend inspection."""
+    data = ev.get("data", {}) or {}
+    if ev.get("event") == "on_chat_model_stream":
+        chunk = data.get("chunk")
+        if chunk is not None:
+            data = dict(data)
+            data["chunk"] = _jsonable(chunk)
+
+    return {
+        "type": "deep_event",
+        "event": ev.get("event"),
+        "name": ev.get("name"),
+        "run_id": ev.get("run_id"),
+        "parent_run_id": ev.get("parent_run_id"),
+        "tags": _jsonable(ev.get("tags")),
+        "metadata": _jsonable(ev.get("metadata") or {}),
+        "data": _jsonable(data),
+    }
+
 class UpsertChatTagsRequest(BaseModel):
     tags: List[ChatTag]
 
@@ -164,6 +251,7 @@ async def stream_generator_to_redis(
     
     r = redis_client
     stream_key = f"chat:{chat_id}:stream"
+    stream_maxlen = settings.REDIS_STREAM_MAXLEN_CHAT
 
     try:
         deep_research_enabled = bool((filters or {}).get("deep_research_enabled"))
@@ -185,6 +273,7 @@ async def stream_generator_to_redis(
                 "user_id": user_id,
                 "llm_route": llm_route,
             },
+            "recursion_limit": settings.LANGGRAPH_RECURSION_LIMIT,
         }
         # Runtime context for deep agent (passed separately, not inside config)
         runtime_context = {"chat_id": chat_id}
@@ -205,22 +294,52 @@ async def stream_generator_to_redis(
                     "content": content_buffer,
                     "id": current_msg_id
                 }
-                await r.xadd(stream_key, {"data": json.dumps(payload, default=str)})
+                await r.xadd(
+                    stream_key,
+                    {"data": json.dumps(payload, default=str)},
+                    maxlen=stream_maxlen,
+                    approximate=True,
+                )
                 content_buffer = ""
         
         logger.info(f"Starting graph.astream_events for chat {chat_id}")
         with set_llm_context(user_id=user_id, route=llm_route):
             async for ev in graph_to_use.astream_events(inputs, config=config, context=runtime_context, version="v2"):
-                # logger.info(f"Event received: {ev.get('event')}")
-
                 ev_type = ev.get("event")
                 data = ev.get("data", {}) or {}
                 run_id = ev.get("run_id")
                 parent_run_id = ev.get("parent_run_id")
                 metadata = ev.get("metadata") or {}
                 langgraph_node = metadata.get("langgraph_node")
+                lc_agent_name = metadata.get("lc_agent_name")
+                is_tool_internal = (parent_run_id in tool_run_ids) or (langgraph_node == "tools")
                 
                 payload = None
+
+                # Deep research: emit all graph events (including deltas) for UI inspection,
+                # except tool-internal child runs (e.g. LLM calls inside tools).
+                # Also: do not emit subagent events (searcher, etc.) to Redis.
+                if (
+                    deep_research_enabled
+                    and not is_tool_internal
+                    and (not lc_agent_name or lc_agent_name == "orchestrator")
+                ):
+                    # Log the full event as single-line JSON for inspection.
+                    try:
+                        logger.info(
+                            "Event received: %s %s",
+                            ev_type,
+                            json.dumps(_jsonable(ev), ensure_ascii=False, separators=(",", ":")),
+                        )
+                    except Exception:
+                        logger.info("Event received: %s %s", ev_type, str(ev))
+
+                    await r.xadd(
+                        stream_key,
+                        {"data": json.dumps(_langgraph_event_payload(ev), ensure_ascii=False)},
+                        maxlen=stream_maxlen,
+                        approximate=True,
+                    )
                 
                 if ev_type == "on_chain_start":
                     # ... existing code ...
@@ -228,10 +347,16 @@ async def stream_generator_to_redis(
 
                 elif ev_type == "on_chat_model_stream":
                     # Only forward assistant model streams, not tool-internal LLM runs.
-                    if parent_run_id in tool_run_ids:                    
+                    if is_tool_internal:
                         continue
-                    if langgraph_node and langgraph_node != "agent":                    
+                    # Deep research: only stream orchestrator text (no subagent streaming).
+                    if deep_research_enabled and lc_agent_name and lc_agent_name != "orchestrator":
                         continue
+                    # Normal graph uses `langgraph_node=agent`; deep research graphs often emit from `model`.
+                    # We still rely on tool_run_ids to skip tool-internal streams.
+                    if not deep_research_enabled:
+                        if langgraph_node and langgraph_node != "agent":
+                            continue
                     chunk = data.get("chunk")
                     if chunk:
                         # chunk might be an AIMessageChunk object
@@ -308,35 +433,57 @@ async def stream_generator_to_redis(
 
                     if ev.get("name") == "report_chosen_videos":
                         chosen_ids = []
+                        chosen_items = None
                         try:
                             if isinstance(final_output, dict):
                                 chosen_ids = final_output.get("chosen_video_ids") or []
+                                chosen_items = final_output.get("items")
                             elif hasattr(final_output, "get"):
                                 chosen_ids = final_output.get("chosen_video_ids") or []
+                                chosen_items = final_output.get("items")
                             elif isinstance(final_output, str):
                                 parsed = json.loads(final_output)
                                 chosen_ids = parsed.get("chosen_video_ids") or []
+                                chosen_items = parsed.get("items")
                         except Exception:
                             chosen_ids = []
+                            chosen_items = None
                         await r.xadd(
                             stream_key,
-                            {"data": json.dumps({"type": "chosen_videos", "ids": chosen_ids})},
+                            {"data": json.dumps({"type": "chosen_videos", "ids": chosen_ids, "items": chosen_items})},
+                            maxlen=stream_maxlen,
+                            approximate=True,
                         )
 
                 if payload:
-                    await r.xadd(stream_key, {"data": json.dumps(payload, default=str)})
+                    await r.xadd(
+                        stream_key,
+                        {"data": json.dumps(payload, default=str)},
+                        maxlen=stream_maxlen,
+                        approximate=True,
+                    )
 
         logger.info("Stream loop completed")
         # Flush any remaining buffered content before sending done
         await flush_buffer()
-        await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
+        await r.xadd(
+            stream_key,
+            {"data": json.dumps({"type": "done"})},
+            maxlen=stream_maxlen,
+            approximate=True,
+        )
 
     except Exception as e:
         logger.error(f"Background stream error for {chat_id}: {e}", exc_info=True)
-        await r.xadd(stream_key, {"data": json.dumps({"type": "error", "error": str(e)})})
+        await r.xadd(
+            stream_key,
+            {"data": json.dumps({"type": "error", "error": str(e)})},
+            maxlen=stream_maxlen,
+            approximate=True,
+        )
         
     finally:
-        await r.expire(stream_key, 60)
+        await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
         logger.info(f"Background stream finished for {chat_id}")
 
 
@@ -773,6 +920,41 @@ async def stream_chat(
     hub = getattr(request.app.state, "stream_hub", None)
 
     async def event_generator():
+        async def catch_up_from_redis(last_id: str):
+            """
+            Bounded catch-up for replay/resume: read forward in chunks using XREAD (non-blocking).
+            Avoid unbounded XRANGE min..+ scans.
+            """
+            nonlocal last_sent_id
+            cur = last_id or "0-0"
+            # Drain until the stream has no more entries after cur.
+            while True:
+                streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
+                if not streams:
+                    return
+                _, messages = streams[0]
+                if not messages:
+                    return
+                for msg_id, data_map in messages:
+                    payload_str = data_map.get("data")
+                    if payload_str is None:
+                        cur = msg_id
+                        last_sent_id = msg_id
+                        continue
+                    cur = msg_id
+                    last_sent_id = msg_id
+                    yield {
+                        "id": msg_id,
+                        "event": "message",
+                        "data": payload_str,
+                    }
+                    await asyncio.sleep(0)
+                    if _is_terminal_payload(payload_str):
+                        return
+                # If we got a full page, there might be more immediately available.
+                if len(messages) < 200:
+                    return
+
         if hub is None:
             logger.warning(
                 "Stream hub missing; SSE will use per-connection Redis XREAD. chat_id=%s",
@@ -781,6 +963,8 @@ async def stream_chat(
             last_id = last_event_id or "0-0"
             try:
                 while True:
+                    if await request.is_disconnected():
+                        return
                     streams = await redis_client.xread(
                         {stream_key: last_id},
                         count=50,
@@ -798,7 +982,11 @@ async def stream_chat(
                                 "event": "message",
                                 "data": payload_str,
                             }
-                            if payload_str and '"type": "done"' in payload_str:
+                            # Give the event loop a chance to flush each SSE event.
+                            # Without this, fast producers (or history replay) can be coalesced
+                            # into a single write, making events appear to arrive "all at once".
+                            await asyncio.sleep(0)
+                            if _is_terminal_payload(payload_str):
                                 return
             except asyncio.CancelledError:
                 pass
@@ -807,19 +995,10 @@ async def stream_chat(
         queue = await hub.subscribe(stream_key)
         last_sent_id = last_event_id or "0-0"
         try:
-            min_id = "-" if not last_event_id else f"({last_event_id}"
-            history = await redis_client.xrange(stream_key, min=min_id, max="+")
-            for msg_id, data_map in history:
-                payload_str = data_map.get("data")
-                if payload_str is None:
-                    continue
-                last_sent_id = msg_id
-                yield {
-                    "id": msg_id,
-                    "event": "message",
-                    "data": payload_str,
-                }
-                if payload_str and '"type": "done"' in payload_str:
+            # Catch up first (bounded) based on Last-Event-ID.
+            async for ev in catch_up_from_redis(last_sent_id):
+                yield ev
+                if _is_terminal_payload(ev.get("data")):
                     return
 
             while True:
@@ -827,6 +1006,11 @@ async def stream_chat(
                     msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
                 except asyncio.TimeoutError:
                     yield {"event": "ping", "data": ""}
+                    # Best-effort: also catch up from Redis on idle ticks (helps reconnect/replay).
+                    async for ev in catch_up_from_redis(last_sent_id):
+                        yield ev
+                        if _is_terminal_payload(ev.get("data")):
+                            return
                     continue
                 if not payload_str:
                     continue
@@ -838,14 +1022,23 @@ async def stream_chat(
                     "event": "message",
                     "data": payload_str,
                 }
-                if payload_str and '"type": "done"' in payload_str:
+                await asyncio.sleep(0)
+                if _is_terminal_payload(payload_str):
                     return
         except asyncio.CancelledError:
             pass
         finally:
             await hub.unsubscribe(stream_key, queue)
 
-    return EventSourceResponse(event_generator())
+    # Best-effort anti-buffer headers for common proxies/CDNs.
+    # (e.g. nginx respects X-Accel-Buffering; Cache-Control: no-transform helps prevent
+    # intermediaries from buffering/transcoding streaming responses.)
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return EventSourceResponse(event_generator(), headers=headers)
 
 
 @router.get("/{chat_id}/messages", response_model=ChatHistory)

@@ -71,19 +71,23 @@ async def create_board(
         return board
 
 
-@router.get("/search", response_model=List[BoardResponse])
-async def search_boards(
-    q: str,
-    user: dict = Depends(get_current_user),
-):
-    """Search global boards (by name or content)."""
-    user_uuid = user["db_user_id"]
-    if not user_uuid:
-        raise HTTPException(status_code=401, detail="Invalid user")
-
-    async with get_db_connection() as conn:
-        await set_rls_user(conn, user_uuid)
-        return await queries.search_user_boards(conn, user_uuid, q)
+#
+# NOTE: Text search endpoints are intentionally disabled for now.
+# The current web UI filters boards client-side and does not call these routes.
+#
+# @router.get("/search", response_model=List[BoardResponse])
+# async def search_boards(
+#     q: str,
+#     user: dict = Depends(get_current_user),
+# ):
+#     """Search global boards (by name or content)."""
+#     user_uuid = user["db_user_id"]
+#     if not user_uuid:
+#         raise HTTPException(status_code=401, detail="Invalid user")
+#
+#     async with get_db_connection() as conn:
+#         await set_rls_user(conn, user_uuid)
+#         return await queries.search_user_boards(conn, user_uuid, q)
 
 
 @router.get("/{board_id}", response_model=BoardResponse)
@@ -407,30 +411,31 @@ async def remove_item_from_board(
         await conn.commit()
 
 
-@router.get("/{board_id}/search", response_model=List[BoardItemResponse])
-async def search_in_board(
-    board_id: UUID,
-    q: str,
-    user: dict = Depends(get_current_user),
-):
-    """Search within a specific board."""
-    user_uuid = user["db_user_id"]
-    if not user_uuid:
-        raise HTTPException(status_code=401, detail="Invalid user")
-        
-    async with get_db_connection() as conn:
-        await set_rls_user(conn, user_uuid)
-        
-        board = await queries.get_board_by_id(conn, board_id)
-        if not board:
-            raise HTTPException(status_code=404, detail="Board not found")
-            
-        items = await queries.search_in_board(conn, board_id, q)
-        
-        # Sign URLs for stored assets
-        for item in items:
-            for asset in item.get("assets", []):
-                if asset.get("status") in ("stored", "downloaded") and asset.get("gcs_uri"):
-                    asset["source_url"] = generate_signed_url(asset["gcs_uri"])
-                    
-        return items
+#
+# @router.get("/{board_id}/search", response_model=List[BoardItemResponse])
+# async def search_in_board(
+#     board_id: UUID,
+#     q: str,
+#     user: dict = Depends(get_current_user),
+# ):
+#     """Search within a specific board."""
+#     user_uuid = user["db_user_id"]
+#     if not user_uuid:
+#         raise HTTPException(status_code=401, detail="Invalid user")
+#
+#     async with get_db_connection() as conn:
+#         await set_rls_user(conn, user_uuid)
+#
+#         board = await queries.get_board_by_id(conn, board_id)
+#         if not board:
+#             raise HTTPException(status_code=404, detail="Board not found")
+#
+#         items = await queries.search_in_board(conn, board_id, q)
+#
+#         # Sign URLs for stored assets
+#         for item in items:
+#             for asset in item.get("assets", []):
+#                 if asset.get("status") in ("stored", "downloaded") and asset.get("gcs_uri"):
+#                     asset["source_url"] = generate_signed_url(asset["gcs_uri"])
+#
+#         return items

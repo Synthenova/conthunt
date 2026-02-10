@@ -228,3 +228,149 @@ async def get_media_asset_with_content(
     }
 
 
+async def get_search_result_items_for_media_asset_ids(
+    conn: AsyncConnection,
+    media_asset_ids: list[UUID],
+) -> list[dict]:
+    """
+    Build "search result item" shaped objects for the given *video* media_asset_ids.
+    This is used to render Deep Research chosen videos in the same grid as search results.
+
+    Output shape matches what transformToMediaItem() expects:
+      { rank, content_item: {...}, assets: [...] }
+    """
+    if not media_asset_ids:
+        return []
+
+    # 1) Resolve content items for the given media assets (video assets).
+    res = await conn.execute(
+        text(
+            """
+            SELECT
+                ma.id              AS media_asset_id,
+                ma.content_item_id AS content_item_id,
+                ci.platform        AS platform,
+                ci.external_id     AS external_id,
+                ci.content_type    AS content_type,
+                ci.canonical_url   AS canonical_url,
+                ci.title           AS title,
+                ci.primary_text    AS primary_text,
+                ci.published_at    AS published_at,
+                ci.creator_handle  AS creator_handle,
+                ci.metrics         AS metrics
+            FROM media_assets ma
+            JOIN content_items ci ON ci.id = ma.content_item_id
+            WHERE ma.id = ANY(:media_asset_ids)
+            """
+        ),
+        {"media_asset_ids": media_asset_ids},
+    )
+    rows = res.fetchall()
+    if not rows:
+        return []
+
+    # Preserve input order (by media_asset_id), but aggregate by content_item_id.
+    video_asset_to_content: dict[str, str] = {}
+    content_by_id: dict[str, dict] = {}
+    ordered_content_ids: list[str] = []
+
+    for r in rows:
+        media_asset_id = str(r[0])
+        content_item_id = str(r[1])
+        video_asset_to_content[media_asset_id] = content_item_id
+        if content_item_id not in content_by_id:
+            content_by_id[content_item_id] = {
+                "id": content_item_id,
+                "platform": r[2],
+                "external_id": r[3],
+                "content_type": r[4],
+                "canonical_url": r[5],
+                "title": r[6],
+                "primary_text": r[7],
+                "published_at": r[8].isoformat() if r[8] else None,
+                "creator_handle": r[9],
+                "metrics": r[10] or {},
+            }
+            ordered_content_ids.append(content_item_id)
+
+    # 2) Load assets for those content items.
+    assets_res = await conn.execute(
+        text(
+            """
+            SELECT
+                id,
+                content_item_id,
+                asset_type,
+                status,
+                source_url,
+                gcs_uri
+            FROM media_assets
+            WHERE content_item_id = ANY(:content_item_ids)
+              AND asset_type IN ('video', 'cover', 'thumbnail', 'image')
+            """
+        ),
+        {"content_item_ids": [UUID(cid) for cid in ordered_content_ids]},
+    )
+    asset_rows = assets_res.fetchall()
+
+    assets_by_content: dict[str, list[dict]] = {cid: [] for cid in ordered_content_ids}
+    for a in asset_rows:
+        asset_id = str(a[0])
+        cid = str(a[1])
+        asset_type = a[2]
+        status = a[3]
+        source_url = a[4]
+        gcs_uri = a[5]
+        # If we only have GCS, provide a signed URL as source_url so the grid can render instantly.
+        if (not source_url) and gcs_uri:
+            try:
+                source_url = generate_signed_url(gcs_uri)
+            except Exception:
+                source_url = None
+
+        assets_by_content.setdefault(cid, []).append(
+            {
+                "id": asset_id,
+                "asset_type": asset_type,
+                "status": status,
+                "source_url": source_url,
+                "gcs_uri": gcs_uri,
+            }
+        )
+
+    # 3) Build result items. Prefer to place the chosen video asset first when possible.
+    def _asset_sort_key(asset: dict, preferred_video_asset_id: str | None) -> tuple[int, int]:
+        # video first, then cover, then others; preferred chosen video id first among videos
+        t = asset.get("asset_type")
+        order = 3
+        if t == "video":
+            order = 0
+        elif t == "cover":
+            order = 1
+        elif t == "thumbnail":
+            order = 2
+        pref = 1
+        if preferred_video_asset_id and asset.get("id") == preferred_video_asset_id:
+            pref = 0
+        return (order, pref)
+
+    out: list[dict] = []
+    for mid in [str(x) for x in media_asset_ids]:
+        cid = video_asset_to_content.get(mid)
+        if not cid:
+            continue
+        content = content_by_id.get(cid)
+        if not content:
+            continue
+        assets = assets_by_content.get(cid) or []
+        assets_sorted = sorted(assets, key=lambda a: _asset_sort_key(a, mid))
+        out.append(
+            {
+                "rank": 0,
+                "content_item": content,
+                "assets": assets_sorted,
+            }
+        )
+
+    return out
+

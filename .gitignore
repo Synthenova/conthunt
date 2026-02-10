@@ -85,5 +85,9 @@ agent/.langgraph_api
 
 backend/conthunt-dev-firebase-adminsdk-fbsvc-70fe27e306.json
 backend/.langgraph_api
-backend/langgraph-dev.log
+*.log
 docs/
+
+# Local Docker volumes
+docker/postgres-data/
+backend/gcs-url-signer.json

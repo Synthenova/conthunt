@@ -1,6 +1,7 @@
 """Credit-based usage tracking with monthly credit period resets."""
 import json
 from uuid import UUID
+from uuid import uuid4
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -8,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 from app.db.session import get_db_connection
 from app.db import set_rls_user
-from app.core import logger
+from app.core import logger, get_settings
 
 
 # Feature credit costs (hardcoded)
@@ -20,7 +21,7 @@ FEATURE_CREDITS = {
 
 # Role to monthly credits mapping (matches Dodo product metadata)
 ROLE_CREDITS = {
-    "free": 60,
+    "free": 1000 if get_settings().APP_ENV == "local" else 60,
     "creator": 1050,
     "pro_research": 3300,
 }
@@ -265,6 +266,7 @@ class CreditTracker:
             return period_start
 
         async def _check_with_conn(active_conn: AsyncConnection) -> dict:
+            settings = get_settings()
             await set_rls_user(active_conn, user_id)
             period_start = await _ensure_period_start(active_conn)
 

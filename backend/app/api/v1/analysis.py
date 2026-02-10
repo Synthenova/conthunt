@@ -36,6 +36,12 @@ router = APIRouter(tags=["video-analysis"])
 
 import json
 
+
+def _is_terminal_payload(payload_str: str | None) -> bool:
+    if not payload_str:
+        return False
+    return ('"type": "done"' in payload_str) or ('"type": "error"' in payload_str)
+
 # Initialize Gemini Model
 llm = init_chat_model("google/gemini-2.5-flash-lite-preview-09-2025", temperature=0.7)
 
@@ -61,8 +67,13 @@ async def _publish_analysis_event(
     try:
         redis_client = get_global_redis()
         stream_key = f"analysis:{chat_id}:stream"
-        await redis_client.xadd(stream_key, {"data": json.dumps(payload)})
-        await redis_client.expire(stream_key, 300)
+        await redis_client.xadd(
+            stream_key,
+            {"data": json.dumps(payload)},
+            maxlen=settings.REDIS_STREAM_MAXLEN_SEARCH,
+            approximate=True,
+        )
+        await redis_client.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
     except Exception as exc:
         logger.warning("[ANALYSIS] Failed to publish analysis event: %s", exc)
 
@@ -84,7 +95,7 @@ async def _execute_gemini_analysis(
     
     start_time = time.time()
     logger.info(f"[ANALYSIS] Starting background task for media_asset_id={media_asset_id}, analysis_id={analysis_id}")
-    logger.info(f"[ANALYSIS] Video URI: {video_uri}")
+    logger.info(f"[ANALYSIS] Video URI: {video_uri[:100]}...")
     
     try:
         # 1. Build Message with prompt
@@ -105,7 +116,7 @@ async def _execute_gemini_analysis(
         invoke_start = time.time()
 
         with set_llm_context(user_id=user_id, route="analysis.video"):
-            response = await llm.ainvoke([message])
+            response = await llm.ainvoke([message], **{"max_output_tokens": 4096})
         
         analysis_markdown = response.content
         invoke_duration = time.time() - invoke_start
@@ -135,7 +146,7 @@ async def _execute_gemini_analysis(
     
     except Exception as e:
         # Mark as failed so insights don't get stuck waiting
-        logger.error(f"[ANALYSIS] ❌ Failed analysis for media_asset {media_asset_id}: {e}")
+        logger.error(f"[ANALYSIS] ❌ Failed analysis for media_asset {media_asset_id} (URL: {video_uri}): {e}")
         logger.error(traceback.format_exc())
         try:
             async with get_db_connection() as conn:
@@ -143,7 +154,7 @@ async def _execute_gemini_analysis(
                     conn,
                     analysis_id=analysis_id,
                     status="failed",
-                    error=str(e),
+                    error=f"{e} (URL: {video_uri})",
                 )
                 await conn.commit()
             await _publish_analysis_event(
@@ -471,10 +482,39 @@ async def stream_analysis(
     redis_client = get_global_redis()
 
     async def event_generator():
+        async def catch_up_from_redis(last_id: str):
+            nonlocal last_sent_id
+            cur = last_id or "0-0"
+            while True:
+                streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
+                if not streams:
+                    return
+                _, messages = streams[0]
+                if not messages:
+                    return
+                for msg_id, data_map in messages:
+                    payload_str = data_map.get("data")
+                    cur = msg_id
+                    last_sent_id = msg_id
+                    if payload_str is None:
+                        continue
+                    yield {
+                        "id": msg_id,
+                        "event": "message",
+                        "data": payload_str,
+                    }
+                    await asyncio.sleep(0)
+                    if _is_terminal_payload(payload_str):
+                        return
+                if len(messages) < 200:
+                    return
+
         if hub is None:
-            last_id = "0-0"
+            last_id = last_event_id or "0-0"
             try:
                 while True:
+                    if await request.is_disconnected():
+                        return
                     streams = await redis_client.xread(
                         {stream_key: last_id},
                         count=50,
@@ -492,6 +532,9 @@ async def stream_analysis(
                                 "event": "message",
                                 "data": payload_str,
                             }
+                            await asyncio.sleep(0)
+                            if _is_terminal_payload(payload_str):
+                                return
             except asyncio.CancelledError:
                 pass
             return
@@ -499,24 +542,20 @@ async def stream_analysis(
         queue = await hub.subscribe(stream_key)
         last_sent_id = last_event_id or "0-0"
         try:
-            min_id = "-" if not last_event_id else f"({last_event_id}"
-            history = await redis_client.xrange(stream_key, min=min_id, max="+")
-            for msg_id, data_map in history:
-                payload_str = data_map.get("data")
-                if payload_str is None:
-                    continue
-                last_sent_id = msg_id
-                yield {
-                    "id": msg_id,
-                    "event": "message",
-                    "data": payload_str,
-                }
+            async for ev in catch_up_from_redis(last_sent_id):
+                yield ev
+                if _is_terminal_payload(ev.get("data")):
+                    return
 
             while True:
                 try:
                     msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
                 except asyncio.TimeoutError:
                     yield {"event": "ping", "data": ""}
+                    async for ev in catch_up_from_redis(last_sent_id):
+                        yield ev
+                        if _is_terminal_payload(ev.get("data")):
+                            return
                     continue
                 if not payload_str:
                     continue
@@ -528,9 +567,17 @@ async def stream_analysis(
                     "event": "message",
                     "data": payload_str,
                 }
+                await asyncio.sleep(0)
+                if _is_terminal_payload(payload_str):
+                    return
         except asyncio.CancelledError:
             pass
         finally:
             await hub.unsubscribe(stream_key, queue)
 
-    return EventSourceResponse(event_generator())
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return EventSourceResponse(event_generator(), headers=headers)

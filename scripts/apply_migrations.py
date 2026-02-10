@@ -4,6 +4,11 @@ import os
 import sys
 from pathlib import Path
 
+# NOTE: Deprecated.
+# Use Alembic instead:
+#   cd backend
+#   alembic upgrade head
+#
 # Configuration
 SQL_DIR = Path("backend/.sqls")
 # Default to local proxy if not set
@@ -52,8 +57,7 @@ async def apply_migrations(db_url):
             sql_content = f.read()
         
         try:
-            # Run each file in its own transaction? Or all in one?
-            # Usually strict migrations are one by one.
+            # Run each file in its own transaction.
             async with conn.transaction():
                 await conn.execute(sql_content)
             print("OK")

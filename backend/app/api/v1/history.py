@@ -1,4 +1,5 @@
 """History API endpoints - GET /v1/searches."""
+import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -15,7 +16,7 @@ from app.schemas import (
     ContentItemDetail,
     AssetDetail,
 )
-from app.services.cdn_signer import generate_signed_url
+from app.services.cdn_signer import bulk_sign_gcs_uris, should_sign_asset
 from app.platforms.registry import normalize_platform_slug
 
 
@@ -100,14 +101,35 @@ async def get_search_detail(
         if not search_data:
             raise HTTPException(status_code=404, detail="Search not found")
     
-    # Sign URLs for assets (this is CPU bound, fast)
+    # Single-hop requirement: return signed URLs directly.
+    uris_to_sign: list[str] = []
+    for r in search_data.get("results", []) or []:
+        for a in r.get("assets", []) or []:
+            if should_sign_asset(a):
+                uris_to_sign.append(a["gcs_uri"])
+
+    signed_cache: dict[str, str] = {}
+    try:
+        signed_cache = await bulk_sign_gcs_uris(uris_to_sign, expiration_seconds=3600, max_concurrency=25)
+    except Exception as e:
+        # Don't fail the entire response if signing fails; we'll fall back per-asset below.
+        logger.warning("Bulk signing failed for search_id=%s: %s", search_id, e)
+
     response_results = []
     for r in search_data.get("results", []):
         assets = []
         for a in r.get("assets", []):
             source_url = a.get("source_url")
-            if a.get("status") in ("stored", "downloaded") and a.get("gcs_uri"):
-                source_url = generate_signed_url(a["gcs_uri"])
+            if should_sign_asset(a):
+                try:
+                    source_url = signed_cache.get(a["gcs_uri"], source_url)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to sign asset gcs_uri for search_id=%s asset_id=%s: %s",
+                        search_id,
+                        a.get("id"),
+                        e,
+                    )
                 
             assets.append(AssetDetail(
                 id=a["id"],

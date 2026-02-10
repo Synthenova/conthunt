@@ -1,4 +1,5 @@
 
+import asyncio
 import json
 import time
 from google.cloud import tasks_v2
@@ -7,11 +8,17 @@ from google.protobuf import timestamp_pb2
 from app.core import get_settings, logger
 from app.core.telemetry import trace_span
 from app.db.session import get_db_connection
+from app.db.db_semaphore import db_kind_override
+
 
 class CloudTasksService:
     def __init__(self):
         self.settings = get_settings()
         self.client = tasks_v2.CloudTasksClient()
+        # Local-dev safety valve: when we run tasks via asyncio.create_task(), those
+        # tasks execute in-process and can fan out without any Cloud Tasks dispatch cap.
+        # Bound local media downloads regardless of priority/semaphore bypass.
+        self._local_media_download_sem = asyncio.Semaphore(2)
 
     def get_parent(self, queue_name: str) -> str:
         return self.client.queue_path(
@@ -33,7 +40,14 @@ class CloudTasksService:
         """
         if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:            
             import asyncio
-            asyncio.create_task(self._run_local_task(relative_uri, payload))
+            async def _run():
+                # Local task execution
+                # Ensure DB slots are charged against the "tasks" semaphore key, not the
+                # originating API request context.
+                with db_kind_override("tasks"):
+                    await self._run_local_task(relative_uri, payload)
+
+            asyncio.create_task(_run())
             return "local-task-id"
 
         url = f"{self.settings.API_BASE_URL}{relative_uri}"
@@ -173,13 +187,24 @@ class CloudTasksService:
             is_priority = payload.get("priority", False)
             async with httpx.AsyncClient(timeout=self.settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
                 try:
-                    await download_asset_with_claim(
-                        http_client=client,
-                        asset_id=asset_id,
-                        platform=payload["platform"],
-                        external_id=payload["external_id"],
-                        skip_semaphore=is_priority,
-                    )
+                    if is_priority:
+                        # Priority downloads should bypass local-dev caps (mirrors Cloud Tasks dispatch control).
+                        await download_asset_with_claim(
+                            http_client=client,
+                            asset_id=asset_id,
+                            platform=payload["platform"],
+                            external_id=payload["external_id"],
+                            skip_semaphore=True,
+                        )
+                    else:
+                        async with self._local_media_download_sem:
+                            await download_asset_with_claim(
+                                http_client=client,
+                                asset_id=asset_id,
+                                platform=payload["platform"],
+                                external_id=payload["external_id"],
+                                skip_semaphore=False,
+                            )
                 except Exception as e:
                     logger.error(f"[LOCAL] Media download failed: {e}", exc_info=True)
                     async with get_db_connection() as conn:
@@ -194,7 +219,8 @@ class CloudTasksService:
                 await upload_raw_compressed(
                     platform=payload["platform"],
                     search_id=UUID(payload["search_id"]),
-                    compressed_data=compressed_bytes
+                    compressed_data=compressed_bytes,
+                    key_override=payload.get("gcs_key"),
                 )
             except Exception as e:
                 logger.error(f"[LOCAL] Raw archive failed: {e}", exc_info=True)
@@ -304,11 +330,18 @@ class CloudTasksService:
                 try:
                     from app.main import app as main_app
                     redis_client = get_redis_from_state(main_app.state)
+                    from app.core import get_settings
+                    settings = get_settings()
                     await redis_client.xadd(
                         f"chat:{str(chat_id)}:stream",
                         {"data": json.dumps({"type": "error", "error": str(e)})},
+                        maxlen=settings.REDIS_STREAM_MAXLEN_CHAT,
+                        approximate=True,
                     )
-                    await redis_client.expire(f"chat:{str(chat_id)}:stream", 60)
+                    await redis_client.expire(
+                        f"chat:{str(chat_id)}:stream",
+                        settings.REDIS_STREAM_TTL_S_CHAT,
+                    )
                 except Exception as exc:
                     logger.warning("[LOCAL] Redis unavailable for chat error: %s", exc)
                 

@@ -128,30 +128,32 @@ export function ChatTabs({
                             )}
                         </span>
                         {/* X replaces end of text on hover */}
-                        <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                handleTabDelete(search.id);
-                            }}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
+                        {search.id !== "deep-research" && (
+                            <span
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => {
                                     e.stopPropagation();
                                     handleTabDelete(search.id);
-                                }
-                            }}
-                            className={cn(
-                                "absolute right-2 z-20 flex items-center justify-center cursor-pointer opacity-0 transition-opacity",
-                                hoveredTabId === search.id ? "opacity-100" : "opacity-0",
-                                activeSearchId === search.id
-                                    ? "text-white/70 hover:text-white"
-                                    : "text-gray-400 hover:text-white"
-                            )}
-                            aria-label={`Remove ${search.label}`}
-                        >
-                            <X size={12} />
-                        </span>
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.stopPropagation();
+                                        handleTabDelete(search.id);
+                                    }
+                                }}
+                                className={cn(
+                                    "absolute right-2 z-20 flex items-center justify-center cursor-pointer opacity-0 transition-opacity",
+                                    hoveredTabId === search.id ? "opacity-100" : "opacity-0",
+                                    activeSearchId === search.id
+                                        ? "text-white/70 hover:text-white"
+                                        : "text-gray-400 hover:text-white"
+                                )}
+                                aria-label={`Remove ${search.label}`}
+                            >
+                                <X size={12} />
+                            </span>
+                        )}
                     </button>
                 ))}
             </div>
