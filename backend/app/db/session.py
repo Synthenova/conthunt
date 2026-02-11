@@ -94,8 +94,17 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     fail_status = 503 if kind == "tasks" else 429
 
     if settings.DB_SEMAPHORE_ENABLED and sem is not None:
+        slot_cm = db_slot(sem, kind, max_wait_ms=max_wait_ms, fail_status=fail_status)
         try:
-            async with db_slot(sem, kind, max_wait_ms=max_wait_ms, fail_status=fail_status):
+            await slot_cm.__aenter__()
+        except Exception as exc:
+            # Busy is an HTTPException and should propagate.
+            if isinstance(exc, HTTPException):
+                raise
+            # Fail-open only for semaphore infrastructure errors.
+            logger.warning("DB semaphore error in get_db_session (fail-open): %s", exc, exc_info=True)
+        else:
+            try:
                 async with async_session_factory() as session:
                     try:
                         yield session
@@ -104,12 +113,11 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
                         await session.rollback()
                         raise
                 return
-        except Exception as exc:
-            # Fail-open only for Redis/semaphore errors; busy is an HTTPException and should propagate.
-            from fastapi import HTTPException
-            if isinstance(exc, HTTPException):
-                raise
-            logger.warning("DB semaphore error in get_db_session (fail-open): %s", exc, exc_info=True)
+            finally:
+                try:
+                    await slot_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
 
     async with async_session_factory() as session:
         try:
@@ -129,8 +137,15 @@ async def get_db_connection() -> AsyncGenerator[AsyncConnection, None]:
     fail_status = 503 if kind == "tasks" else 429
 
     if settings.DB_SEMAPHORE_ENABLED and sem is not None:
+        slot_cm = db_slot(sem, kind, max_wait_ms=max_wait_ms, fail_status=fail_status)
         try:
-            async with db_slot(sem, kind, max_wait_ms=max_wait_ms, fail_status=fail_status):
+            await slot_cm.__aenter__()
+        except Exception as exc:
+            if isinstance(exc, HTTPException):
+                raise
+            logger.warning("DB semaphore error in get_db_connection (fail-open): %s", exc, exc_info=True)
+        else:
+            try:
                 async with engine.connect() as conn:
                     await conn.execute(text(f"SET search_path TO {settings.DB_SCHEMA}, public"))
                     try:
@@ -140,11 +155,11 @@ async def get_db_connection() -> AsyncGenerator[AsyncConnection, None]:
                         await conn.rollback()
                         raise
                 return
-        except Exception as exc:
-            from fastapi import HTTPException
-            if isinstance(exc, HTTPException):
-                raise
-            logger.warning("DB semaphore error in get_db_connection (fail-open): %s", exc, exc_info=True)
+            finally:
+                try:
+                    await slot_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
 
     async with engine.connect() as conn:
         await conn.execute(text(f"SET search_path TO {settings.DB_SCHEMA}, public"))

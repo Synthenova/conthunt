@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     DEEP_RESEARCH_SEARCH_CONCURRENCY: int = 5
     DEEP_RESEARCH_MODEL: str = "openrouter/google/gemini-3-flash-preview"
     LANGGRAPH_RECURSION_LIMIT: int = 100
+    # If true, stream all LangGraph events to Redis during deep research (very noisy; expensive).
+    DEEP_RESEARCH_STREAM_DEBUG_EVENTS: bool = False
+    # Deep research analysis waiting behavior (agent tool).
+    # We poll Postgres for completion (no SSE/Redis dependency); keep this bounded.
+    DEEP_RESEARCH_ANALYSIS_POLL_TIMEOUT_S: float = 240.0
+    # Delay first poll after triggering analysis, then poll at a fixed cadence.
+    DEEP_RESEARCH_ANALYSIS_POLL_FIRST_DELAY_S: float = 40.0
+    DEEP_RESEARCH_ANALYSIS_POLL_INTERVAL_S: float = 5.0
 
     # ScrapeCreators API
     SCRAPECREATORS_API_KEY: str

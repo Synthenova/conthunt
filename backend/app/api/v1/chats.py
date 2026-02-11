@@ -13,6 +13,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, UploadFile, File
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as redis
+from redis.exceptions import ConnectionError as RedisConnectionError
 from pydantic import BaseModel
 try:
     from psycopg.errors import OperationalError
@@ -253,6 +254,18 @@ async def stream_generator_to_redis(
     stream_key = f"chat:{chat_id}:stream"
     stream_maxlen = settings.REDIS_STREAM_MAXLEN_CHAT
 
+    async def _xadd(payload: dict) -> None:
+        data = {"data": json.dumps(payload, default=str)}
+        try:
+            await r.xadd(stream_key, data, maxlen=stream_maxlen, approximate=True)
+        except RedisConnectionError:
+            # Server/proxy dropped the socket. Disconnect pool and retry once.
+            try:
+                await r.connection_pool.disconnect()
+            except Exception:
+                pass
+            await r.xadd(stream_key, data, maxlen=stream_maxlen, approximate=True)
+
     try:
         deep_research_enabled = bool((filters or {}).get("deep_research_enabled"))
         graph_to_use = graph
@@ -294,12 +307,7 @@ async def stream_generator_to_redis(
                     "content": content_buffer,
                     "id": current_msg_id
                 }
-                await r.xadd(
-                    stream_key,
-                    {"data": json.dumps(payload, default=str)},
-                    maxlen=stream_maxlen,
-                    approximate=True,
-                )
+                await _xadd(payload)
                 content_buffer = ""
         
         logger.info(f"Starting graph.astream_events for chat {chat_id}")
@@ -321,15 +329,12 @@ async def stream_generator_to_redis(
                 # Also: do not emit subagent events (searcher, etc.) to Redis.
                 if (
                     deep_research_enabled
+                    and bool(getattr(settings, "DEEP_RESEARCH_STREAM_DEBUG_EVENTS", False))
                     and not is_tool_internal
                     and (not lc_agent_name or lc_agent_name == "orchestrator")
                 ):
-                    await r.xadd(
-                        stream_key,
-                        {"data": json.dumps(_langgraph_event_payload(ev), ensure_ascii=False)},
-                        maxlen=stream_maxlen,
-                        approximate=True,
-                    )
+                    # Debug-only stream; keep guarded and resilient.
+                    await _xadd(_langgraph_event_payload(ev))
                 
                 if ev_type == "on_chain_start":
                     # ... existing code ...
@@ -438,42 +443,35 @@ async def stream_generator_to_redis(
                         except Exception:
                             chosen_ids = []
                             chosen_items = None
-                        await r.xadd(
-                            stream_key,
-                            {"data": json.dumps({"type": "chosen_videos", "ids": chosen_ids, "items": chosen_items})},
-                            maxlen=stream_maxlen,
-                            approximate=True,
-                        )
+                        await _xadd({"type": "chosen_videos", "ids": chosen_ids, "items": chosen_items})
 
                 if payload:
-                    await r.xadd(
-                        stream_key,
-                        {"data": json.dumps(payload, default=str)},
-                        maxlen=stream_maxlen,
-                        approximate=True,
-                    )
+                    await _xadd(payload)
 
         logger.info("Stream loop completed")
         # Flush any remaining buffered content before sending done
         await flush_buffer()
-        await r.xadd(
-            stream_key,
-            {"data": json.dumps({"type": "done"})},
-            maxlen=stream_maxlen,
-            approximate=True,
-        )
+        await _xadd({"type": "done"})
 
     except Exception as e:
         logger.error(f"Background stream error for {chat_id}: {e}", exc_info=True)
-        await r.xadd(
-            stream_key,
-            {"data": json.dumps({"type": "error", "error": str(e)})},
-            maxlen=stream_maxlen,
-            approximate=True,
-        )
+        try:
+            await _xadd({"type": "error", "error": str(e)})
+        except Exception:
+            pass
         
     finally:
-        await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
+        try:
+            await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
+        except RedisConnectionError:
+            try:
+                await r.connection_pool.disconnect()
+            except Exception:
+                pass
+            try:
+                await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
+            except Exception:
+                pass
         logger.info(f"Background stream finished for {chat_id}")
 
 

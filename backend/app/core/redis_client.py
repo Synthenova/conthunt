@@ -46,6 +46,8 @@ def get_global_redis() -> redis.Redis:
             max_connections=settings.REDIS_MAX_CONNECTIONS,
             timeout=10.0,
             decode_responses=True,
+            health_check_interval=30,
+            socket_keepalive=True,
         )
         _global_redis = redis.Redis(connection_pool=pool)
     return _global_redis

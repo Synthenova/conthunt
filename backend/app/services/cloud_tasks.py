@@ -120,7 +120,7 @@ class CloudTasksService:
                 
                 # Wait for video to be ready (max 3 min) - non-YouTube only
                 if not is_youtube:
-                    for attempt in range(5):
+                    for attempt in range(12):
                         async with get_db_connection() as conn:
                             asset = await get_media_asset_by_id(conn, media_asset_id)
                         status = asset.get("status", "") if asset else ""
@@ -128,10 +128,10 @@ class CloudTasksService:
                             break
                         if status == "failed":
                             raise Exception("Video download failed")
-                        logger.debug(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/18")
+                        logger.debug(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/12")
                         await asyncio.sleep(10)
                     else:
-                        raise Exception("Video not ready after 3 min timeout")
+                        raise Exception("Video not ready after 2 min timeout")
                 
                 await _execute_gemini_analysis(
                     analysis_id=analysis_id,

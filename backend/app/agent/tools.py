@@ -331,6 +331,7 @@ async def get_video_analysis(
     from app.services.analysis_service import analysis_service
     from app.db.session import get_db_connection
     from app.db.queries.analysis import get_video_analysis_by_media_asset
+    from app.db import set_rls_user
     
     try:
         headers = await _get_headers(config)
@@ -383,7 +384,7 @@ async def get_video_analysis(
             if result.get("status") == "completed" and result.get("analysis"):
                 return result
             
-            # Otherwise, wait for completion via SSE when deep research is enabled.
+            # Otherwise, wait for completion via Postgres polling when deep research is enabled.
             analysis_id = result.get("id")
             if not analysis_id:
                 return result  # Can't wait without ID
@@ -391,69 +392,59 @@ async def get_video_analysis(
             if not chat_id:
                 return result
 
-            async def _wait_for_analysis_event() -> dict | None:
-                url = f"{_get_api_base_url()}/analysis/{chat_id}/stream"
-                async with httpx.AsyncClient(timeout=None) as client:
-                    async with client.stream("GET", url, headers=headers) as resp:
-                        resp.raise_for_status()
-                        async for line in resp.aiter_lines():
-                            if not line or not line.startswith("data:"):
-                                continue
-                            payload = line[5:].strip()
-                            if not payload:
-                                continue
-                            try:
-                                data = json.loads(payload)
-                            except Exception:
-                                continue
-                            if data.get("type") != "analysis":
-                                continue
-                            if data.get("media_asset_id") != str(media_asset_uuid):
-                                continue
-                            return data
-                return None
+            poll_timeout_s = float(getattr(settings, "DEEP_RESEARCH_ANALYSIS_POLL_TIMEOUT_S", 180.0))
+            first_delay_s = float(getattr(settings, "DEEP_RESEARCH_ANALYSIS_POLL_FIRST_DELAY_S", 40.0))
+            interval_s = float(getattr(settings, "DEEP_RESEARCH_ANALYSIS_POLL_INTERVAL_S", 5.0))
 
-            event = await _wait_for_analysis_event()
-            if not event:
-                return result
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + max(1.0, poll_timeout_s)
 
-            async with get_db_connection() as conn:
-                analysis = await get_video_analysis_by_media_asset(conn, media_asset_uuid)
+            # First poll is intentionally delayed to avoid hammering the DB while the
+            # analysis job is still being queued/downloaded.
+            await asyncio.sleep(max(0.0, first_delay_s))
 
-            if not analysis:
-                return result
+            while True:
+                async with get_db_connection() as conn:
+                    await set_rls_user(conn, db_user_id)
+                    analysis = await get_video_analysis_by_media_asset(conn, media_asset_uuid)
 
-            status = analysis.get("status", "")
-            if status == "completed" and analysis.get("analysis_result"):
-                analysis_data = analysis["analysis_result"]
-                analysis_str = analysis_data.get("analysis") if isinstance(analysis_data, dict) else str(analysis_data)
-                return {
-                    "id": str(analysis["id"]),
-                    "media_asset_id": str(media_asset_uuid),
-                    "status": "completed",
-                    "analysis": analysis_str,  # Markdown string
-                    "error": None,
-                    "cached": True,
-                }
-            if status == "failed":
-                return {
-                    "id": str(analysis["id"]),
-                    "media_asset_id": str(media_asset_uuid),
-                    "status": "failed",
-                    "analysis": None,
-                    "error": analysis.get("error", "Analysis failed"),
-                    "cached": True,
-                }
+                if analysis:
+                    status = analysis.get("status", "")
+                    if status == "completed" and analysis.get("analysis_result"):
+                        analysis_data = analysis["analysis_result"]
+                        analysis_str = analysis_data.get("analysis") if isinstance(analysis_data, dict) else str(analysis_data)
+                        return {
+                            "id": str(analysis["id"]),
+                            "media_asset_id": str(media_asset_uuid),
+                            "status": "completed",
+                            "analysis": analysis_str,  # Markdown string
+                            "error": None,
+                            "cached": True,
+                        }
+                    if status == "failed":
+                        return {
+                            "id": str(analysis["id"]),
+                            "media_asset_id": str(media_asset_uuid),
+                            "status": "failed",
+                            "analysis": None,
+                            "error": analysis.get("error", "Analysis failed"),
+                            "cached": True,
+                        }
 
-            return {
-                "id": str(analysis_id),
-                "media_asset_id": str(media_asset_uuid),
-                "status": "processing",
-                "analysis": None,
-                "error": None,
-                "message": "Analysis is still processing. Please try again in a moment.",
-                "cached": False,
-            }
+                now = loop.time()
+                if now >= deadline:
+                    return {
+                        "id": str(analysis_id),
+                        "media_asset_id": str(media_asset_uuid),
+                        "status": "processing",
+                        "analysis": None,
+                        "error": None,
+                        "message": "Analysis is still processing. Please try again in a moment.",
+                        "cached": False,
+                    }
+                # Fixed cadence after the first delayed poll.
+                jitter = 0.05 * ((media_asset_uuid.int >> 64) % 7)
+                await asyncio.sleep(max(0.0, interval_s) + jitter)
             
         except Exception as limit_err:
             return {"error": str(limit_err)}

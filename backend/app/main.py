@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI):
             max_connections=settings.REDIS_MAX_CONNECTIONS,
             timeout=10.0,  # Wait up to 10s for a connection
             decode_responses=True,
+            # Managed Redis/proxies can silently close idle sockets; health checks prevent
+            # handing out dead connections from the pool.
+            health_check_interval=30,
+            socket_keepalive=True,
         )
         app.state.redis = redis.Redis(connection_pool=redis_pool)
         max_conn = getattr(app.state.redis.connection_pool, "max_connections", None)
@@ -98,6 +102,8 @@ async def lifespan(app: FastAPI):
             max_connections=2,
             timeout=10.0,
             decode_responses=True,
+            health_check_interval=30,
+            socket_keepalive=True,
         )
         app.state.stream_redis = redis.Redis(connection_pool=stream_pool)
 
