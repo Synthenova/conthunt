@@ -89,7 +89,19 @@ async def lifespan(app: FastAPI):
             app.state.db_semaphore = None
             set_global_db_semaphore(None)
 
-        app.state.stream_hub = StreamFanoutHub(app.state.redis, logger)
+        # StreamFanoutHub uses a BLOCKING xread (up to 10s per call) which holds
+        # a Redis connection for the entire block duration.  Give it a dedicated
+        # small pool so it can never starve the main pool used by the DB
+        # semaphore and other short-lived commands.
+        stream_pool = BlockingConnectionPool.from_url(
+            settings.REDIS_URL,
+            max_connections=2,
+            timeout=10.0,
+            decode_responses=True,
+        )
+        app.state.stream_redis = redis.Redis(connection_pool=stream_pool)
+
+        app.state.stream_hub = StreamFanoutHub(app.state.stream_redis, logger)
         await app.state.stream_hub.start()
         logger.debug("Stream hub initialized")
 
@@ -114,6 +126,9 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, "redis"):
         await app.state.redis.close()
         logger.debug("Redis client closed")
+    if hasattr(app.state, "stream_redis"):
+        await app.state.stream_redis.close()
+        logger.debug("Stream Redis client closed")
     if hasattr(app.state, '_agent_saver_cm'):
         await app.state._agent_saver_cm.__aexit__(None, None, None)
         logger.debug("Agent checkpointer closed")
