@@ -78,6 +78,7 @@ async def report_chosen_videos(
     # Normalize chosen payload
     normalized = []
     chosen_video_ids: list[str] = []
+    invalid_media_asset_ids: list[str] = []
     for row in chosen or []:
         if not isinstance(row, dict):
             continue
@@ -87,6 +88,23 @@ async def report_chosen_videos(
         reason = str(row.get("reason") or "").strip()
         normalized.append({"media_asset_id": mid, "reason": reason})
         chosen_video_ids.append(mid)
+
+    # Validate IDs early: must be UUIDs (DB media_asset_id).
+    # If invalid, return an error so the agent can correct itself.
+    parsed_ids: list[UUID] = []
+    for mid in chosen_video_ids:
+        try:
+            parsed_ids.append(UUID(str(mid)))
+        except Exception:
+            invalid_media_asset_ids.append(mid)
+
+    if invalid_media_asset_ids:
+        return {
+            "error": "Invalid media_asset_id(s): expected UUID(s) of VIDEO media assets in DB.",
+            "criteria_slug": criteria_slug,
+            "invalid_media_asset_ids": invalid_media_asset_ids,
+            "hint": "Use `media_asset_id` values returned by tool outputs like get_search_overview(...). Do NOT use content IDs like v_... or URLs.",
+        }
 
     def _safe_slug(s: str) -> str:
         import re
@@ -106,10 +124,18 @@ async def report_chosen_videos(
             try:
                 async with get_db_connection() as conn:
                     await set_rls_user(conn, UUID(str(user_uuid)))
-                    ids = [UUID(mid) for mid in chosen_video_ids]
-                    items = await queries.get_search_result_items_for_media_asset_ids(conn, ids)
+                    items = await queries.get_search_result_items_for_media_asset_ids(conn, parsed_ids)
             except Exception:
                 items = []
+
+        # If we couldn't resolve any items, treat this as an error: likely wrong IDs or access/RLS issue.
+        if chosen_video_ids and not items:
+            return {
+                "error": "No videos found for the provided media_asset_id(s).",
+                "criteria_slug": criteria_slug,
+                "chosen_video_ids": chosen_video_ids,
+                "hint": "Make sure you are passing DB media_asset_id UUIDs for VIDEO assets (not content IDs). If these came from an older run, re-fetch via get_search_overview(search_id).",
+            }
 
         # Write chosen-vids-<criteria_slug>-NNN.json at root; never edit existing files.
         prefix = f"chosen-vids-{safe_slug}-"

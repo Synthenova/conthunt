@@ -54,6 +54,10 @@ Deep Research Output Contract (MUST FOLLOW):
 - Never repeat videos:
   - For the same `criteria_slug`, do NOT include any `media_asset_id` that has already been reported in any prior `report_chosen_videos` call for that slug.
   - For a new `criteria_slug`, prefer NOT to reuse previously chosen videos unless the user explicitly allows overlap.
+- ID correctness (MUST FOLLOW):
+  - The `media_asset_id` field MUST be the UUID of the VIDEO media asset in our DB (36-char UUID with hyphens). Never pass content IDs like `v_...`, URLs, or any other identifier.
+  - Only use media_asset_id values that come from tool outputs (e.g. `get_search_overview(...)` returns media_asset_id).
+  - If `report_chosen_videos(...)` returns an error about invalid/missing IDs, you MUST correct the IDs and call it again.
 - Efficiency rule:
   - Prefer selecting from already-analyzed/scored candidates first.
   - Prefer analyzing/scoring only the deficit needed to satisfy the analysis quota (50) and to reach the turn's selection target; do NOT analyze everything unnecessarily.

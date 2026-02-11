@@ -44,35 +44,43 @@ async def analyze_search_batch_with_criteria(
     if not isinstance(search_ids, list) or not search_ids:
         return {"error": "search_ids must be a non-empty list"}
 
-    # Concurrency for analysis + justification across ALL selected videos.
+    # Concurrency for analysis + justification across ALL selected videos (across ALL search_ids).
     import asyncio
     sem = asyncio.Semaphore(settings.DEEP_RESEARCH_ANALYSIS_CONCURRENCY)
 
-    async def _one(it: dict) -> dict:
+    async def _one(sid: str, it: dict) -> tuple[str, dict]:
         mid = str(it.get("media_asset_id"))
         title = search_inventory.extract_title(it)
         async with sem:
             analysis_str = await cache.ensure_analysis(chat_id, mid, config)
             j = await justify_with_score(criteria=criteria, title=title, analysis_str=analysis_str, config=config)
-        return {
-            "media_asset_id": mid,
-            "title": title,
-            "reason": j.reason,
-            "score": float(j.score),
-        }
+        return (
+            sid,
+            {
+                "media_asset_id": mid,
+                "title": title,
+                "reason": j.reason,
+                "score": float(j.score),
+            },
+        )
 
     output_payload: Dict[str, List[dict]] = {}
     stats: Dict[str, dict] = {}
     total_analyzed = 0
+
+    # Phase 1: build a global selection list (so concurrency can actually reach the configured cap).
+    selected_work: list[tuple[str, dict]] = []
 
     for raw_sid in search_ids:
         sid = str(raw_sid).strip()
         if not sid:
             continue
 
+        # Pre-seed outputs so callers always see a key for each valid search_id.
+        output_payload.setdefault(sid, [])
+
         items = await search_inventory.load_search_items(chat_id, sid)
         if not items:
-            output_payload[sid] = []
             stats[sid] = {
                 "requested": requested,
                 "analyzed": 0,
@@ -83,8 +91,9 @@ async def analyze_search_batch_with_criteria(
 
         items = search_inventory.sort_by_views_desc(items)
         done = await criteria_outputs.read_done_media_ids(chat_id, str(criteria_slug), sid)
-        selected: List[dict] = []
+
         skipped_already_done = 0
+        selected_count = 0
         for it in items:
             mid = it.get("media_asset_id")
             if not mid:
@@ -93,35 +102,44 @@ async def analyze_search_batch_with_criteria(
             if mid in done:
                 skipped_already_done += 1
                 continue
-            selected.append(it)
-            if len(selected) >= requested:
+            selected_work.append((sid, it))
+            selected_count += 1
+            if selected_count >= requested:
                 break
 
-        if not selected:
-            output_payload[sid] = []
+        if selected_count == 0:
             stats[sid] = {
                 "requested": requested,
                 "analyzed": 0,
                 "skipped_already_done": skipped_already_done,
                 "status": "nothing_new_to_analyze",
             }
-            continue
+        else:
+            stats[sid] = {
+                "requested": requested,
+                "analyzed": 0,  # filled after execution
+                "skipped_already_done": skipped_already_done,
+                "status": "ok",
+            }
 
-        rows = await asyncio.gather(*[_one(it) for it in selected], return_exceptions=True)
-        out_rows: List[dict] = []
+    # Phase 2: execute the global batch (semaphore controls max in-flight).
+    if selected_work:
+        rows = await asyncio.gather(
+            *[_one(sid, it) for (sid, it) in selected_work],
+            return_exceptions=True,
+        )
         for r in rows:
             if isinstance(r, Exception):
                 continue
-            out_rows.append(r)
+            sid, row = r
+            output_payload.setdefault(sid, []).append(row)
 
-        output_payload[sid] = out_rows
-        stats[sid] = {
-            "requested": requested,
-            "analyzed": len(out_rows),
-            "skipped_already_done": skipped_already_done,
-            "status": "ok",
-        }
-        total_analyzed += len(out_rows)
+    # Phase 3: finalize per-search stats and totals.
+    for sid, out_rows in output_payload.items():
+        analyzed_n = len(out_rows or [])
+        if sid in stats and stats[sid].get("status") == "ok":
+            stats[sid]["analyzed"] = analyzed_n
+        total_analyzed += analyzed_n
 
     prog = await progress.read_progress(chat_id)
     for sid, st in stats.items():
