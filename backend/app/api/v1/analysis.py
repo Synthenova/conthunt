@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, Header
 from langchain_core.messages import HumanMessage
+from app.integrations.posthog_client import capture_event
 from dotenv import load_dotenv
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import text
@@ -41,11 +42,6 @@ def _is_terminal_payload(payload_str: str | None) -> bool:
     if not payload_str:
         return False
     return ('"type": "done"' in payload_str) or ('"type": "error"' in payload_str)
-
-# Initialize Gemini Model
-llm = init_chat_model("google/gemini-2.5-flash-lite-preview-09-2025", temperature=0.7)
-
-
 
 async def _publish_analysis_event(
     chat_id: str | None,
@@ -84,6 +80,7 @@ async def _execute_gemini_analysis(
     video_uri: str,
     chat_id: str | None = None,
     user_id: str | None = None,
+    dispatched_at: float | None = None,
 ) -> None:
     """
     Background task: Run Gemini LLM and update analysis status.
@@ -96,6 +93,21 @@ async def _execute_gemini_analysis(
     start_time = time.time()
     logger.info(f"[ANALYSIS] Starting background task for media_asset_id={media_asset_id}, analysis_id={analysis_id}")
     logger.info(f"[ANALYSIS] Video URI: {video_uri[:100]}...")
+    
+    queue_duration_ms = 0
+    if dispatched_at:
+        queue_duration_ms = int((start_time - dispatched_at) * 1000)
+
+    # Telemetry: Analysis Started
+    capture_event(
+        distinct_id=str(user_id) if user_id else "system",
+        event="analysis_started",
+        properties={
+            "analysis_id": str(analysis_id),
+            "media_asset_id": str(media_asset_id),
+            "queue_duration_ms": queue_duration_ms,
+        }
+    )
     
     try:
         # 1. Build Message with prompt
@@ -111,7 +123,15 @@ async def _execute_gemini_analysis(
             ]
         )
         
-        # 2. Invoke LLM (plain text output - markdown)
+        # 2. Initialize LLM dynamically based on URL type
+        is_youtube = "youtube.com" in video_uri or "youtu.be" in video_uri
+        model_name = "openrouter/google/gemini-3-flash-preview" if is_youtube else "google/gemini-3-flash-preview"
+        
+        logger.info(f"[ANALYSIS] Initializing {model_name} for analysis (is_youtube={is_youtube})")
+        # Use a fresh LLM instance per request to support dynamic model selection
+        llm = init_chat_model(model_name, temperature=0.7)
+
+        # 3. Invoke LLM (plain text output - markdown)
         logger.info(f"[ANALYSIS] Invoking Gemini LLM (markdown output)...")
         invoke_start = time.time()
 
@@ -141,7 +161,24 @@ async def _execute_gemini_analysis(
             status="completed",
         )
         
+        
         total_duration = time.time() - start_time
+        
+        # Telemetry: Analysis Completed
+        total_duration_ms = int(total_duration * 1000)
+        capture_event(
+            distinct_id=str(user_id) if user_id else "system",
+            event="analysis_completed",
+            properties={
+                "analysis_id": str(analysis_id),
+                "media_asset_id": str(media_asset_id),
+                "duration_ms": total_duration_ms,
+                "total_duration_ms": total_duration_ms + queue_duration_ms,
+                "queue_duration_ms": queue_duration_ms,
+                "success": True,
+            }
+        )
+
         logger.info(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
     
     except Exception as e:
@@ -163,6 +200,22 @@ async def _execute_gemini_analysis(
                 media_asset_id=media_asset_id,
                 status="failed",
                 error=str(e),
+            )
+            
+            # Telemetry: Analysis Failed
+            total_duration_ms = int((time.time() - start_time) * 1000)
+            capture_event(
+                distinct_id=str(user_id) if user_id else "system",
+                event="analysis_completed",
+                properties={
+                    "analysis_id": str(analysis_id),
+                    "media_asset_id": str(media_asset_id),
+                    "duration_ms": total_duration_ms,
+                    "total_duration_ms": total_duration_ms + queue_duration_ms,
+                    "queue_duration_ms": queue_duration_ms,
+                    "success": False,
+                    "error": str(e),
+                }
             )
         except Exception as db_err:
             logger.error(f"[ANALYSIS] Failed to update status to failed: {db_err}")
@@ -318,6 +371,11 @@ async def run_gemini_analysis(
     
     if use_cloud_tasks or not background_tasks:
         logger.info(f"[ANALYSIS] Using Cloud Tasks (queue={settings.QUEUE_GEMINI}) for analysis {analysis_id}")
+        
+        # Determine dispatched_at
+        import time
+        dispatched_at = time.time()
+        
         await cloud_tasks.create_http_task(
             queue_name=settings.QUEUE_GEMINI,
             relative_uri="/v1/tasks/gemini/analyze",
@@ -327,6 +385,7 @@ async def run_gemini_analysis(
                 "video_uri": video_uri,
                 "chat_id": chat_id,
                 "user_id": user_id,
+                "dispatched_at": dispatched_at,
             }
         )
     else:

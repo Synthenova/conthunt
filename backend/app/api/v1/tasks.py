@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import redis.asyncio as redis
 
 from app.core import get_settings, logger
+from app.core.telemetry_context import bind_telemetry, merge_telemetry, telemetry_from_mapping
 from app.core.redis_client import get_app_redis
 from app.db.session import get_db_connection
 from app.api.v1.analysis import _execute_gemini_analysis
@@ -38,6 +39,7 @@ class AnalysisTaskPayload(BaseModel):
     video_uri: str
     chat_id: UUID | None = None
     user_id: UUID | None = None
+    dispatched_at: float | None = None
 
 class TwelveLabsTaskPayload(BaseModel):
     media_asset_id: UUID
@@ -63,6 +65,7 @@ class SearchTaskPayload(BaseModel):
     user_uuid: UUID
     query: str
     inputs: dict
+    dispatched_at: float | None = None
 
 class LoadMoreTaskPayload(BaseModel):
     search_id: UUID
@@ -79,6 +82,14 @@ class ChatStreamTaskPayload(BaseModel):
     auth_token: str | None = None
     filters: dict | None = None
     user_id: UUID | None = None
+    action_id: str | None = None
+    session_id: str | None = None
+    attempt_no: int | None = None
+    feature: str | None = None
+    operation: str | None = None
+    subject_type: str | None = None
+    subject_id: str | None = None
+    message_client_id: str | None = None
 
 @router.post("/gemini/analyze")
 async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Request):
@@ -151,6 +162,7 @@ async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Req
         video_uri=final_video_uri,
         chat_id=str(payload.chat_id) if payload.chat_id else None,
         user_id=str(payload.user_id) if payload.user_id else None,
+        dispatched_at=payload.dispatched_at,
     )
 
 @router.post("/twelvelabs/index")
@@ -329,6 +341,7 @@ async def handle_search_task(payload: SearchTaskPayload, request: Request):
         query=payload.query,
         inputs=payload.inputs,
         redis_client=_get_request_redis(request),
+        dispatched_at=payload.dispatched_at,
     )
 
 @router.post("/search/load_more")
@@ -363,6 +376,17 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
     logger.info(f"Received chat stream task for {payload.chat_id}")
     logger.info(f"Received chat stream task for {payload.filters}")
     executor = CloudTaskExecutor(request)
+    telemetry_ctx = telemetry_from_mapping(payload.model_dump(exclude_none=True))
+    telemetry_ctx = merge_telemetry(
+        telemetry_ctx,
+        feature=payload.feature or "chat",
+        operation=payload.operation or "stream_response",
+        subject_type=payload.subject_type or "chat_message",
+        subject_id=payload.subject_id or payload.message_client_id,
+        message_client_id=payload.message_client_id,
+        user_id=str(payload.user_id) if payload.user_id else telemetry_ctx.user_id,
+        task_retry_count=executor.retry_count,
+    )
 
     async def _on_fail(e: Exception):
         logger.error(f"Chat stream task permanently failed for {payload.chat_id}: {e}")
@@ -400,6 +424,7 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
                 filters=payload.filters or {},
                 user_id=str(payload.user_id) if payload.user_id else None,
                 redis_client=redis_client,
+                telemetry=telemetry_ctx,
             )
         finally:
             try:
@@ -407,7 +432,8 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
             except Exception as e:
                 logger.warning(f"Failed to close chat saver context: {e}")
 
-    return await executor.run(
-        handler=_run_chat_stream,
-        on_fail=_on_fail,
-    )
+    with bind_telemetry(telemetry_ctx):
+        return await executor.run(
+            handler=_run_chat_stream,
+            on_fail=_on_fail,
+        )

@@ -6,6 +6,7 @@ from sqlalchemy import text
 from app.core import logger
 from app.db.session import get_db_connection
 from app.services import dodo_client, billing_service
+from app.services.telemetry_events import emit_payment_confirmed, emit_payment_webhook_received
 
 
 router = APIRouter(prefix="/webhooks")
@@ -68,9 +69,14 @@ async def handle_dodo_webhook(request: Request):
     
     
     logger.info(f"Received webhook: {event_type} (id: {webhook_id})")
-    
+
     # Get subscription_id if available
     subscription_id = getattr(event_data, 'subscription_id', None)
+    emit_payment_webhook_received(
+        user_id=None,
+        event_type=event_type,
+        subject_id=subscription_id,
+    )
     
     # Idempotency check
     is_new = await store_webhook_event(webhook_id, event_type, subscription_id, {"type": event_type})
@@ -145,6 +151,11 @@ async def handle_subscription_active(data, event_ts: datetime):
         current_period_end=data.next_billing_date,
         webhook_ts=event_ts,
         is_new_subscription=True,
+    )
+    emit_payment_confirmed(
+        user_id=str(user_id),
+        subscription_id=subscription_id,
+        product_id=product_id,
     )
 
 

@@ -6,6 +6,7 @@ with AsyncPostgresSaver for thread-based persistence.
 import asyncio
 import json
 import mimetypes
+import time
 import uuid
 from typing import List, Optional
 from datetime import datetime
@@ -22,14 +23,34 @@ except Exception:  # pragma: no cover - fallback if psycopg isn't available
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
+from app.core.telemetry_context import (
+    TelemetryContext,
+    bind_telemetry,
+    get_request_telemetry,
+    merge_telemetry,
+    update_request_telemetry,
+)
 from app.core.redis_client import get_app_redis
 from app.db import get_db_connection, set_rls_user, queries
 
+from app.agent.telemetry.langgraph_langfuse import attach_langfuse_to_config
 from app.storage import async_gcs_client
 from app.services.cdn_signer import generate_signed_url
 from app.agent.runtime import create_agent_graph
 from app.agent.deep_agent_runtime import create_deep_agent_graph
+from app.integrations.langfuse_client import (
+    AgentRunContext,
+    get_langfuse_propagation_context,
+    start_langfuse_root_observation,
+)
 from app.services.cloud_tasks import cloud_tasks
+from app.services.telemetry_events import (
+    emit_action_failed,
+    emit_action_started,
+    emit_action_succeeded,
+    emit_chat_request_received,
+    emit_chat_stream_server_error,
+)
 from app.llm.context import set_llm_context
 from app.schemas.chats import (
     Chat, 
@@ -240,6 +261,7 @@ async def stream_generator_to_redis(
     image_urls: list[str] | None = None,
     filters: dict | None = None,
     user_id: str | None = None,
+    telemetry: TelemetryContext | None = None,
 ):
     """
     Background task:
@@ -248,8 +270,19 @@ async def stream_generator_to_redis(
     3. Push to Redis Stream `chat:{id}:stream`.
     4. Cleanup Redis key on finish.
     """
-    logger.info(f"Starting background stream for chat {chat_id} {filters}")
-    
+    telemetry_ctx = merge_telemetry(
+        telemetry or TelemetryContext(),
+        feature="chat",
+        operation="stream_response",
+        subject_type="chat_message",
+        user_id=user_id,
+    )
+    if not telemetry_ctx.subject_id and telemetry_ctx.message_client_id:
+        telemetry_ctx.subject_id = telemetry_ctx.message_client_id
+
+    stream_started_at = time.perf_counter()
+    logger.info("Starting background stream for chat=%s filters=%s", chat_id, filters)
+
     r = redis_client
     stream_key = f"chat:{chat_id}:stream"
     stream_maxlen = settings.REDIS_STREAM_MAXLEN_CHAT
@@ -266,213 +299,335 @@ async def stream_generator_to_redis(
                 pass
             await r.xadd(stream_key, data, maxlen=stream_maxlen, approximate=True)
 
-    try:
-        deep_research_enabled = bool((filters or {}).get("deep_research_enabled"))
-        graph_to_use = graph
-        if deep_research_enabled:
-            logger.info("Deep research enabled for chat %s", chat_id)
-            graph_to_use = await _get_deep_agent_graph(request=None)
+    with bind_telemetry(telemetry_ctx):
+        emit_action_started(telemetry_ctx, metadata={"chat_id": chat_id})
+        logger.info(
+            "stream_start chat_id=%s action_id=%s attempt_no=%s subject_id=%s",
+            chat_id,
+            telemetry_ctx.action_id,
+            telemetry_ctx.attempt_no,
+            telemetry_ctx.subject_id,
+        )
+        try:
+            deep_research_enabled = bool((filters or {}).get("deep_research_enabled"))
+            graph_to_use = graph
+            if deep_research_enabled:
+                logger.info("Deep research enabled for chat %s", chat_id)
+                graph_to_use = await _get_deep_agent_graph(request=None)
 
-        # Build config with thread_id for persistence and context for tools
-        llm_route = "deep.research" if deep_research_enabled else "chat"
-        config = {
-            "configurable": {
-                "thread_id": thread_id,
-                "x-auth-token": (context or {}).get("x-auth-token"),
+            # Build config with thread_id for persistence and context for tools
+            llm_route = "deep.research" if deep_research_enabled else "chat"
+            langfuse_tags = ["chat", "stream", "deep_research" if deep_research_enabled else "default"]
+            langfuse_trace_name = f"chat.stream_response.{llm_route.replace('.', '_')}"
+            langfuse_metadata = {
+                "action_id": telemetry_ctx.action_id,
+                "attempt_no": telemetry_ctx.attempt_no,
                 "chat_id": chat_id,
-                "model_name": model_name,
-                "image_urls": image_urls or [],
-                "filters": filters or {},
-                "user_id": user_id,
+                "thread_id": thread_id,
+                "message_client_id": telemetry_ctx.message_client_id,
                 "llm_route": llm_route,
-            },
-            "recursion_limit": settings.LANGGRAPH_RECURSION_LIMIT,
-        }
-        # Runtime context for deep agent (passed separately, not inside config)
-        runtime_context = {"chat_id": chat_id}
-        
-        tool_run_ids = set()
-        
-        # Token batching: buffer content_delta tokens before pushing to Redis
-        BUFFER_THRESHOLD = 80  # characters
-        content_buffer = ""
-        current_msg_id = None
-        
-        async def flush_buffer():
-            """Flush buffered content to Redis if any."""
-            nonlocal content_buffer, current_msg_id
-            if content_buffer and current_msg_id:
-                payload = {
-                    "type": "content_delta",
-                    "content": content_buffer,
-                    "id": current_msg_id
-                }
-                await _xadd(payload)
-                content_buffer = ""
-        
-        logger.info(f"Starting graph.astream_events for chat {chat_id}")
-        with set_llm_context(user_id=user_id, route=llm_route):
-            async for ev in graph_to_use.astream_events(inputs, config=config, context=runtime_context, version="v2"):
-                ev_type = ev.get("event")
-                data = ev.get("data", {}) or {}
-                run_id = ev.get("run_id")
-                parent_run_id = ev.get("parent_run_id")
-                metadata = ev.get("metadata") or {}
-                langgraph_node = metadata.get("langgraph_node")
-                lc_agent_name = metadata.get("lc_agent_name")
-                is_tool_internal = (parent_run_id in tool_run_ids) or (langgraph_node == "tools")
-                
-                payload = None
+                "feature": telemetry_ctx.feature,
+                "operation": telemetry_ctx.operation,
+                "subject_type": telemetry_ctx.subject_type,
+                "subject_id": telemetry_ctx.subject_id,
+            }
+            config = {
+                "configurable": {
+                    "thread_id": thread_id,
+                    "x-auth-token": (context or {}).get("x-auth-token"),
+                    "chat_id": chat_id,
+                    "model_name": model_name,
+                    "image_urls": image_urls or [],
+                    "filters": filters or {},
+                    "user_id": user_id,
+                    "llm_route": llm_route,
+                },
+                "recursion_limit": settings.LANGGRAPH_RECURSION_LIMIT,
+            }
+            config = attach_langfuse_to_config(
+                config,
+                AgentRunContext(
+                    action_id=telemetry_ctx.action_id,
+                    session_id=telemetry_ctx.session_id,
+                    attempt_no=telemetry_ctx.attempt_no,
+                    user_id=telemetry_ctx.user_id,
+                    feature="chat",
+                    operation="stream_response",
+                    subject_type=telemetry_ctx.subject_type,
+                    subject_id=telemetry_ctx.subject_id,
+                    conversation_id=chat_id,
+                    message_client_id=telemetry_ctx.message_client_id,
+                    message_id=None,
+                ),
+                tags=langfuse_tags,
+            )
+            config["run_name"] = langfuse_trace_name
+            # Runtime context for deep agent (passed separately, not inside config)
+            runtime_context = {"chat_id": chat_id}
 
-                # Deep research: emit all graph events (including deltas) for UI inspection,
-                # except tool-internal child runs (e.g. LLM calls inside tools).
-                # Also: do not emit subagent events (searcher, etc.) to Redis.
-                if (
-                    deep_research_enabled
-                    and bool(getattr(settings, "DEEP_RESEARCH_STREAM_DEBUG_EVENTS", False))
-                    and not is_tool_internal
-                    and (not lc_agent_name or lc_agent_name == "orchestrator")
-                ):
-                    # Debug-only stream; keep guarded and resilient.
-                    await _xadd(_langgraph_event_payload(ev))
-                
-                if ev_type == "on_chain_start":
-                    # ... existing code ...
-                    pass
+            tool_run_ids = set()
 
-                elif ev_type == "on_chat_model_stream":
-                    # Only forward assistant model streams, not tool-internal LLM runs.
-                    if is_tool_internal:
-                        continue
-                    # Deep research: only stream orchestrator text (no subagent streaming).
-                    if deep_research_enabled and lc_agent_name and lc_agent_name != "orchestrator":
-                        continue
-                    # Normal graph uses `langgraph_node=agent`; deep research graphs often emit from `model`.
-                    # We still rely on tool_run_ids to skip tool-internal streams.
-                    if not deep_research_enabled:
-                        if langgraph_node and langgraph_node != "agent":
-                            continue
-                    chunk = data.get("chunk")
-                    if chunk:
-                        # chunk might be an AIMessageChunk object
-                        content = getattr(chunk, "content", "") if hasattr(chunk, "content") else chunk.get("content", "")
-                        msg_id = getattr(chunk, "id", None) if hasattr(chunk, "id") else chunk.get("id")
-                        
-                        if content:
-                            # Check if message ID changed (new message started)
-                            if msg_id != current_msg_id:
-                                # Flush previous message's buffer first
-                                await flush_buffer()
-                                current_msg_id = msg_id
-                            
-                            # Normalize content to string for buffering
-                            # Gemini returns list of content blocks, OpenRouter returns string
-                            if isinstance(content, list):
-                                # Extract text from content blocks (Gemini format)
-                                text_content = "".join(
-                                    block.get("text", "") if isinstance(block, dict) else str(block)
-                                    for block in content
-                                    if isinstance(block, dict) and block.get("type") == "text"
-                                )
-                            else:
-                                text_content = str(content)
-                            
-                            # Accumulate content in buffer
-                            content_buffer += text_content
-                            
-                            # Flush if buffer exceeds threshold
-                            if len(content_buffer) >= BUFFER_THRESHOLD:
-                                await flush_buffer()
-                        # Skip setting payload - content_delta is handled via buffering
-                        continue
-                            
-                elif ev_type == "on_tool_start":
-                    # Flush any buffered content before tool events
-                    await flush_buffer()
-                    
-                    if run_id:
-                        tool_run_ids.add(run_id)
-                    logger.debug(
-                        "[CHAT] Tool start name=%s run_id=%s parent_run_id=%s node=%s",
-                        ev.get("name"),
-                        run_id,
-                        parent_run_id,
-                        langgraph_node,
-                    )
+            # Token batching: buffer content_delta tokens before pushing to Redis
+            BUFFER_THRESHOLD = 80  # characters
+            content_buffer = ""
+            current_msg_id = None
+            output_chars = 0
+            output_chunks = 0
+
+            async def flush_buffer():
+                """Flush buffered content to Redis if any."""
+                nonlocal content_buffer, current_msg_id, output_chars, output_chunks
+                if content_buffer and current_msg_id:
                     payload = {
-                        "type": "tool_start",
-                        "tool": ev.get("name"),
-                        "run_id": run_id,
-                        "input": data.get("input")
+                        "type": "content_delta",
+                        "content": content_buffer,
+                        "id": current_msg_id
                     }
-                    
-                elif ev_type == "on_tool_end":
-                    # Flush any buffered content before tool events
-                    await flush_buffer()
-                    
-                    if run_id and run_id in tool_run_ids:
-                        tool_run_ids.discard(run_id)
-                    tool_output = data.get("output")
-                    # If output is a Message object (like ToolMessage), extract content
-                    if hasattr(tool_output, "content"):
-                        final_output = tool_output.content
-                    else:
-                        final_output = tool_output
-                        
-                    payload = {
-                        "type": "tool_end",
-                        "tool": ev.get("name"),
-                        "run_id": run_id,
-                        "output": final_output
-                    }
-
-                    if ev.get("name") == "report_chosen_videos":
-                        chosen_ids = []
-                        chosen_items = None
-                        try:
-                            if isinstance(final_output, dict):
-                                chosen_ids = final_output.get("chosen_video_ids") or []
-                                chosen_items = final_output.get("items")
-                            elif hasattr(final_output, "get"):
-                                chosen_ids = final_output.get("chosen_video_ids") or []
-                                chosen_items = final_output.get("items")
-                            elif isinstance(final_output, str):
-                                parsed = json.loads(final_output)
-                                chosen_ids = parsed.get("chosen_video_ids") or []
-                                chosen_items = parsed.get("items")
-                        except Exception:
-                            chosen_ids = []
-                            chosen_items = None
-                        await _xadd({"type": "chosen_videos", "ids": chosen_ids, "items": chosen_items})
-
-                if payload:
                     await _xadd(payload)
+                    output_chars += len(content_buffer)
+                    output_chunks += 1
+                    content_buffer = ""
 
-        logger.info("Stream loop completed")
-        # Flush any remaining buffered content before sending done
-        await flush_buffer()
-        await _xadd({"type": "done"})
+            logger.info(f"Starting graph.astream_events for chat {chat_id}")
+            with start_langfuse_root_observation(
+                name=langfuse_trace_name,
+                input_payload={
+                    "inputs": inputs,
+                    "filters": filters or {},
+                    "image_urls_count": len(image_urls or []),
+                },
+                metadata=langfuse_metadata,
+            ) as root_obs:
+                with get_langfuse_propagation_context(
+                    user_id=telemetry_ctx.user_id,
+                    session_id=telemetry_ctx.session_id,
+                    tags=langfuse_tags,
+                    metadata=langfuse_metadata,
+                    trace_name=langfuse_trace_name,
+                ):
+                    with set_llm_context(user_id=user_id, route=llm_route):
+                        async for ev in graph_to_use.astream_events(inputs, config=config, context=runtime_context, version="v2"):
+                            ev_type = ev.get("event")
+                            data = ev.get("data", {}) or {}
+                            run_id = ev.get("run_id")
+                            parent_run_id = ev.get("parent_run_id")
+                            metadata = ev.get("metadata") or {}
+                            langgraph_node = metadata.get("langgraph_node")
+                            lc_agent_name = metadata.get("lc_agent_name")
+                            is_tool_internal = (parent_run_id in tool_run_ids) or (langgraph_node == "tools")
 
-    except Exception as e:
-        logger.error(f"Background stream error for {chat_id}: {e}", exc_info=True)
-        try:
-            await _xadd({"type": "error", "error": str(e)})
-        except Exception:
-            pass
-        
-    finally:
-        try:
-            await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
-        except RedisConnectionError:
+                            payload = None
+
+                            # Deep research: emit all graph events (including deltas) for UI inspection,
+                            # except tool-internal child runs (e.g. LLM calls inside tools).
+                            # Also: do not emit subagent events (searcher, etc.) to Redis.
+                            if (
+                                deep_research_enabled
+                                and bool(getattr(settings, "DEEP_RESEARCH_STREAM_DEBUG_EVENTS", False))
+                                and not is_tool_internal
+                                and (not lc_agent_name or lc_agent_name == "orchestrator")
+                            ):
+                                # Debug-only stream; keep guarded and resilient.
+                                await _xadd(_langgraph_event_payload(ev))
+
+                            if ev_type == "on_chain_start":
+                                # ... existing code ...
+                                pass
+
+                            elif ev_type == "on_chat_model_stream":
+                                # Only forward assistant model streams, not tool-internal LLM runs.
+                                if is_tool_internal:
+                                    continue
+                                # Deep research: only stream orchestrator text (no subagent streaming).
+                                if deep_research_enabled and lc_agent_name and lc_agent_name != "orchestrator":
+                                    continue
+                                # Normal graph uses `langgraph_node=agent`; deep research graphs often emit from `model`.
+                                # We still rely on tool_run_ids to skip tool-internal streams.
+                                if not deep_research_enabled:
+                                    if langgraph_node and langgraph_node != "agent":
+                                        continue
+                                chunk = data.get("chunk")
+                                if chunk:
+                                    # chunk might be an AIMessageChunk object
+                                    content = getattr(chunk, "content", "") if hasattr(chunk, "content") else chunk.get("content", "")
+                                    msg_id = getattr(chunk, "id", None) if hasattr(chunk, "id") else chunk.get("id")
+
+                                    if content:
+                                        # Check if message ID changed (new message started)
+                                        if msg_id != current_msg_id:
+                                            # Flush previous message's buffer first
+                                            await flush_buffer()
+                                            current_msg_id = msg_id
+
+                                        # Normalize content to string for buffering
+                                        # Gemini returns list of content blocks, OpenRouter returns string
+                                        if isinstance(content, list):
+                                            # Extract text from content blocks (Gemini format)
+                                            text_content = "".join(
+                                                block.get("text", "") if isinstance(block, dict) else str(block)
+                                                for block in content
+                                                if isinstance(block, dict) and block.get("type") == "text"
+                                            )
+                                        else:
+                                            text_content = str(content)
+
+                                        # Accumulate content in buffer
+                                        content_buffer += text_content
+
+                                        # Flush if buffer exceeds threshold
+                                        if len(content_buffer) >= BUFFER_THRESHOLD:
+                                            await flush_buffer()
+                                    # Skip setting payload - content_delta is handled via buffering
+                                    continue
+
+                            elif ev_type == "on_tool_start":
+                                # Flush any buffered content before tool events
+                                await flush_buffer()
+
+                                if run_id:
+                                    tool_run_ids.add(run_id)
+                                logger.debug(
+                                    "[CHAT] Tool start name=%s run_id=%s parent_run_id=%s node=%s",
+                                    ev.get("name"),
+                                    run_id,
+                                    parent_run_id,
+                                    langgraph_node,
+                                )
+                                payload = {
+                                    "type": "tool_start",
+                                    "tool": ev.get("name"),
+                                    "run_id": run_id,
+                                    "input": data.get("input")
+                                }
+
+                            elif ev_type == "on_tool_end":
+                                # Flush any buffered content before tool events
+                                await flush_buffer()
+
+                                if run_id and run_id in tool_run_ids:
+                                    tool_run_ids.discard(run_id)
+                                tool_output = data.get("output")
+                                # If output is a Message object (like ToolMessage), extract content
+                                if hasattr(tool_output, "content"):
+                                    final_output = tool_output.content
+                                else:
+                                    final_output = tool_output
+
+                                payload = {
+                                    "type": "tool_end",
+                                    "tool": ev.get("name"),
+                                    "run_id": run_id,
+                                    "output": final_output
+                                }
+
+                                if ev.get("name") == "report_chosen_videos":
+                                    chosen_ids = []
+                                    chosen_items = None
+                                    try:
+                                        if isinstance(final_output, dict):
+                                            chosen_ids = final_output.get("chosen_video_ids") or []
+                                            chosen_items = final_output.get("items")
+                                        elif hasattr(final_output, "get"):
+                                            chosen_ids = final_output.get("chosen_video_ids") or []
+                                            chosen_items = final_output.get("items")
+                                        elif isinstance(final_output, str):
+                                            parsed = json.loads(final_output)
+                                            chosen_ids = parsed.get("chosen_video_ids") or []
+                                            chosen_items = parsed.get("items")
+                                    except Exception:
+                                        chosen_ids = []
+                                        chosen_items = None
+                                    await _xadd({"type": "chosen_videos", "ids": chosen_ids, "items": chosen_items})
+
+                            if payload:
+                                await _xadd(payload)
+
+                if root_obs is not None and hasattr(root_obs, "update_trace"):
+                    try:
+                        root_obs.update_trace(
+                            name=langfuse_trace_name,
+                            user_id=telemetry_ctx.user_id,
+                            session_id=telemetry_ctx.session_id,
+                            input={
+                                "inputs": inputs,
+                                "filters": filters or {},
+                                "image_urls_count": len(image_urls or []),
+                            },
+                            output={
+                                "output_chars": output_chars,
+                                "output_chunks": output_chunks,
+                                "done": True,
+                            },
+                            metadata=langfuse_metadata,
+                            tags=langfuse_tags,
+                        )
+                    except Exception:
+                        pass
+
+            logger.info("Stream loop completed")
+            # Flush any remaining buffered content before sending done
+            await flush_buffer()
+            await _xadd({"type": "done"})
+            duration_ms = (time.perf_counter() - stream_started_at) * 1000.0
+            emit_action_succeeded(
+                telemetry_ctx,
+                duration_ms=duration_ms,
+                metadata={
+                    "chat_id": chat_id,
+                    "output_chars": output_chars,
+                    "output_chunks": output_chunks,
+                    "deep_research_enabled": deep_research_enabled,
+                },
+            )
+            logger.info(
+                "stream_success chat_id=%s action_id=%s attempt_no=%s duration_ms=%.2f output_chars=%s output_chunks=%s",
+                chat_id,
+                telemetry_ctx.action_id,
+                telemetry_ctx.attempt_no,
+                duration_ms,
+                output_chars,
+                output_chunks,
+            )
+        except Exception as e:
+            logger.error(f"Background stream error for {chat_id}: {e}", exc_info=True)
+            duration_ms = (time.perf_counter() - stream_started_at) * 1000.0
+            emit_action_failed(
+                telemetry_ctx,
+                duration_ms=duration_ms,
+                error_kind=type(e).__name__,
+                metadata={"chat_id": chat_id},
+            )
+            emit_chat_stream_server_error(
+                telemetry_ctx,
+                chat_id=chat_id,
+                error_kind=type(e).__name__,
+            )
+            logger.error(
+                "stream_fail chat_id=%s action_id=%s attempt_no=%s duration_ms=%.2f error_kind=%s",
+                chat_id,
+                telemetry_ctx.action_id,
+                telemetry_ctx.attempt_no,
+                duration_ms,
+                type(e).__name__,
+            )
             try:
-                await r.connection_pool.disconnect()
+                await _xadd({"type": "error", "error": str(e)})
             except Exception:
                 pass
+
+        finally:
             try:
                 await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
-            except Exception:
-                pass
-        logger.info(f"Background stream finished for {chat_id}")
+            except RedisConnectionError:
+                try:
+                    await r.connection_pool.disconnect()
+                except Exception:
+                    pass
+                try:
+                    await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
+                except Exception:
+                    pass
+            logger.info(f"Background stream finished for {chat_id}")
 
 
 # --- Endpoints ---
@@ -761,6 +916,8 @@ async def send_message(
     if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
 
+    incoming_telemetry = get_request_telemetry(req_obj)
+
     # Extract auth token from header for tool access
     auth_header = req_obj.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -770,6 +927,20 @@ async def send_message(
 
     send_request = SendMessageRequest.model_validate(await req_obj.json())
     logger.info("send message %s", send_request.filters)
+    attempt_no = send_request.attempt_no if (send_request.attempt_no and send_request.attempt_no > 0) else 1
+    message_client_id = send_request.client_id or incoming_telemetry.message_client_id
+    telemetry_ctx = update_request_telemetry(
+        req_obj,
+        action_id=incoming_telemetry.action_id or str(uuid.uuid4()),
+        user_id=str(user_uuid),
+        feature="chat",
+        operation="send_message",
+        subject_type=incoming_telemetry.subject_type or "chat_message",
+        subject_id=incoming_telemetry.subject_id or message_client_id,
+        message_client_id=message_client_id,
+        attempt_no=attempt_no,
+    )
+    emit_chat_request_received(telemetry_ctx, chat_id=str(chat_id), user_id=str(user_uuid))
 
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
@@ -802,8 +973,8 @@ async def send_message(
     )
 
     user_message: dict = {"role": "user", "content": content}
-    if send_request.client_id:
-        user_message["additional_kwargs"] = {"client_id": send_request.client_id}
+    if message_client_id:
+        user_message["additional_kwargs"] = {"client_id": message_client_id}
 
     inputs = {
         "messages": [user_message],
@@ -832,6 +1003,14 @@ async def send_message(
             "auth_token": auth_token,
             "filters": effective_filters,
             "user_id": str(user_uuid),
+            "action_id": telemetry_ctx.action_id,
+            "session_id": telemetry_ctx.session_id,
+            "attempt_no": telemetry_ctx.attempt_no,
+            "feature": "chat",
+            "operation": "stream_response",
+            "subject_type": telemetry_ctx.subject_type or "chat_message",
+            "subject_id": telemetry_ctx.subject_id or message_client_id,
+            "message_client_id": message_client_id,
         },
         # Deep research runs can take 10+ minutes; Cloud Tasks default deadlines can be too short.
         # Keep this <= Cloud Tasks maximum (commonly 30 minutes for HTTP targets).

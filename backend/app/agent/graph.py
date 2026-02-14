@@ -112,7 +112,9 @@ async def call_model(state: MessagesState, config: RunnableConfig):
     ])
     
     chain = prompt | model
-    response = await chain.ainvoke({"messages": messages}, config=config)
+    invoke_config = dict(config or {})
+    invoke_config.setdefault("run_name", "llm:chat_orchestrator")
+    response = await chain.ainvoke({"messages": messages}, config=invoke_config)
     return {"messages": [response]}
 
 

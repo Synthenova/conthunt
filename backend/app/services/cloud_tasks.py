@@ -308,6 +308,7 @@ class CloudTasksService:
             from app.api.v1.chats import stream_generator_to_redis
             from app.agent.runtime import create_agent_graph
             from app.core.redis_client import get_redis_from_state
+            from app.core.telemetry_context import merge_telemetry, telemetry_from_mapping
 
             chat_id = UUID(payload["chat_id"])
             try:
@@ -315,6 +316,14 @@ class CloudTasksService:
                 try:
                     from app.main import app as main_app
                     redis_client = get_redis_from_state(main_app.state)
+                    telemetry_ctx = merge_telemetry(
+                        telemetry_from_mapping(payload),
+                        feature=payload.get("feature") or "chat",
+                        operation=payload.get("operation") or "stream_response",
+                        subject_type=payload.get("subject_type") or "chat_message",
+                        subject_id=payload.get("subject_id") or payload.get("message_client_id"),
+                        message_client_id=payload.get("message_client_id"),
+                    )
                     await stream_generator_to_redis(
                         graph=graph,
                         chat_id=str(chat_id),
@@ -326,6 +335,7 @@ class CloudTasksService:
                         filters=payload.get("filters") or {},
                         user_id=payload.get("user_id"),
                         redis_client=redis_client,
+                        telemetry=telemetry_ctx,
                     )
                 finally:
                     try:

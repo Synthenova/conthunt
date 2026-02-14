@@ -22,6 +22,7 @@ from app.core import get_settings, logger
 from app.core.redis_client import get_app_redis
 from app.core.telemetry import trace_span
 from app.db import get_db_connection, set_rls_user, queries
+from app.integrations.posthog_client import capture_event
 
 from app.platforms import (
     PLATFORM_ADAPTERS,
@@ -165,6 +166,7 @@ async def search_worker(
     query: str,
     inputs: dict,
     redis_client: redis.Redis,
+    dispatched_at: float | None = None,
 ):
     """
     Background worker that:
@@ -177,6 +179,23 @@ async def search_worker(
     r = redis_client
     stream_key = f"search:{search_id}:stream"
     stream_maxlen = settings.REDIS_STREAM_MAXLEN_SEARCH
+    
+    start_time = time.time()
+    queue_duration_ms = 0
+    if dispatched_at:
+        queue_duration_ms = int((start_time - dispatched_at) * 1000)
+
+    # Telemetry: Search Started
+    capture_event(
+        distinct_id=str(user_uuid),
+        event="search_started",
+        properties={
+            "search_id": str(search_id),
+            "queue_duration_ms": queue_duration_ms,
+            "platform_count": len(inputs),
+            "platforms": list(inputs.keys()),
+        }
+    )
     
     collected_results: List[PlatformCallResult] = []
     
@@ -415,6 +434,21 @@ async def search_worker(
                 approximate=True,
             )
             await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
+            
+            # Telemetry: Search Failed
+            total_duration_ms = int((time.time() - start_time) * 1000)
+            capture_event(
+                distinct_id=str(user_uuid),
+                event="search_completed",
+                properties={
+                    "search_id": str(search_id),
+                    "duration_ms": total_duration_ms,
+                    "total_duration_ms": total_duration_ms + queue_duration_ms,
+                    "queue_duration_ms": queue_duration_ms,
+                    "success": False,
+                    "error": str(e),
+                }
+            )
         except Exception:
             pass
 
@@ -752,7 +786,9 @@ async def create_search(
             "search_id": str(search_id),
             "user_uuid": str(user_uuid),
             "query": request.query,
+            "query": request.query,
             "inputs": request.inputs,
+            "dispatched_at": time.time(),
         },
     )
     

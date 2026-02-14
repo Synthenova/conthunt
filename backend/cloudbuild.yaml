@@ -92,6 +92,13 @@ steps:
       - '--set-secrets=FRONTEND_RETURN_URL=FRONTEND_RETURN_URL:latest'
       - '--set-secrets=OTEL_SERVICE_NAME=OTEL_SERVICE_NAME:latest'
       - '--set-secrets=OTEL_RESOURCE_ATTRIBUTES=OTEL_RESOURCE_ATTRIBUTES:latest'
+      - '--set-secrets=TELEMETRY_POSTHOG_ENABLED=TELEMETRY_POSTHOG_ENABLED:latest'
+      - '--set-secrets=POSTHOG_PROJECT_API_KEY=POSTHOG_PROJECT_API_KEY:latest'
+      - '--set-secrets=POSTHOG_HOST=POSTHOG_HOST:latest'
+      - '--set-secrets=TELEMETRY_LANGFUSE_ENABLED=TELEMETRY_LANGFUSE_ENABLED:latest'
+      - '--set-secrets=LANGFUSE_PUBLIC_KEY=LANGFUSE_PUBLIC_KEY:latest'
+      - '--set-secrets=LANGFUSE_SECRET_KEY=LANGFUSE_SECRET_KEY:latest'
+      - '--set-secrets=LANGFUSE_HOST=LANGFUSE_HOST:latest'
       - '--set-secrets=SMTP_HOST=SMTP_HOST:latest'
       - '--set-secrets=SMTP_PORT=SMTP_PORT:latest'
       - '--set-secrets=SMTP_USER=SMTP_USER:latest'
@@ -123,6 +130,16 @@ steps:
       - '--set-secrets=LLM_EST_COMPLETION_TOKENS_DEFAULT=LLM_EST_COMPLETION_TOKENS_DEFAULT:latest'
       # Standard Env vars we might want explicit
       - '--set-env-vars=GCP_PROJECT=$PROJECT_ID,GCLOUD_PROJECT=$PROJECT_ID'
+
+  # ==========================================
+  # 3. Deploy Monitoring Dashboards
+  # ==========================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-dashboards'
+    entrypoint: bash
+    args:
+      - '-c'
+      - 'DEPLOY_DASHBOARDS=true PROJECT_ID=$PROJECT_ID ./scripts/observability/deploy_dashboards.sh'
 
 
 

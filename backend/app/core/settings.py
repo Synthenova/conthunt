@@ -1,5 +1,6 @@
 """Application settings loaded from environment variables."""
 import os
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -134,6 +135,18 @@ class Settings(BaseSettings):
     # OpenTelemetry
     OTEL_SERVICE_NAME: str = ""
     OTEL_RESOURCE_ATTRIBUTES: str = ""
+
+    # Telemetry integrations
+    TELEMETRY_POSTHOG_ENABLED: bool = True
+    POSTHOG_PROJECT_API_KEY: str = ""
+    POSTHOG_HOST: str = "https://app.posthog.com"
+    TELEMETRY_LANGFUSE_ENABLED: bool = True
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_HOST: str = Field(
+        default="https://cloud.langfuse.com",
+        validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+    )
 
     # Dodo Payments
     DODO_API_KEY: str = ""

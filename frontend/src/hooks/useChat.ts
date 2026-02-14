@@ -8,6 +8,15 @@ import { useChatStore, Chat, ChatMessage, ChatTagPayload } from '@/lib/chatStore
 import type { PlatformInputs } from '@/lib/clientFilters';
 import { BACKEND_URL, authFetch } from '@/lib/api';
 import { transformSearchResults } from '@/lib/transformers';
+import { buildTelemetryContext, toTelemetryHeaders } from '@/lib/telemetry/context';
+import { newActionId } from '@/lib/telemetry/ids';
+import {
+    trackChatMessageFailed,
+    trackChatMessageSent,
+    trackChatStreamFailed,
+    trackChatStreamStarted,
+    trackChatStreamSucceeded,
+} from '@/features/chat/telemetry';
 
 async function waitForAuth() {
     return new Promise<typeof auth.currentUser>((resolve) => {
@@ -316,6 +325,8 @@ export function useSendMessage() {
             model?: string;
             imageUrls?: string[];
             filters?: PlatformInputs;
+            attemptNo?: number;
+            messageClientId?: string;
         }
     ) => {
         // Use passed chatId or fall back to activeChatId from store
@@ -327,11 +338,30 @@ export function useSendMessage() {
 
         const token = await getAuthToken();
         const controller = abortController || new AbortController();
+        const attemptNo = options?.attemptNo ?? 1;
+        const actionId = newActionId();
 
-        // Optimistically add user message with a client id for reconciliation
-        const clientId = typeof crypto?.randomUUID === 'function'
-            ? crypto.randomUUID()
-            : `client-${Date.now()}`;
+        // Optimistically add user message with a client id for reconciliation.
+        const clientId = options?.messageClientId || (
+            typeof crypto?.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `client-${Date.now()}`
+        );
+        const telemetryContext = buildTelemetryContext({
+            action_id: actionId,
+            session_id: undefined,
+            attempt_no: attemptNo,
+            user_id: auth.currentUser?.uid || undefined,
+            feature: 'chat',
+            operation: 'send_message',
+            subject_type: 'chat_message',
+            subject_id: clientId,
+        });
+        const sendHeaders = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            ...toTelemetryHeaders(telemetryContext),
+        };
         const tempUserMsgId = `temp-${Date.now()}`;
         const optimisticContent = options?.imageUrls?.length
             ? [
@@ -349,10 +379,24 @@ export function useSendMessage() {
             additional_kwargs: { client_id: clientId },
         });
 
+        trackChatMessageSent(telemetryContext, {
+            input_len: message.length,
+            conversation_id: targetChatId,
+        });
         startStreaming();
 
+        let receivedChars = 0;
+        let receivedChunks = 0;
+        let streamSettled = false;
+        let streamStartedAt = 0;
+
         try {
-            const payload: any = { message, client_id: clientId, model: options?.model };
+            const payload: any = {
+                message,
+                client_id: clientId,
+                model: options?.model,
+                attempt_no: attemptNo,
+            };
             if (options?.tags?.length) {
                 payload.tags = options.tags.map((t) => ({
                     type: t.type,
@@ -367,26 +411,39 @@ export function useSendMessage() {
                 payload.filters = options.filters;
             }
 
-            // 1. Send message to start background streaming
+            const sendStartedAt = performance.now();
+            // 1. Send message to start background streaming.
             const sendRes = await fetch(`${BACKEND_URL}/v1/chats/${targetChatId}/send`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                },
+                headers: sendHeaders,
                 body: JSON.stringify(payload),
                 signal: controller.signal,
             });
 
             if (!sendRes.ok) {
+                trackChatMessageFailed(telemetryContext, {
+                    duration_ms: performance.now() - sendStartedAt,
+                    error_kind: 'http_error',
+                    http_status: sendRes.status,
+                });
                 throw new Error('Failed to send message');
             }
 
             options?.onSendOk?.();
 
-            // 2. Stream the response
+            const streamContext = {
+                ...telemetryContext,
+                operation: 'stream_response' as const,
+            };
+            trackChatStreamStarted(streamContext);
+            streamStartedAt = performance.now();
+
+            // 2. Stream the response.
             const streamPromise = fetchEventSource(`${BACKEND_URL}/v1/chats/${targetChatId}/stream`, {
-                headers: { 'Authorization': `Bearer ${token}` },
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    ...toTelemetryHeaders(streamContext),
+                },
                 signal: controller.signal,
                 onmessage(msg) {
                     if (!msg.data) return;
@@ -411,6 +468,8 @@ export function useSendMessage() {
                                 }
 
                                 if (textContent) {
+                                    receivedChars += textContent.length;
+                                    receivedChunks += 1;
                                     appendDelta(textContent, data.id);
                                 }
                                 break;
@@ -476,7 +535,7 @@ export function useSendMessage() {
                                             }
                                         });
                                     }
-                                    // Handle legacy structure (search_ids as objects) 
+                                    // Handle legacy structure (search_ids as objects)
                                     // Note: New structure has search_ids as strings, which we skip here as we need keywords
                                     else if (output?.search_ids && Array.isArray(output.search_ids)) {
                                         // Only process if it looks like the old object format
@@ -530,11 +589,28 @@ export function useSendMessage() {
                             case 'done':
                                 finalizeMessage();
                                 useChatStore.setState({ streamingTools: [] }); // Clear tools on done
+                                if (!streamSettled) {
+                                    streamSettled = true;
+                                    trackChatStreamSucceeded(streamContext, {
+                                        duration_ms: performance.now() - streamStartedAt,
+                                        output_chars: receivedChars,
+                                        received_chunks: receivedChunks,
+                                    });
+                                }
                                 break;
                             case 'error':
                                 console.error('Stream error:', data.error);
                                 resetStreaming();
                                 useChatStore.setState({ streamingTools: [] });
+                                if (!streamSettled) {
+                                    streamSettled = true;
+                                    trackChatStreamFailed(streamContext, {
+                                        duration_ms: performance.now() - streamStartedAt,
+                                        error_kind: 'server_stream_error',
+                                        received_chars: receivedChars,
+                                        received_chunks: receivedChunks,
+                                    });
+                                }
                                 break;
                         }
                     } catch (e) {
@@ -545,6 +621,15 @@ export function useSendMessage() {
                     if (!controller.signal.aborted) {
                         console.error('SSE Error', err);
                         resetStreaming();
+                        if (!streamSettled) {
+                            streamSettled = true;
+                            trackChatStreamFailed(streamContext, {
+                                duration_ms: performance.now() - streamStartedAt,
+                                error_kind: 'sse_error',
+                                received_chars: receivedChars,
+                                received_chunks: receivedChunks,
+                            });
+                        }
                     }
                 },
             });
@@ -555,9 +640,20 @@ export function useSendMessage() {
             if (err.name !== 'AbortError') {
                 console.error('Send message error:', err);
                 resetStreaming();
+                if (!streamSettled) {
+                    trackChatStreamFailed(
+                        { ...telemetryContext, operation: 'stream_response' },
+                        {
+                            duration_ms: streamStartedAt ? (performance.now() - streamStartedAt) : 0,
+                            error_kind: 'send_or_stream_exception',
+                            received_chars: receivedChars,
+                            received_chunks: receivedChunks,
+                        }
+                    );
+                }
             }
         }
-    }, [activeChatId, addMessage, startStreaming, appendDelta, setUserMessageId, finalizeMessage, resetStreaming, addCanvasSearchId]);
+    }, [activeChatId, addMessage, startStreaming, appendDelta, setUserMessageId, finalizeMessage, resetStreaming, addCanvasSearchId, queryClient]);
 
     return { sendMessage };
 }

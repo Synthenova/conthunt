@@ -19,6 +19,7 @@ from app.core.telemetry import setup_telemetry
 from app.db import init_db, close_db
 from app.realtime.stream_hub import StreamFanoutHub
 from app.api import v1_router
+from app.middleware.telemetry_context import TelemetryContextMiddleware
 from app.agent.runtime import create_agent_graph
 from app.db.db_semaphore import (
     DBSemaphore,
@@ -153,6 +154,8 @@ app = FastAPI(
 )
 
 setup_telemetry(app)
+
+app.add_middleware(TelemetryContextMiddleware)
 
 
 @app.exception_handler(LlmRateLimited)
