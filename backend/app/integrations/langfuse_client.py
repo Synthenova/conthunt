@@ -101,6 +101,7 @@ def _get_langfuse_client() -> Any | None:
             host=settings.LANGFUSE_HOST or None,
             tracer_provider=_langfuse_tracer_provider,
         )
+        logger.info("Langfuse client initialized successfully")
     except Exception as exc:
         logger.warning("Failed to initialize Langfuse client: %s", exc)
         _langfuse_client = None
