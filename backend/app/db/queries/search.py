@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.services.content_builder import extract_author_from_payload, content_item_from_row
+from app.core import get_settings
 
 from app.platforms.base import NormalizedItem, MediaUrl
 from app.db.decorators import log_query_timing
@@ -67,6 +68,7 @@ async def update_search_status(
     conn: AsyncConnection,
     search_id: UUID,
     status: str,
+    step_or_attempt: str | int = "0",
 ) -> None:
     """Update search status (running -> completed/failed)."""
     await conn.execute(
@@ -216,7 +218,8 @@ async def upsert_content_item(
             "published_at": item.published_at,
             "creator_handle": item.creator_handle,
             "metrics": json.dumps(item.metrics),
-            "payload": json.dumps(item.payload),
+            # Payload is intentionally not persisted (raw responses are archived to GCS).
+            "payload": json.dumps({}),
         }
     )
     row = result.fetchone()
@@ -264,8 +267,9 @@ async def upsert_content_items_batch(
             "author_name": item.author_name,
             "author_url": item.author_url,
             "author_image_url": item.author_image_url,
-            "metrics": json.dumps(item.metrics),
-            "payload": json.dumps(item.payload),
+            "metrics": item.metrics,
+            # Payload is intentionally not persisted (raw responses are archived to GCS).
+            "payload": {},
         })
 
     mapping = {}
@@ -280,18 +284,15 @@ async def upsert_content_items_batch(
                 )
                 SELECT 
                     id, platform, external_id, content_type, canonical_url,
-                    title, primary_text, 
-                    CAST(published_at AS TIMESTAMP WITH TIME ZONE), 
-                    creator_handle,
+                    title, primary_text, published_at, creator_handle,
                     author_id, author_name, author_url, author_image_url,
-                    metrics::jsonb, payload::jsonb
+                    metrics, payload
                 FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
                     id uuid, platform text, external_id text, content_type text, canonical_url text,
-                    title text, primary_text text, published_at text, creator_handle text,
+                    title text, primary_text text, published_at timestamptz, creator_handle text,
                     author_id text, author_name text, author_url text, author_image_url text,
-                    metrics text, payload text
+                    metrics jsonb, payload jsonb
                 )
-                ORDER BY platform, external_id
                 ON CONFLICT (platform, external_id) DO UPDATE SET
                     metrics = EXCLUDED.metrics,
                     updated_at = now(),
@@ -614,6 +615,8 @@ async def get_search_items_summary(
                 ci.creator_handle,
                 ci.content_type,
                 ci.primary_text,
+                ci.published_at,
+                ci.metrics,
                 ma.id as media_asset_id
             FROM search_results sr
             JOIN content_items ci ON sr.content_item_id = ci.id
@@ -632,7 +635,9 @@ async def get_search_items_summary(
             "creator_handle": row[2],
             "content_type": row[3],
             "primary_text": row[4],
-            "media_asset_id": str(row[5]) if row[5] else None,
+            "published_at": row[5],
+            "metrics": row[6] or {},
+            "media_asset_id": str(row[7]) if row[7] else None,
         })
 
     return items

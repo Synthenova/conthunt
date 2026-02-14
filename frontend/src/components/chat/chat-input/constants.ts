@@ -4,7 +4,7 @@ export const CHIP_TITLE_LIMIT = 10;
 
 export const MODEL_OPTIONS = [
 
-    { label: 'Gemini 3 Flash', value: 'google/gemini-3-flash-preview' },
+    { label: 'Gemini 3 Flash', value: 'openrouter/google/gemini-3-flash-preview' },
     { label: 'Grok 4.1 Fast (xAI)', value: 'openrouter/x-ai/grok-4.1-fast' },
     { label: 'MiMo-V2-Flash (Xiaomi, free)', value: 'openrouter/xiaomi/mimo-v2-flash:free' },
     { label: 'GPT-5.2 (OpenAI)', value: 'openrouter/openai/gpt-5.2' },

@@ -34,6 +34,7 @@ export default function HomePage() {
     const [searchQuery, setSearchQuery] = useState("");
     const [trendingNiches, setTrendingNiches] = useState<TrendingNiche[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [deepResearchEnabled, setDeepResearchEnabled] = useState(false);
 
     // Auto-start home tutorial on first visit
     useTutorialAutoStart({ flowId: "home_tour" });
@@ -100,7 +101,12 @@ export default function HomePage() {
                 </h1>
 
                 {/* Search Box */}
-                <HomeSearchBox value={searchQuery} onChange={setSearchQuery} />
+                <HomeSearchBox
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    deepResearchEnabled={deepResearchEnabled}
+                    onDeepResearchChange={setDeepResearchEnabled}
+                />
 
                 {/* Trending Tickers Stack */}
                 <div className="mt-[calc(var(--spacing)*34)] w-full max-w-[96rem] flex flex-wrap justify-center gap-x-6 gap-y-8 max-h-[160px] overflow-hidden content-start">

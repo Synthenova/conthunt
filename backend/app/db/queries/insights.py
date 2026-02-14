@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.decorators import log_query_timing
+from app.core import get_settings
 
 
 
@@ -77,6 +78,7 @@ async def update_board_insights_status(
     insights_result: Optional[dict] = None,
     error: Optional[str] = None,
     last_completed_at: Optional[datetime] = None,
+    step_or_attempt: str | int = "0",
 ) -> None:
     updates = ["status = :status", "updated_at = now()"]
     params: dict = {"insights_id": insights_id, "status": status}

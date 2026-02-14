@@ -3,6 +3,7 @@ import asyncio
 import base64
 import gzip
 import time
+from datetime import datetime
 from typing import List
 import uuid
 from uuid import UUID
@@ -32,9 +33,15 @@ from app.storage import upload_raw_json_gz
 from app.media import download_assets_batch
 from app.schemas import SearchRequest, LoadMoreRequest
 from app.services.cloud_tasks import cloud_tasks
+from app.services.cdn_signer import bulk_sign_gcs_uris, should_sign_asset
 from app.realtime.stream_hub import stream_id_gt
 
 router = APIRouter()
+
+def _is_terminal_payload(payload_str: str | None) -> bool:
+    if not payload_str:
+        return False
+    return ('"type": "done"' in payload_str) or ('"type": "error"' in payload_str)
 
 def _is_deadlock_error(err: Exception) -> bool:
     if isinstance(err, DBAPIError):
@@ -169,16 +176,22 @@ async def search_worker(
     settings = get_settings()
     r = redis_client
     stream_key = f"search:{search_id}:stream"
+    stream_maxlen = settings.REDIS_STREAM_MAXLEN_SEARCH
     
     collected_results: List[PlatformCallResult] = []
     
     try:
         # Push start event
-        await r.xadd(stream_key, {"data": json.dumps({
-            "type": "start", 
-            "platforms": [normalize_platform_slug(slug) for slug in inputs.keys()],
-            "search_id": str(search_id),
-        })})
+        await r.xadd(
+            stream_key,
+            {"data": json.dumps({
+                "type": "start",
+                "platforms": [normalize_platform_slug(slug) for slug in inputs.keys()],
+                "search_id": str(search_id),
+            })},
+            maxlen=stream_maxlen,
+            approximate=True,
+        )
         
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
             # Create all platform tasks
@@ -194,14 +207,23 @@ async def search_worker(
                 
                 # Transform and push to Redis
                 event_data = transform_result_to_stream_item(result)
-                await r.xadd(stream_key, {"data": json.dumps(event_data, default=str)})
+                await r.xadd(
+                    stream_key,
+                    {"data": json.dumps(event_data, default=str)},
+                    maxlen=stream_maxlen,
+                    approximate=True,
+                )
         
         # ========== DB WORK (happens after frontend is done) ==========
         assets_to_download = []
         raw_archive_tasks = []
+        raw_uris_by_platform: dict[str, str] = {}
 
         for result in collected_results:
             if result.success and result.parsed:
+                now = datetime.utcnow()
+                gcs_key = f"raw/{result.platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
+                raw_uris_by_platform[result.platform] = f"gs://{settings.GCS_BUCKET_RAW}/{gcs_key}"
                 raw_json_bytes = json.dumps(result.parsed.raw_response).encode("utf-8")
                 compressed = gzip.compress(raw_json_bytes)
                 compressed_b64 = base64.b64encode(compressed).decode("ascii")
@@ -209,6 +231,7 @@ async def search_worker(
                     "platform": result.platform,
                     "search_id": str(search_id),
                     "raw_json_compressed": compressed_b64,
+                    "gcs_key": gcs_key,
                 })
         
         max_attempts = 3
@@ -238,7 +261,7 @@ async def search_worker(
                             "error": result.error,
                             "duration_ms": result.duration_ms,
                             "next_cursor": result.parsed.next_cursor if result.parsed else None,
-                            "response_gcs_uri": None,
+                            "response_gcs_uri": raw_uris_by_platform.get(slug),
                             "response_meta": result.parsed.response_meta if result.parsed else {},
                         })
                         
@@ -340,9 +363,13 @@ async def search_worker(
 
         # ========== FINISH STREAMING ==========
         # Push done event - frontend stops loading here
-        await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
-        # Expire stream 5 minutes from now
-        await r.expire(stream_key, 300)
+        await r.xadd(
+            stream_key,
+            {"data": json.dumps({"type": "done"})},
+            maxlen=stream_maxlen,
+            approximate=True,
+        )
+        await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         # GCS uploads handled via Cloud Tasks above
@@ -362,6 +389,13 @@ async def search_worker(
                 )
         
     except Exception as e:
+        # If the DB gate is saturated/unavailable, raise so Cloud Tasks can retry with backoff
+        # (and local runners can surface the error instead of silently "failing").
+        if isinstance(e, HTTPException) and e.status_code in (429, 503):
+            detail = str(getattr(e, "detail", "") or "")
+            if "Database is busy" in detail or "Database gate" in detail:
+                raise
+
         logger.error(f"Search worker failed for {search_id}: {e}", exc_info=True)
         # Update status to failed
         try:
@@ -374,8 +408,13 @@ async def search_worker(
         
         # Try to push error to Redis (may already be closed)
         try:
-            await r.xadd(stream_key, {"data": json.dumps({"type": "error", "error": str(e)})})
-            await r.expire(stream_key, 300)
+            await r.xadd(
+                stream_key,
+                {"data": json.dumps({"type": "error", "error": str(e)})},
+                maxlen=stream_maxlen,
+                approximate=True,
+            )
+            await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
         except Exception:
             pass
 
@@ -401,6 +440,7 @@ async def load_more_worker(
     settings = get_settings()
     r = redis_client
     stream_key = f"search:{search_id}:more:stream"
+    stream_maxlen = settings.REDIS_STREAM_MAXLEN_SEARCH_MORE
     
     # Clear old stream messages from previous load more requests
     # This prevents the frontend from seeing stale "done" messages
@@ -410,11 +450,16 @@ async def load_more_worker(
     
     try:
         # Push start event
-        await r.xadd(stream_key, {"data": json.dumps({
-            "type": "start", 
-            "platforms": [normalize_platform_slug(slug) for slug in platform_cursors.keys()],
-            "search_id": str(search_id),
-        })})
+        await r.xadd(
+            stream_key,
+            {"data": json.dumps({
+                "type": "start",
+                "platforms": [normalize_platform_slug(slug) for slug in platform_cursors.keys()],
+                "search_id": str(search_id),
+            })},
+            maxlen=stream_maxlen,
+            approximate=True,
+        )
         
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
             # Create all platform tasks with cursors merged into params
@@ -430,14 +475,23 @@ async def load_more_worker(
                 
                 # Transform and push to Redis
                 event_data = transform_result_to_stream_item(result)
-                await r.xadd(stream_key, {"data": json.dumps(event_data, default=str)})
+                await r.xadd(
+                    stream_key,
+                    {"data": json.dumps(event_data, default=str)},
+                    maxlen=stream_maxlen,
+                    approximate=True,
+                )
         
         # ========== DB WORK ==========
         assets_to_download = []
         raw_archive_tasks = []
+        raw_uris_by_platform: dict[str, str] = {}
 
         for result in collected_results:
             if result.success and result.parsed:
+                now = datetime.utcnow()
+                gcs_key = f"raw/{result.platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
+                raw_uris_by_platform[result.platform] = f"gs://{settings.GCS_BUCKET_RAW}/{gcs_key}"
                 raw_json_bytes = json.dumps(result.parsed.raw_response).encode("utf-8")
                 compressed = gzip.compress(raw_json_bytes)
                 compressed_b64 = base64.b64encode(compressed).decode("ascii")
@@ -445,6 +499,7 @@ async def load_more_worker(
                     "platform": result.platform,
                     "search_id": str(search_id),
                     "raw_json_compressed": compressed_b64,
+                    "gcs_key": gcs_key,
                 })
 
         max_attempts = 3
@@ -480,7 +535,7 @@ async def load_more_worker(
                             "error": result.error,
                             "duration_ms": result.duration_ms,
                             "next_cursor": result.parsed.next_cursor if result.parsed else None,
-                            "response_gcs_uri": None,
+                            "response_gcs_uri": raw_uris_by_platform.get(slug),
                             "response_meta": result.parsed.response_meta if result.parsed else {},
                         })
                         
@@ -570,8 +625,13 @@ async def load_more_worker(
                     )
 
         # ========== FINISH STREAMING ==========
-        await r.xadd(stream_key, {"data": json.dumps({"type": "done"})})
-        await r.expire(stream_key, 300)
+        await r.xadd(
+            stream_key,
+            {"data": json.dumps({"type": "done"})},
+            maxlen=stream_maxlen,
+            approximate=True,
+        )
+        await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         if assets_to_download:
@@ -588,11 +648,21 @@ async def load_more_worker(
                 )
         
     except Exception as e:
+        if isinstance(e, HTTPException) and e.status_code in (429, 503):
+            detail = str(getattr(e, "detail", "") or "")
+            if "Database is busy" in detail or "Database gate" in detail:
+                raise
+
         logger.error(f"Load more worker failed for {search_id}: {e}", exc_info=True)
         
         try:
-            await r.xadd(stream_key, {"data": json.dumps({"type": "error", "error": str(e)})})
-            await r.expire(stream_key, 300)
+            await r.xadd(
+                stream_key,
+                {"data": json.dumps({"type": "error", "error": str(e)})},
+                maxlen=stream_maxlen,
+                approximate=True,
+            )
+            await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
         except Exception:
             pass
 
@@ -670,6 +740,7 @@ async def create_search(
         )
         from app.db.queries import streaks as streak_queries
         await streak_queries.record_activity(conn, user_uuid, "search", timezone=timezone)
+        # analytics outbox removed
         await conn.commit()
 
     # Spawn background worker via Cloud Tasks
@@ -719,6 +790,23 @@ async def stream_search(
         # If already completed, return results from DB
         if search["status"] == "completed":
             results = await queries.get_search_results_with_content(conn, search_id)
+            # Single-hop requirement: sign stored assets directly in the response.
+            uris_to_sign: list[str] = []
+            for item in results:
+                for a in item.get("assets", []) or []:
+                    if should_sign_asset(a):
+                        uris_to_sign.append(a["gcs_uri"])
+
+            signed_cache: dict[str, str] = {}
+            try:
+                signed_cache = await bulk_sign_gcs_uris(uris_to_sign, expiration_seconds=3600, max_concurrency=25)
+            except Exception as e:
+                logger.warning("Bulk signing failed for search_id=%s: %s", search_id, e)
+
+            for item in results:
+                for a in item.get("assets", []) or []:
+                    if should_sign_asset(a):
+                        a["source_url"] = signed_cache.get(a["gcs_uri"], a.get("source_url"))
             return {
                 "status": "completed",
                 "results": results,
@@ -736,14 +824,43 @@ async def stream_search(
     hub = getattr(request.app.state, "stream_hub", None)
 
     async def event_generator():
+        async def catch_up_from_redis(last_id: str):
+            nonlocal last_sent_id
+            cur = last_id or "0-0"
+            while True:
+                streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
+                if not streams:
+                    return
+                _, messages = streams[0]
+                if not messages:
+                    return
+                for msg_id, data_map in messages:
+                    payload_str = data_map.get("data")
+                    cur = msg_id
+                    last_sent_id = msg_id
+                    if payload_str is None:
+                        continue
+                    yield {
+                        "id": msg_id,
+                        "event": "message",
+                        "data": payload_str,
+                    }
+                    await asyncio.sleep(0)
+                    if _is_terminal_payload(payload_str):
+                        return
+                if len(messages) < 200:
+                    return
+
         if hub is None:
             logger.warning(
                 "Stream hub missing; SSE will use per-connection Redis XREAD. search_id=%s",
                 search_id,
             )
-            last_id = "0-0"
+            last_id = last_event_id or "0-0"
             try:
                 while True:
+                    if await request.is_disconnected():
+                        return
                     streams = await redis_client.xread(
                         {stream_key: last_id},
                         count=50,
@@ -761,9 +878,7 @@ async def stream_search(
                                 "event": "message",
                                 "data": payload_str,
                             }
-                            if payload_str and '"type": "done"' in payload_str:
-                                return
-                            if payload_str and '"type": "error"' in payload_str:
+                            if _is_terminal_payload(payload_str):
                                 return
             except asyncio.CancelledError:
                 pass
@@ -772,21 +887,9 @@ async def stream_search(
         queue = await hub.subscribe(stream_key)
         last_sent_id = last_event_id or "0-0"
         try:
-            min_id = "-" if not last_event_id else f"({last_event_id}"
-            history = await redis_client.xrange(stream_key, min=min_id, max="+")
-            for msg_id, data_map in history:
-                payload_str = data_map.get("data")
-                if payload_str is None:
-                    continue
-                last_sent_id = msg_id
-                yield {
-                    "id": msg_id,
-                    "event": "message",
-                    "data": payload_str,
-                }
-                if payload_str and '"type": "done"' in payload_str:
-                    return
-                if payload_str and '"type": "error"' in payload_str:
+            async for ev in catch_up_from_redis(last_sent_id):
+                yield ev
+                if _is_terminal_payload(ev.get("data")):
                     return
 
             while True:
@@ -794,6 +897,10 @@ async def stream_search(
                     msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
                 except asyncio.TimeoutError:
                     yield {"event": "ping", "data": ""}
+                    async for ev in catch_up_from_redis(last_sent_id):
+                        yield ev
+                        if _is_terminal_payload(ev.get("data")):
+                            return
                     continue
                 if not payload_str:
                     continue
@@ -805,16 +912,19 @@ async def stream_search(
                     "event": "message",
                     "data": payload_str,
                 }
-                if payload_str and '"type": "done"' in payload_str:
-                    return
-                if payload_str and '"type": "error"' in payload_str:
+                if _is_terminal_payload(payload_str):
                     return
         except asyncio.CancelledError:
             pass
         finally:
             await hub.unsubscribe(stream_key, queue)
     
-    return EventSourceResponse(event_generator())
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return EventSourceResponse(event_generator(), headers=headers)
 
 
 @router.post("/search/{search_id}/more")
@@ -896,6 +1006,7 @@ async def load_more(
             raise HTTPException(status_code=402, detail="Credit limit exceeded")
         from app.db.queries import streaks as streak_queries
         await streak_queries.record_activity(conn, user_uuid, "search", timezone=timezone)
+        # analytics outbox removed
         await conn.commit()
     
     # Spawn background worker via Cloud Tasks
@@ -920,6 +1031,7 @@ async def stream_load_more(
     search_id: UUID,
     request: Request,
     user: dict = Depends(get_current_user),
+    last_event_id: str | None = Header(None, alias="Last-Event-ID"),
     redis_client: redis.Redis = Depends(get_redis),
 ):
     """
@@ -940,41 +1052,105 @@ async def stream_load_more(
     
     # Stream from Redis
     stream_key = f"search:{search_id}:more:stream"
+    hub = getattr(request.app.state, "stream_hub", None)
     
     async def event_generator():
-        last_id = "0-0"
-        
-        try:
+        async def catch_up_from_redis(last_id: str):
+            nonlocal last_sent_id
+            cur = last_id or "0-0"
             while True:
-                if await request.is_disconnected():
-                    break
-                
-                streams = await redis_client.xread(
-                    {stream_key: last_id},
-                    count=50,
-                    block=10000  # 10 second timeout
-                )
-                
+                streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
                 if not streams:
+                    return
+                _, messages = streams[0]
+                if not messages:
+                    return
+                for msg_id, data_map in messages:
+                    payload_str = data_map.get("data")
+                    cur = msg_id
+                    last_sent_id = msg_id
+                    if payload_str is None:
+                        continue
+                    yield {
+                        "id": msg_id,
+                        "event": "message",
+                        "data": payload_str,
+                    }
+                    await asyncio.sleep(0)
+                    if _is_terminal_payload(payload_str):
+                        return
+                if len(messages) < 200:
+                    return
+
+        if hub is None:
+            last_id = last_event_id or "0-0"
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        return
+                    streams = await redis_client.xread(
+                        {stream_key: last_id},
+                        count=50,
+                        block=10000,
+                    )
+                    if not streams:
+                        yield {"event": "ping", "data": ""}
+                        continue
+                    for _, messages in streams:
+                        for msg_id, data_map in messages:
+                            last_id = msg_id
+                            payload_str = data_map.get("data")
+                            yield {
+                                "id": msg_id,
+                                "event": "message",
+                                "data": payload_str,
+                            }
+                            await asyncio.sleep(0)
+                            if _is_terminal_payload(payload_str):
+                                return
+            except asyncio.CancelledError:
+                pass
+            return
+
+        queue = await hub.subscribe(stream_key)
+        last_sent_id = last_event_id or "0-0"
+        try:
+            async for ev in catch_up_from_redis(last_sent_id):
+                yield ev
+                if _is_terminal_payload(ev.get("data")):
+                    return
+
+            while True:
+                try:
+                    msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
+                except asyncio.TimeoutError:
                     yield {"event": "ping", "data": ""}
+                    async for ev in catch_up_from_redis(last_sent_id):
+                        yield ev
+                        if _is_terminal_payload(ev.get("data")):
+                            return
                     continue
-                
-                for _, messages in streams:
-                    for msg_id, data_map in messages:
-                        last_id = msg_id
-                        payload_str = data_map.get("data")
-                        yield {
-                            "id": msg_id,
-                            "event": "message",
-                            "data": payload_str
-                        }
-                        
-                        # Check if done
-                        if payload_str and '"type": "done"' in payload_str:
-                            return
-                        if payload_str and '"type": "error"' in payload_str:
-                            return
+                if not payload_str:
+                    continue
+                if not stream_id_gt(msg_id, last_sent_id):
+                    continue
+                last_sent_id = msg_id
+                yield {
+                    "id": msg_id,
+                    "event": "message",
+                    "data": payload_str,
+                }
+                await asyncio.sleep(0)
+                if _is_terminal_payload(payload_str):
+                    return
         except asyncio.CancelledError:
             pass
+        finally:
+            await hub.unsubscribe(stream_key, queue)
     
-    return EventSourceResponse(event_generator())
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return EventSourceResponse(event_generator(), headers=headers)

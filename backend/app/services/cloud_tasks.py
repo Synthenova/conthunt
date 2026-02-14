@@ -1,17 +1,25 @@
 
+import asyncio
 import json
 import time
 from google.cloud import tasks_v2
+from google.protobuf import duration_pb2
 from google.protobuf import timestamp_pb2
 
 from app.core import get_settings, logger
 from app.core.telemetry import trace_span
 from app.db.session import get_db_connection
+from app.db.db_semaphore import db_kind_override
+
 
 class CloudTasksService:
     def __init__(self):
         self.settings = get_settings()
         self.client = tasks_v2.CloudTasksClient()
+        # Local-dev safety valve: when we run tasks via asyncio.create_task(), those
+        # tasks execute in-process and can fan out without any Cloud Tasks dispatch cap.
+        # Bound local media downloads regardless of priority/semaphore bypass.
+        self._local_media_download_sem = asyncio.Semaphore(2)
 
     def get_parent(self, queue_name: str) -> str:
         return self.client.queue_path(
@@ -26,14 +34,22 @@ class CloudTasksService:
         queue_name: str,
         relative_uri: str,
         payload: dict | None = None,
-        schedule_seconds: int | None = None
+        schedule_seconds: int | None = None,
+        dispatch_deadline_seconds: int | None = None,
     ) -> str:
         """
         Create a secure HTTP task on Cloud Tasks.
         """
         if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:            
             import asyncio
-            asyncio.create_task(self._run_local_task(relative_uri, payload))
+            async def _run():
+                # Local task execution
+                # Ensure DB slots are charged against the "tasks" semaphore key, not the
+                # originating API request context.
+                with db_kind_override("tasks"):
+                    await self._run_local_task(relative_uri, payload)
+
+            asyncio.create_task(_run())
             return "local-task-id"
 
         url = f"{self.settings.API_BASE_URL}{relative_uri}"
@@ -57,6 +73,11 @@ class CloudTasksService:
             timestamp = timestamp_pb2.Timestamp()
             timestamp.FromSeconds(int(time.time() + schedule_seconds))
             task["schedule_time"] = timestamp
+
+        if dispatch_deadline_seconds:
+            # Cloud Tasks dispatch deadline must be >= handler runtime; Cloud Run timeout
+            # should be configured to be >= this value as well.
+            task["dispatch_deadline"] = duration_pb2.Duration(seconds=int(dispatch_deadline_seconds))
 
         try:
             response = self.client.create_task(request={"parent": parent, "task": task})
@@ -99,7 +120,7 @@ class CloudTasksService:
                 
                 # Wait for video to be ready (max 3 min) - non-YouTube only
                 if not is_youtube:
-                    for attempt in range(5):
+                    for attempt in range(12):
                         async with get_db_connection() as conn:
                             asset = await get_media_asset_by_id(conn, media_asset_id)
                         status = asset.get("status", "") if asset else ""
@@ -107,15 +128,17 @@ class CloudTasksService:
                             break
                         if status == "failed":
                             raise Exception("Video download failed")
-                        logger.debug(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/18")
+                        logger.debug(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/12")
                         await asyncio.sleep(10)
                     else:
-                        raise Exception("Video not ready after 3 min timeout")
+                        raise Exception("Video not ready after 2 min timeout")
                 
                 await _execute_gemini_analysis(
                     analysis_id=analysis_id,
                     media_asset_id=media_asset_id,
-                    video_uri=payload["video_uri"]
+                    video_uri=payload["video_uri"],
+                    chat_id=payload.get("chat_id"),
+                    user_id=payload.get("user_id"),
                 )
             except Exception as e:
                 logger.error(f"[LOCAL] Gemini analysis failed: {e}", exc_info=True)
@@ -171,13 +194,24 @@ class CloudTasksService:
             is_priority = payload.get("priority", False)
             async with httpx.AsyncClient(timeout=self.settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
                 try:
-                    await download_asset_with_claim(
-                        http_client=client,
-                        asset_id=asset_id,
-                        platform=payload["platform"],
-                        external_id=payload["external_id"],
-                        skip_semaphore=is_priority,
-                    )
+                    if is_priority:
+                        # Priority downloads should bypass local-dev caps (mirrors Cloud Tasks dispatch control).
+                        await download_asset_with_claim(
+                            http_client=client,
+                            asset_id=asset_id,
+                            platform=payload["platform"],
+                            external_id=payload["external_id"],
+                            skip_semaphore=True,
+                        )
+                    else:
+                        async with self._local_media_download_sem:
+                            await download_asset_with_claim(
+                                http_client=client,
+                                asset_id=asset_id,
+                                platform=payload["platform"],
+                                external_id=payload["external_id"],
+                                skip_semaphore=False,
+                            )
                 except Exception as e:
                     logger.error(f"[LOCAL] Media download failed: {e}", exc_info=True)
                     async with get_db_connection() as conn:
@@ -192,7 +226,8 @@ class CloudTasksService:
                 await upload_raw_compressed(
                     platform=payload["platform"],
                     search_id=UUID(payload["search_id"]),
-                    compressed_data=compressed_bytes
+                    compressed_data=compressed_bytes,
+                    key_override=payload.get("gcs_key"),
                 )
             except Exception as e:
                 logger.error(f"[LOCAL] Raw archive failed: {e}", exc_info=True)
@@ -289,6 +324,7 @@ class CloudTasksService:
                         model_name=payload.get("model_name"),
                         image_urls=payload.get("image_urls") or [],
                         filters=payload.get("filters") or {},
+                        user_id=payload.get("user_id"),
                         redis_client=redis_client,
                     )
                 finally:
@@ -301,11 +337,18 @@ class CloudTasksService:
                 try:
                     from app.main import app as main_app
                     redis_client = get_redis_from_state(main_app.state)
+                    from app.core import get_settings
+                    settings = get_settings()
                     await redis_client.xadd(
                         f"chat:{str(chat_id)}:stream",
                         {"data": json.dumps({"type": "error", "error": str(e)})},
+                        maxlen=settings.REDIS_STREAM_MAXLEN_CHAT,
+                        approximate=True,
                     )
-                    await redis_client.expire(f"chat:{str(chat_id)}:stream", 60)
+                    await redis_client.expire(
+                        f"chat:{str(chat_id)}:stream",
+                        settings.REDIS_STREAM_TTL_S_CHAT,
+                    )
                 except Exception as exc:
                     logger.warning("[LOCAL] Redis unavailable for chat error: %s", exc)
                 

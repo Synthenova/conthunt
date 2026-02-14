@@ -10,6 +10,7 @@ from app.auth import get_current_user
 import redis.asyncio as redis
 
 from app.agent.model_factory import init_chat_model
+from app.llm.context import set_llm_context
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
@@ -290,10 +291,11 @@ async def get_trending_niches(
         
         prompt = "global ranking of top niches name and hashtag. Find at least 15 items to ensure we have enough good ones."
         
-        response = await structured_llm.ainvoke([
-            SystemMessage(content="You are a trend hunter. use google search to find real-time global trending niches."),
-            HumanMessage(content=prompt)
-        ])
+        with set_llm_context(user_id="system:trending", route="trending.niches"):
+            response = await structured_llm.ainvoke([
+                SystemMessage(content="You are a trend hunter. use google search to find real-time global trending niches."),
+                HumanMessage(content=prompt)
+            ])
         
         logger.info(f"Generated {len(response.niches)} trending niches")
         

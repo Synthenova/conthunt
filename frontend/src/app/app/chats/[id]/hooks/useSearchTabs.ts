@@ -70,7 +70,7 @@ export function useSearchTabs(chatId: string, activeSearchId: string | null, set
     useEffect(() => {
         if (allSearchIds.length > 0) {
             const latestId = allSearchIds[0];
-            const nextActive = !activeSearchId || !allSearchIds.includes(activeSearchId)
+            const nextActive = !activeSearchId || (!allSearchIds.includes(activeSearchId) && activeSearchId !== "deep-research")
                 ? latestId
                 : activeSearchId;
             setActiveSearchId(nextActive);
@@ -80,6 +80,11 @@ export function useSearchTabs(chatId: string, activeSearchId: string | null, set
     // Better Auto-switch logic using ref
     const prevSearchCountRef = useRef(0);
     useEffect(() => {
+        // If user is on the Deep Research tab, don't auto-switch away when new searches arrive.
+        if (activeSearchId === "deep-research") {
+            prevSearchCountRef.current = allSearchIds.length;
+            return;
+        }
         if (allSearchIds.length > prevSearchCountRef.current) {
             // New search added! Switch to it (top of list).
             const latest = allSearchIds[0];

@@ -17,9 +17,16 @@ import {
 interface HomeSearchBoxProps {
     value?: string;
     onChange?: (value: string) => void;
+    deepResearchEnabled?: boolean;
+    onDeepResearchChange?: (enabled: boolean) => void;
 }
 
-export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
+export function HomeSearchBox({
+    value,
+    onChange,
+    deepResearchEnabled = false,
+    onDeepResearchChange,
+}: HomeSearchBoxProps) {
     const [localMessage, setLocalMessage] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
@@ -59,6 +66,7 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                 title: messageText.slice(0, 50),
                 contextType: undefined,
                 contextId: undefined,
+                deepResearchEnabled,
             });
 
             // Set pending message and navigate - chat page will handle sending
@@ -141,16 +149,25 @@ export function HomeSearchBox({ value, onChange }: HomeSearchBoxProps) {
                         <div className="flex items-center gap-2">
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-700 border border-white/5 rounded-full px-3 py-1.5 cursor-not-allowed">
+                                    <button
+                                        type="button"
+                                        onClick={() => onDeepResearchChange?.(!deepResearchEnabled)}
+                                        className={cn(
+                                            "text-[10px] uppercase font-bold tracking-wider border rounded-full px-3 py-1.5 transition-colors",
+                                            deepResearchEnabled
+                                                ? "text-white border-white/30 bg-white/10"
+                                                : "text-zinc-700 border-white/5 hover:text-white/80"
+                                        )}
+                                    >
                                         Deep Search
-                                    </span>
+                                    </button>
                                 </TooltipTrigger>
                                 <TooltipContent
                                     side="bottom"
                                     showArrow={false}
                                     className="bg-black/90 backdrop-blur-md border border-white/10 text-white shadow-2xl px-4 py-2 text-xs font-medium tracking-wide mt-2"
                                 >
-                                    Coming soon
+                                    {deepResearchEnabled ? "Deep search enabled" : "Enable deep search"}
                                 </TooltipContent>
                             </Tooltip>
                         </div>

@@ -1,7 +1,11 @@
 """Database session and engine management."""
+import asyncio
+import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+from urllib.parse import urlparse
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
@@ -10,18 +14,57 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy import event, text
+from sqlalchemy.pool import NullPool
 
-from app.core import get_settings
+from app.core import get_settings, logger
+from app.db.db_semaphore import db_slot, get_db_kind, get_global_db_semaphore
 
 settings = get_settings()
+
+connect_args = {}
+poolclass = None
+
+def _looks_like_pgbouncer(url: str) -> bool:
+    try:
+        # SQLAlchemy URLs: postgresql+asyncpg://...
+        u = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        parsed = urlparse(u)
+        if parsed.hostname in {"pgbouncer"}:
+            return True
+        if parsed.port == 6432:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+if settings.DB_PGBOUNCER_MODE.lower() == "transaction" or _looks_like_pgbouncer(settings.DATABASE_URL):
+    # asyncpg caches prepared statements; that can break behind transaction poolers.
+    connect_args["statement_cache_size"] = 0
+    # Keep app-side pool small; PgBouncer is the pool.
+    # (Leave pool sizing configurable; see settings.DB_POOL_SIZE/OVERFLOW.)
+
+# Optional: disable SQLAlchemy pooling and let PgBouncer handle pooling/multiplexing.
+# This prevents app-side QueuePool timeouts when concurrency spikes (e.g. deep research fanout).
+if bool(getattr(settings, "DB_USE_NULLPOOL", False)):
+    poolclass = NullPool
 
 # Create async engine
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    **(
+        {
+            "pool_size": settings.DB_POOL_SIZE,
+            "max_overflow": settings.DB_MAX_OVERFLOW,
+            "pool_timeout": settings.DB_POOL_TIMEOUT,
+        }
+        if poolclass is None
+        else {}
+    ),
+    poolclass=poolclass,
+    connect_args=connect_args,
 )
 
 
@@ -45,6 +88,37 @@ async_session_factory = async_sessionmaker(
 @asynccontextmanager
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Provide a transactional scope around a series of operations."""
+    sem = get_global_db_semaphore()
+    kind = get_db_kind()
+    max_wait_ms = settings.DB_SEM_TASKS_MAX_WAIT_MS if kind == "tasks" else settings.DB_SEM_API_MAX_WAIT_MS
+    fail_status = 503 if kind == "tasks" else 429
+
+    if settings.DB_SEMAPHORE_ENABLED and sem is not None:
+        slot_cm = db_slot(sem, kind, max_wait_ms=max_wait_ms, fail_status=fail_status)
+        try:
+            await slot_cm.__aenter__()
+        except Exception as exc:
+            # Busy is an HTTPException and should propagate.
+            if isinstance(exc, HTTPException):
+                raise
+            # Fail-open only for semaphore infrastructure errors.
+            logger.warning("DB semaphore error in get_db_session (fail-open): %s", exc, exc_info=True)
+        else:
+            try:
+                async with async_session_factory() as session:
+                    try:
+                        yield session
+                        await session.commit()
+                    except Exception:
+                        await session.rollback()
+                        raise
+                return
+            finally:
+                try:
+                    await slot_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
+
     async with async_session_factory() as session:
         try:
             yield session
@@ -57,8 +131,37 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 @asynccontextmanager
 async def get_db_connection() -> AsyncGenerator[AsyncConnection, None]:
     """Get raw async connection for RLS operations."""
+    sem = get_global_db_semaphore()
+    kind = get_db_kind()
+    max_wait_ms = settings.DB_SEM_TASKS_MAX_WAIT_MS if kind == "tasks" else settings.DB_SEM_API_MAX_WAIT_MS
+    fail_status = 503 if kind == "tasks" else 429
+
+    if settings.DB_SEMAPHORE_ENABLED and sem is not None:
+        slot_cm = db_slot(sem, kind, max_wait_ms=max_wait_ms, fail_status=fail_status)
+        try:
+            await slot_cm.__aenter__()
+        except Exception as exc:
+            if isinstance(exc, HTTPException):
+                raise
+            logger.warning("DB semaphore error in get_db_connection (fail-open): %s", exc, exc_info=True)
+        else:
+            try:
+                async with engine.connect() as conn:
+                    await conn.execute(text(f"SET search_path TO {settings.DB_SCHEMA}, public"))
+                    try:
+                        yield conn
+                        await conn.commit()
+                    except Exception:
+                        await conn.rollback()
+                        raise
+                return
+            finally:
+                try:
+                    await slot_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
+
     async with engine.connect() as conn:
-        # Set search path explicitly for this connection
         await conn.execute(text(f"SET search_path TO {settings.DB_SCHEMA}, public"))
         try:
             yield conn

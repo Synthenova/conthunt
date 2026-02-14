@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.decorators import log_query_timing
+from app.core import get_settings
 
 
 
@@ -117,6 +118,7 @@ async def update_analysis_status(
     token_usage: int | None = None,
     error: str | None = None,
     created_at: datetime | None = None,
+    step_or_attempt: str | int = "0",
 ) -> None:
     """Update analysis status and optionally set result or error."""
     updates = ["status = :status"]

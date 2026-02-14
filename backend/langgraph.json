@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "deep_agent": "./app/agent/langgraph_dev.py:deep_agent_graph"
+  },
+  "env": ".env.local"
+}

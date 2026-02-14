@@ -19,10 +19,12 @@ import {
     CollapsibleContent,
     CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { Badge } from '@/components/ui/badge';
 import { Loader } from '@/components/ui/loader';
 import { ChatLoader } from './ChatLoader';
 import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { ContentDrawer } from '@/components/twelvelabs/ContentDrawer';
+import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Loader2, Sparkles, Sparkle, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus, Coins } from 'lucide-react';
 
@@ -46,13 +48,21 @@ function ThinkingTrigger({ tools }: { tools: ToolCallInfo[] }) {
                 const result = JSON.parse(t.result);
                 if (result.search_ids && Array.isArray(result.search_ids)) {
                     result.search_ids.forEach((id: string) => allSearchIds.add(id));
+                } else if (Array.isArray(result.executed)) {
+                    // deep_search_batch_wait
+                    result.executed.forEach((r: any) => {
+                        if (r?.search_id) allSearchIds.add(r.search_id);
+                    });
                 }
             } catch { /* ignore parse errors */ }
         }
     });
 
     const searchCount = allSearchIds.size;
-    const analysisCount = tools.filter(t => t.name.toLowerCase().includes('video_analysis')).length;
+    const analysisCount = tools.filter(t => {
+        const n = t.name.toLowerCase();
+        return n.includes('video_analysis') || n.includes('analyze_search_batch_with_criteria') || n.includes('answer_video_question');
+    }).length;
     const credits = searchCount + (analysisCount * 2);
 
     return (
@@ -283,10 +293,24 @@ function getToolDisplayLabel(name: string, count: number): string {
         case 'get_search_items': return count > 1 ? `Loading ${count} results` : 'Loading your results';
         case 'get_board_items': return count > 1 ? `Loading ${count} boards` : 'Loading your board';
         case 'get_video_analysis': return count > 1 ? `Analyzing ${count} videos` : 'Analyzing your video';
+        case 'deep_search_batch_wait': return 'Searching across platforms';
+        case 'get_search_overview': return 'Reviewing search results';
+        case 'analyze_search_batch_with_criteria': return 'Scoring top videos';
+        case 'answer_video_question': return 'Answering about a video';
+        case 'report_chosen_videos': return 'Selecting final videos';
         case 'get_user_boards': return 'Fetching your boards';
         case 'search_my_videos': return 'Searching your videos';
         case 'get_chat_searches': return 'Loading your searches';
         default: return name;
+    }
+}
+
+function tryParseJson(value?: string) {
+    if (!value) return null;
+    try {
+        return JSON.parse(value);
+    } catch {
+        return null;
     }
 }
 
@@ -333,22 +357,135 @@ function ToolList({ tools }: { tools: ToolCallInfo[] }) {
 
                 let ToolIcon = Circle;
                 if (tool.name.includes('search') || tool.name.includes('get_search_items')) ToolIcon = Search;
-                else if (tool.name.includes('video_analysis')) ToolIcon = Globe;
+                else if (tool.name.includes('video_analysis') || tool.name.includes('analyze_search_batch_with_criteria') || tool.name.includes('answer_video_question')) ToolIcon = Sparkle;
                 else if (tool.name.includes('board_items')) ToolIcon = LayoutDashboard;
 
                 return (
-                    <div key={idx} className="text-sm text-muted-foreground flex items-center justify-between group">
-                        <div className="flex items-center gap-2">
-                            <ToolIcon className="h-4 w-4 shrink-0" />
-                            <span>{label}</span>
+                    <div key={idx} className="text-sm text-muted-foreground">
+                        <div className="flex items-center justify-between group">
+                            <div className="flex items-center gap-2">
+                                <ToolIcon className="h-4 w-4 shrink-0" />
+                                <span>{label}</span>
+                                {count > 1 && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{count}</Badge>}
+                            </div>
+                            <div className="ml-2">
+                                {allDone ? (
+                                    <Check className="h-4 w-4 text-white shrink-0" />
+                                ) : (
+                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+                                )}
+                            </div>
                         </div>
-                        <div className="ml-2">
-                            {allDone ? (
-                                <Check className="h-4 w-4 text-white shrink-0" />
-                            ) : (
-                                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
-                            )}
-                        </div>
+
+                        {allDone && tool.hasResult && tool.result && (
+                            <div className="mt-2 space-y-2">
+                                <Separator className="bg-white/5" />
+                                <div className="text-xs text-muted-foreground/90 space-y-1">
+                                    {(() => {
+                                        const parsed = tryParseJson(tool.result);
+                                        if (!parsed) return null;
+
+                                        if (tool.name === 'deep_search_batch_wait') {
+                                            const executed = Array.isArray(parsed.executed) ? parsed.executed : [];
+                                            const failed = Array.isArray(parsed.failed) ? parsed.failed : [];
+                                            const show = executed.slice(0, 6);
+                                            return (
+                                                <>
+                                                    <div className="flex items-center gap-2">
+                                                        <Badge variant="secondary" className="text-[10px]">queries</Badge>
+                                                        <span>{executed.length + failed.length} executed</span>
+                                                        {/* {failed.length > 0 && <span className="text-red-400">{failed.length} failed</span>} */}
+                                                    </div>
+                                                    {show.map((r: any, i: number) => (
+                                                        <div key={i} className="flex items-center justify-between gap-3">
+                                                            <span className="truncate" title={r?.query || ''}>{truncateText(String(r?.query || ''), 64)}</span>
+                                                            <span className="shrink-0 text-muted-foreground/70">{typeof r?.count === 'number' ? r.count : ''}</span>
+                                                        </div>
+                                                    ))}
+                                                    {executed.length > show.length && (
+                                                        <div className="text-muted-foreground/70">+{executed.length - show.length} more</div>
+                                                    )}
+                                                </>
+                                            );
+                                        }
+
+                                        if (tool.name === 'analyze_search_batch_with_criteria') {
+                                            const perSearch = Array.isArray(parsed.per_search) ? parsed.per_search : [];
+                                            return (
+                                                <>
+                                                    {parsed.criteria_slug && (
+                                                        <div className="flex items-center gap-2">
+                                                            <Badge variant="secondary" className="text-[10px]">criteria</Badge>
+                                                            <span className="truncate">{String(parsed.criteria_slug)}</span>
+                                                        </div>
+                                                    )}
+                                                    {parsed.written_file && (
+                                                        <div className="flex items-center justify-between gap-3">
+                                                            <span className="text-muted-foreground/70">written</span>
+                                                            <span className="truncate">{String(parsed.written_file)}</span>
+                                                        </div>
+                                                    )}
+                                                    {(typeof parsed.requested_total === 'number' || typeof parsed.analyzed_total === 'number') && (
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-muted-foreground/70">analyzed</span>
+                                                            <span>{parsed.analyzed_total ?? ''}</span>
+                                                            <span className="text-muted-foreground/70">requested</span>
+                                                            <span>{parsed.requested_total ?? ''}</span>
+                                                        </div>
+                                                    )}
+                                                    {perSearch.length > 0 && (
+                                                        <div className="space-y-1">
+                                                            {perSearch.slice(0, 6).map((r: any, i: number) => (
+                                                                <div key={i} className="flex items-center justify-between gap-3">
+                                                                    <span className="truncate" title={r?.search_id || ''}>{truncateText(String(r?.search_id || ''), 24)}</span>
+                                                                    <span className="shrink-0 text-muted-foreground/70">{r?.analyzed ?? ''}/{r?.requested ?? ''}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </>
+                                            );
+                                        }
+
+                                        if (tool.name === 'report_chosen_videos') {
+                                            const chosen = Array.isArray(parsed.chosen) ? parsed.chosen : [];
+                                            return (
+                                                <>
+                                                    {parsed.criteria_slug && (
+                                                        <div className="flex items-center gap-2">
+                                                            <Badge variant="secondary" className="text-[10px]">criteria</Badge>
+                                                            <span className="truncate">{String(parsed.criteria_slug)}</span>
+                                                        </div>
+                                                    )}
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <span className="text-muted-foreground/70">chosen</span>
+                                                        <span>{chosen.length}</span>
+                                                    </div>
+                                                    {parsed.saved_as && (
+                                                        <div className="flex items-center justify-between gap-3">
+                                                            <span className="text-muted-foreground/70">saved</span>
+                                                            <span className="truncate">{String(parsed.saved_as)}</span>
+                                                        </div>
+                                                    )}
+                                                    {chosen.slice(0, 4).map((c: any, i: number) => (
+                                                        <div key={i} className="flex items-start justify-between gap-3">
+                                                            <span className="truncate" title={c?.media_asset_id || ''}>{truncateText(String(c?.media_asset_id || ''), 24)}</span>
+                                                            <span className="text-muted-foreground/70">{truncateText(String(c?.reason || ''), 48)}</span>
+                                                        </div>
+                                                    ))}
+                                                    {chosen.length > 4 && (
+                                                        <div className="text-muted-foreground/70">+{chosen.length - 4} more</div>
+                                                    )}
+                                                </>
+                                            );
+                                        }
+
+                                        // Default: don't dump full JSON; keep it compact.
+                                        return null;
+                                    })()}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 );
             })}
@@ -543,6 +680,8 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
         isStreaming,
         streamingContent,
         streamingTools,
+        chosenVideoIds,
+        deepResearchResults,
         canvasResultsMap,
         canvasActiveSearchId,
         setCanvasActiveSearchId,
@@ -834,6 +973,26 @@ export function ChatMessageList({ isContextLoading = false }: { isContextLoading
                                         <ToolList tools={streamingTools} />
                                     </CollapsibleContent>
                                 </Collapsible>
+                            </div>
+                        </Message>
+                    )}
+
+                    {/* Chosen Videos (Deep Research) */}
+                    {chosenVideoIds.length > 0 && (
+                        <Message key="chosen-videos" className="justify-start">
+                            <div className="w-full max-w-[95%]">
+                                {/* Avoid showing placeholder thumbnails here (Deep Research tab already shows a grid). */}
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">Deep Research</Badge>
+                                    <span>
+                                        Selected {chosenVideoIds.length} video{chosenVideoIds.length === 1 ? '' : 's'}
+                                    </span>
+                                    {Array.isArray(deepResearchResults) && deepResearchResults.length > 0 && (
+                                        <span className="text-muted-foreground/70">
+                                            (shown in the Deep Research tab)
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         </Message>
                     )}

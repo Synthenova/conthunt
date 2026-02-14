@@ -2,8 +2,38 @@
 import os
 import sys
 import subprocess
-
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+def _sync_one_secret(key, value, gcloud_cmd, compute_sa):
+    """Upload a single secret (create + add version + grant IAM)."""
+    # Create secret if not exists
+    subprocess.run(
+        gcloud_cmd + ["secrets", "create", key, "--replication-policy=automatic", "--quiet"],
+        capture_output=True
+    )
+
+    # Add new version
+    proc = subprocess.Popen(
+        gcloud_cmd + ["secrets", "versions", "add", key, "--data-file=-"],
+        stdin=subprocess.PIPE,
+        text=True
+    )
+    proc.communicate(input=value)
+
+    if proc.returncode != 0:
+        return key, False
+
+    # Grant access
+    subprocess.run(gcloud_cmd + [
+        "secrets", "add-iam-policy-binding", key,
+        "--member=serviceAccount:" + compute_sa,
+        "--role=roles/secretmanager.secretAccessor"
+    ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    return key, True
+
 
 def upload_secrets(env_file_path, target_project=None):
     """Reads an env file and uploads non-empty keys to Secret Manager."""
@@ -48,12 +78,22 @@ def upload_secrets(env_file_path, target_project=None):
     
     keys_to_upload = []
     if confirm.lower() == 'all':
-        keys_to_upload = secrets.keys()
+        keys_to_upload = list(secrets.keys())
     else:
         keys_to_upload = [k.strip() for k in confirm.split(',') if k.strip()]
 
     if not keys_to_upload:
         print("No keys selected.")
+        return
+
+    # Filter out missing keys
+    valid_keys = [k for k in keys_to_upload if k in secrets]
+    skipped = [k for k in keys_to_upload if k not in secrets]
+    for k in skipped:
+        print(f"Skipping {k} (not found in file)")
+
+    if not valid_keys:
+        print("No valid keys to upload.")
         return
 
     # Determine Project ID
@@ -80,38 +120,28 @@ def upload_secrets(env_file_path, target_project=None):
     compute_sa = f"{project_number}-compute@developer.gserviceaccount.com"
     print(f"Granting access to: {compute_sa}")
 
-    for key in keys_to_upload:
-        if key not in secrets:
-            print(f"Skipping {key} (not found in file)")
-            continue
+    # Upload all secrets in parallel
+    print(f"\nUploading {len(valid_keys)} secrets in parallel...")
+    succeeded, failed = [], []
 
-        value = secrets[key]
-        print(f"Processing {key}...")
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        futures = {
+            pool.submit(_sync_one_secret, key, secrets[key], gcloud_cmd, compute_sa): key
+            for key in valid_keys
+        }
+        for future in as_completed(futures):
+            key, ok = future.result()
+            if ok:
+                succeeded.append(key)
+                print(f"  ✓ {key}")
+            else:
+                failed.append(key)
+                print(f"  ✗ {key}")
 
-        # Create secret if not exists
-        subprocess.run(
-            gcloud_cmd + ["secrets", "create", key, "--replication-policy=automatic", "--quiet"],
-            capture_output=True
-        )
-        
-        # Add new version
-        proc = subprocess.Popen(
-            gcloud_cmd + ["secrets", "versions", "add", key, "--data-file=-"],
-            stdin=subprocess.PIPE,
-            text=True
-        )
-        proc.communicate(input=value)
-        
-        if proc.returncode == 0:
-            print(f" uploaded.")
-            # Grant access
-            subprocess.run(gcloud_cmd + [
-                "secrets", "add-iam-policy-binding", key,
-                "--member=serviceAccount:" + compute_sa,
-                "--role=roles/secretmanager.secretAccessor"
-            ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            print(f" failed.")
+    print(f"\nDone: {len(succeeded)} uploaded, {len(failed)} failed.")
+    if failed:
+        print(f"Failed keys: {', '.join(failed)}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Upload .env secrets to GCP Secret Manager")

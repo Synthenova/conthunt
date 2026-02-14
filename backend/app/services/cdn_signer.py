@@ -1,62 +1,92 @@
-import hmac
-import hashlib
-import base64
-import time
-from app.core import settings
+import datetime
+import asyncio
+from collections.abc import Iterable
 
-def generate_signed_url(
-    gcs_filename: str,
-    expiration_seconds: int = 3600
-) -> str:
+from google.cloud import storage
+from google.oauth2 import service_account
+
+from app.core import get_settings
+
+_storage_client = None
+_signer_creds = None
+_signer_email = None
+
+
+def _get_signer() -> tuple[service_account.Credentials, str]:
+    global _signer_creds, _signer_email
+    if _signer_creds is not None and _signer_email is not None:
+        return _signer_creds, _signer_email
+
+    s = get_settings()
+    key_path = (s.GCS_SIGNER_KEY_PATH or "").strip()
+    if not key_path:
+        raise RuntimeError("Missing GCS_SIGNER_KEY_PATH (service account JSON key file path).")
+
+    creds = service_account.Credentials.from_service_account_file(key_path)
+    _signer_creds = creds
+    _signer_email = creds.service_account_email
+    return _signer_creds, _signer_email
+
+
+def _get_storage_client() -> storage.Client:
+    global _storage_client
+    if _storage_client is None:
+        creds, _ = _get_signer()
+        _storage_client = storage.Client(credentials=creds, project=creds.project_id)
+    return _storage_client
+
+
+def generate_signed_url(gcs_filename: str, expiration_seconds: int = 3600) -> str:
     """
-    Generates a full URL with a Cloud CDN V1 signature.
-    
-    Args:
-        gcs_filename: The relative path to the file (e.g. "videos/reel_1.mp4")
-                     or the full object name.
+    Generate a V4 signed URL for a GCS object using ONLY a local service account key.
     """
-    conf = settings.get_settings()
-    
-    # --- 1. Clean Path Logic ---
-    # Removes gs://, bucket names, and leading slashes
     path = gcs_filename
     if path.startswith("gs://"):
-        path = path.split("/", 3)[-1]
-    path = path.lstrip("/") 
+        path = path[5:]  # remove gs://
 
-    # --- 2. Base URL ---
-    url_prefix = conf.CDN_URL_PREFIX.rstrip("/")
-    base_url = f"{url_prefix}/{path}"
-    
-    # --- 3. Prepare Key (THE CRITICAL FIX) ---
-    key_val = conf.CDN_SIGNING_KEY_VALUE
-    
-    # Fix Padding: Ensure the key string is a multiple of 4 for the decoder
-    missing_padding = len(key_val) % 4
-    if missing_padding:
-        key_val += '=' * (4 - missing_padding)
-    
-    try:
-        # DECODE the string to get the actual 16 secret bytes
-        key_bytes = base64.urlsafe_b64decode(key_val)
-    except Exception as e:
-        # If this fails, the key in your .env is wrong. Do not proceed.
-        raise ValueError(f"CRITICAL: Key decoding failed. Check .env file. Details: {e}")
+    if "/" not in path:
+        raise ValueError(f"Invalid GCS URI: {gcs_filename}. Must be gs://bucket/path")
 
-    # --- 4. Sign ---
-    expiration_time = int(time.time()) + expiration_seconds
-    key_name = conf.CDN_SIGNING_KEY_NAME
-    
-    url_to_sign = f"{base_url}?Expires={expiration_time}&KeyName={key_name}"
-    
-    signature = hmac.new(
-        key_bytes,
-        url_to_sign.encode('utf-8'),
-        hashlib.sha1
-    ).digest()
-    
-    # --- 5. Format Signature ---
-    # Google wants URL-safe base64, with NO padding (=) at the end
-    encoded_signature = base64.urlsafe_b64encode(signature).decode('utf-8').rstrip("=")
-    
-    return f"{url_to_sign}&Signature={encoded_signature}"
+    bucket_name, blob_name = path.split("/", 1)
+
+    creds, sa_email = _get_signer()
+    client = _get_storage_client()
+    blob = client.bucket(bucket_name).blob(blob_name)
+
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(seconds=expiration_seconds),
+        method="GET",
+        credentials=creds,
+        service_account_email=sa_email,
+    )
+
+
+def should_sign_asset(asset: dict) -> bool:
+    return bool(asset.get("gcs_uri")) and asset.get("status") in ("stored", "downloaded")
+
+
+async def bulk_sign_gcs_uris(
+    gcs_uris: Iterable[str],
+    expiration_seconds: int = 3600,
+    max_concurrency: int = 25,
+) -> dict[str, str]:
+    """
+    Sign a set of GCS URIs. Uses asyncio.to_thread to avoid blocking the event loop when
+    signing lots of URLs inside async endpoints.
+    """
+    unique = {u for u in gcs_uris if u}
+    if not unique:
+        return {}
+
+    sem = asyncio.Semaphore(max_concurrency)
+    signed: dict[str, str] = {}
+
+    async def one(uri: str) -> None:
+        if uri in signed:
+            return
+        async with sem:
+            signed[uri] = await asyncio.to_thread(generate_signed_url, uri, expiration_seconds)
+
+    await asyncio.gather(*(one(u) for u in unique))
+    return signed

@@ -19,12 +19,13 @@ async def create_chat(
     title: str,
     context_type: Optional[str] = None,
     context_id: Optional[UUID] = None,
+    deep_research_enabled: bool = False,
 ) -> None:
     """Insert a new chat record."""
     await conn.execute(
         text("""
-            INSERT INTO conthunt.chats (id, user_id, thread_id, title, status, context_type, context_id)
-            VALUES (:id, :user_id, :thread_id, :title, 'idle', :context_type, :context_id)
+            INSERT INTO conthunt.chats (id, user_id, thread_id, title, status, context_type, context_id, deep_research_enabled)
+            VALUES (:id, :user_id, :thread_id, :title, 'idle', :context_type, :context_id, :deep_research_enabled)
         """),
         {
             "id": chat_id,
@@ -33,6 +34,7 @@ async def create_chat(
             "title": title,
             "context_type": context_type,
             "context_id": context_id,
+            "deep_research_enabled": deep_research_enabled,
         }
     )
 
@@ -59,7 +61,7 @@ async def get_user_chats(
     where_sql = " AND ".join(where_clauses)
     rows = await conn.execute(
         text("""
-            SELECT id, user_id, thread_id, title, context_type, context_id, status, created_at, updated_at
+            SELECT id, user_id, thread_id, title, context_type, context_id, deep_research_enabled, status, created_at, updated_at
             FROM conthunt.chats 
             WHERE """ + where_sql + """
             ORDER BY updated_at DESC
@@ -76,9 +78,10 @@ async def get_user_chats(
             title=r[3],
             context_type=r[4],
             context_id=r[5],
-            status=r[6],
-            created_at=r[7],
-            updated_at=r[8]
+            deep_research_enabled=r[6],
+            status=r[7],
+            created_at=r[8],
+            updated_at=r[9]
         ))
     return results
 
@@ -87,6 +90,16 @@ async def get_chat_thread_id(conn: AsyncConnection, chat_id: UUID) -> Optional[s
     """Get thread_id for a chat."""
     row = await conn.execute(
         text("SELECT thread_id FROM conthunt.chats WHERE id = :id"),
+        {"id": chat_id}
+    )
+    res = row.fetchone()
+    return res[0] if res else None
+
+
+async def get_chat_deep_research_enabled(conn: AsyncConnection, chat_id: UUID) -> Optional[bool]:
+    """Get deep_research_enabled for a chat."""
+    row = await conn.execute(
+        text("SELECT deep_research_enabled FROM conthunt.chats WHERE id = :id"),
         {"id": chat_id}
     )
     res = row.fetchone()
@@ -124,7 +137,7 @@ async def update_chat_title(
                 updated_at = NOW()
             WHERE id = :id
               AND deleted_at IS NULL
-            RETURNING id, user_id, thread_id, title, context_type, context_id, status, created_at, updated_at
+            RETURNING id, user_id, thread_id, title, context_type, context_id, deep_research_enabled, status, created_at, updated_at
         """),
         {"id": chat_id, "title": title}
     )
@@ -138,9 +151,10 @@ async def update_chat_title(
         title=res[3],
         context_type=res[4],
         context_id=res[5],
-        status=res[6],
-        created_at=res[7],
-        updated_at=res[8],
+        deep_research_enabled=res[6],
+        status=res[7],
+        created_at=res[8],
+        updated_at=res[9],
     )
 
 

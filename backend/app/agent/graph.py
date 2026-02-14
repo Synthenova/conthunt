@@ -11,7 +11,6 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from app.agent.model_factory import (
     get_model_provider,
     init_chat_model,
-    init_chat_model_rated,
     normalize_messages_for_provider,
 )
 from app.agent.tools import (
@@ -61,7 +60,7 @@ Guidelines:
 - When analyzing multiple videos, call `get_video_analysis` in PARALLEL for efficiency.
 - **Rules for analysis volume:**
   - If the user asks to analyze videos **without mentioning them via citation chips** (e.g., "analyze these videos", "summarize results"), analyze only the **top 10** videos.
-  - If the user **explicitly mentions videos via citation chips** (e.g., manually selected videos or videos mentioned in the current chip), you **MUST analyze all those videos**, regardless of quantity (up to a hard limit of 100).
+  - If the user **explicitly mentions videos via citation chips** (e.g., manually selected videos or videos mentioned in the current chip), you **MUST analyze all those videos**, regardless of quantity (up to a hard limit of 50).
 
 **Citations:**
 - When mentioning a specific media item, board, or search in your response, YOU MUST include a citation chip in the following format:
@@ -94,20 +93,14 @@ async def call_model(state: MessagesState, config: RunnableConfig):
 
     # If this is the first message (no history), force the stronger model
     # if len(messages) <= 1:
-    #     model_name = "google/gemini-3-pro-preview"
+    #     model_name = "openrouter/google/gemini-3-pro-preview"
     # else:
     model_name = (config.get("configurable") or {}).get("model_name")
     image_urls = set((config.get("configurable") or {}).get("image_urls") or [])
-    redis_client = (config.get("configurable") or {}).get("redis_client")
-    
     provider = get_model_provider(model_name)
     if provider == "google":
         messages = _strip_stale_image_blocks(messages, image_urls)
     
-    # Use rate-limited model initialization if Redis is available
-    # if redis_client:
-    #     llm = await init_chat_model_rated(model_name, redis_client, temperature=0.5)
-    # else:
     llm = init_chat_model(model_name, temperature=0.5)
     
     messages = normalize_messages_for_provider(messages, model_name)

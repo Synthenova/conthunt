@@ -4,40 +4,30 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core import get_settings, logger
+from app.agent.model_factory import init_chat_model
 from app.db import get_db_connection, set_rls_user
 from app.db import queries
 from app.api.v1.analysis import run_gemini_analysis
 from app.schemas.insights import BoardInsightsResult
+from app.llm.context import set_llm_context
 
 settings = get_settings()
 
-INSIGHTS_SYSTEM_PROMPT = """You are a creative strategist producing board-level insights.
-Use the previous insights as a baseline and incorporate new video analyses.
-Return only the structured JSON that matches the provided schema.
-If there is any overlap, deduplicate and improve clarity."""
+BATCH_INSIGHTS_PROMPT = """Analyze these video analyses and extract key patterns, themes, and insights.
+Return structured insights based on what you observe across these videos."""
+
+MERGE_INSIGHTS_PROMPT = """You are merging multiple insight sets into one cohesive board-level insight.
+Combine, deduplicate, and synthesize the patterns from all provided insights.
+Return only the structured JSON matching the schema."""
 
 
 def _format_analysis_entry(media_asset_id: UUID, analysis: dict) -> str:
-    hook = analysis.get("hook") or ""
-    call_to_action = analysis.get("call_to_action") or ""
-    on_screen_texts = analysis.get("on_screen_texts") or []
-    key_topics = analysis.get("key_topics") or []
-    summary = analysis.get("summary") or ""
-    hashtags = analysis.get("hashtags") or []
-
-    return "\n".join([
-        f"media_asset_id: {media_asset_id}",
-        f"hook: {hook}",
-        f"call_to_action: {call_to_action}",
-        f"on_screen_texts: {', '.join(on_screen_texts)}",
-        f"key_topics: {', '.join(key_topics)}",
-        f"summary: {summary}",
-        f"hashtags: {', '.join(hashtags)}",
-    ])
+    """Format a single analysis for the insights prompt - uses markdown string."""
+    markdown = analysis.get("analysis", "")
+    return f"### Video: {media_asset_id}\n\n{markdown}"
 
 
 async def _ensure_video_analyses(
@@ -115,6 +105,82 @@ async def _ensure_video_analyses(
         analyses = await queries.get_video_analyses_by_media_assets(conn, media_asset_ids)
     
     return analyses
+
+
+async def _process_single_batch(
+    batch: list[dict],
+    user_id: UUID,
+    llm,
+) -> dict:
+    """Process a single batch of analyses → insights (no prev insights)."""
+    analysis_blocks = [
+        _format_analysis_entry(row["media_asset_id"], row["analysis_result"])
+        for row in batch
+    ]
+    
+    human_message = HumanMessage(content="\n\n".join(analysis_blocks))
+    system_message = SystemMessage(content=BATCH_INSIGHTS_PROMPT)
+    
+    structured_llm = llm.with_structured_output(BoardInsightsResult)
+    with set_llm_context(user_id=str(user_id), route="insights.batch"):
+        result: BoardInsightsResult = await structured_llm.ainvoke([system_message, human_message])
+    
+    return result.model_dump()
+
+
+async def _generate_parallel_insights(
+    completed_analyses: list[dict],
+    previous_insights: dict | None,
+    user_id: UUID,
+) -> BoardInsightsResult:
+    """
+    1. Split into batches of 10
+    2. Run all batches in PARALLEL → each produces insights
+    3. Merge all batch insights + prev insights → final insights
+    """
+    BATCH_SIZE = 10
+    llm = init_chat_model("openrouter/google/gemini-3-flash-preview", temperature=0.4)
+    
+    # Split into batches
+    batches = [
+        completed_analyses[i:i + BATCH_SIZE]
+        for i in range(0, len(completed_analyses), BATCH_SIZE)
+    ]
+    
+    logger.info(f"[INSIGHTS] Processing {len(completed_analyses)} analyses in {len(batches)} parallel batches")
+    
+    # Run all batches in parallel
+    batch_tasks = [
+        _process_single_batch(batch, user_id, llm)
+        for batch in batches
+    ]
+    batch_insights = await asyncio.gather(*batch_tasks)
+    
+    # Collect all insights to merge (previous + all batch results)
+    all_insights = []
+    if previous_insights:
+        all_insights.append(previous_insights)
+    all_insights.extend(batch_insights)
+    
+    # If only one insight set, return it directly
+    if len(all_insights) == 1:
+        return BoardInsightsResult(**all_insights[0])
+    
+    # Merge all insights into final
+    logger.info(f"[INSIGHTS] Merging {len(all_insights)} insight sets into final result")
+    insights_text = "\n\n---\n\n".join([
+        f"Insight Set {i+1}:\n{json.dumps(ins, indent=2)}"
+        for i, ins in enumerate(all_insights)
+    ])
+    
+    human_message = HumanMessage(content=insights_text)
+    system_message = SystemMessage(content=MERGE_INSIGHTS_PROMPT)
+    
+    structured_llm = llm.with_structured_output(BoardInsightsResult)
+    with set_llm_context(user_id=str(user_id), route="insights.merge"):
+        final: BoardInsightsResult = await structured_llm.ainvoke([system_message, human_message])
+    
+    return final
 
 
 async def execute_board_insights(
@@ -205,38 +271,13 @@ async def execute_board_insights(
             )
         return
 
-    analysis_blocks = [
-        _format_analysis_entry(row["media_asset_id"], row["analysis_result"])
-        for row in completed_analyses
-    ]
-
-    previous_insights_text = (
-        json.dumps(previous_insights, ensure_ascii=True, indent=2)
-        if previous_insights
-        else "None"
+    # Generate insights using parallel batch processing
+    result = await _generate_parallel_insights(
+        completed_analyses=completed_analyses,
+        previous_insights=previous_insights,
+        user_id=user_id,
     )
-
-    human_message = HumanMessage(
-        content="\n\n".join([
-            f"Previous insights:\n{previous_insights_text}",
-            "New video analyses:",
-            "\n\n".join(analysis_blocks),
-        ])
-    )
-
-    system_message = SystemMessage(content=INSIGHTS_SYSTEM_PROMPT)
-
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-3-flash-preview",
-        temperature=0.4,
-        project=settings.GCP_PROJECT,
-        vertexai=True,
-        location='global'
-    )
-    structured_llm = llm.with_structured_output(BoardInsightsResult)
-
-    # Allow exceptions to bubble up for Cloud Tasks retry
-    result: BoardInsightsResult = await structured_llm.ainvoke([system_message, human_message])
+    
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_id)
         await queries.update_board_insights_status(
@@ -246,3 +287,4 @@ async def execute_board_insights(
             insights_result=result.model_dump(),
             last_completed_at=datetime.utcnow(),
         )
+

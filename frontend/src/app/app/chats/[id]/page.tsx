@@ -8,7 +8,7 @@ import { useBoards } from "@/hooks/useBoards";
 import { useChatTags } from "@/hooks/useChatTags";
 import { SelectionBar } from "@/components/boards/SelectionBar";
 import { SearchStreamer } from "@/components/search/SearchStreamer";
-import { transformToMediaItem, FlatMediaItem } from "@/lib/transformers";
+import { transformSearchResults, transformToMediaItem, FlatMediaItem } from "@/lib/transformers";
 import { useClientResultSort } from "@/hooks/useClientResultSort";
 import { ChatCanvasContext } from "@/lib/chatCanvasContext";
 import { useTutorialAutoStart } from "@/hooks/useTutorialAutoStart";
@@ -41,7 +41,9 @@ export default function ChatPage() {
         setCurrentCanvasPage,
         canvasActiveSearchId,
         setClientFilters,
-        chats
+        chats,
+        deepResearchResults,
+        appendDeepResearchResults
         // Note: activeSearchId is managed via store (canvasActiveSearchId)
     } = useChatStore();
 
@@ -82,6 +84,7 @@ export default function ChatPage() {
     // 3. Search State Management
     const {
         resultsMap,
+        setResultsMap,
         streamingSearchIds,
         loadingSearchIds,
         cursorsMap,
@@ -95,6 +98,68 @@ export default function ChatPage() {
         isLoadingMore
     } = useChatSearchState(activeSearchId);
 
+    const DEEP_RESEARCH_TAB_ID = "deep-research";
+
+    // Hydrate Deep Research results from tool history (so refresh works without SSE).
+    const hydratedDeepResearchRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (hydratedDeepResearchRef.current === chatId) return;
+        if (isLoadingMessages) return;
+
+        const toolMsgs = (messages || []).filter((m) => m.type === "tool");
+        const collected: any[] = [];
+        for (const msg of toolMsgs) {
+            if (typeof msg.content !== "string") continue;
+            let parsed: any;
+            try {
+                parsed = JSON.parse(msg.content);
+            } catch {
+                continue;
+            }
+            if (Array.isArray(parsed?.items) && parsed.items.length > 0) {
+                collected.push(...transformSearchResults(parsed.items));
+            }
+        }
+        if (collected.length > 0) {
+            appendDeepResearchResults(collected);
+        }
+
+        hydratedDeepResearchRef.current = chatId;
+    }, [chatId, isLoadingMessages, messages, appendDeepResearchResults]);
+
+    // Inject Deep Research items into the existing results map so the grid can render it like any other tab.
+    useEffect(() => {
+        setResultsMap((prev) => {
+            const next = { ...prev } as any;
+            if (!deepResearchResults || deepResearchResults.length === 0) {
+                if (next[DEEP_RESEARCH_TAB_ID]) {
+                    delete next[DEEP_RESEARCH_TAB_ID];
+                    return next;
+                }
+                return prev;
+            }
+            next[DEEP_RESEARCH_TAB_ID] = deepResearchResults as any;
+            return next;
+        });
+    }, [deepResearchResults, setResultsMap]);
+
+    const displayTabs = useMemo(() => {
+        if (!deepResearchResults || deepResearchResults.length === 0) return displaySearches;
+        return [{ id: DEEP_RESEARCH_TAB_ID, label: "Deep Research" }, ...displaySearches];
+    }, [deepResearchResults, displaySearches]);
+
+    const handleTabDeleteSafe = useCallback((id: string) => {
+        if (id === DEEP_RESEARCH_TAB_ID) return;
+        handleTabDelete(id);
+    }, [handleTabDelete]);
+
+    // If this chat only has Deep Research results (no searches), default to that tab.
+    useEffect(() => {
+        if (activeSearchId) return;
+        if (!deepResearchResults || deepResearchResults.length === 0) return;
+        if (allSearchIds.length > 0) return;
+        setActiveSearchId(DEEP_RESEARCH_TAB_ID);
+    }, [activeSearchId, deepResearchResults, allSearchIds, setActiveSearchId]);
 
     // --- Context / Effects ---
 
@@ -184,7 +249,7 @@ export default function ChatPage() {
 
 
     const hasBoards = contextBoards.length > 0;
-    const hasSearches = allSearchIds.length > 0;
+    const hasSearches = allSearchIds.length > 0 || (deepResearchResults?.length || 0) > 0;
     const hasContent = hasBoards || hasSearches;
     const isInitialLoading = isLoadingMessages && messages.length === 0 && !hasContent;
 
@@ -333,7 +398,7 @@ export default function ChatPage() {
         <ChatCanvasContext.Provider value={chatCanvasContextValue}>
             <div className="flex h-full">
                 {/* Render SearchStreamer only for active search */}
-                {activeSearchId && (
+                {activeSearchId && activeSearchId !== DEEP_RESEARCH_TAB_ID && (
                     <SearchStreamer
                         key={activeSearchId}
                         searchId={activeSearchId}
@@ -370,10 +435,10 @@ export default function ChatPage() {
                                             commitTitleEdit={commitTitleEdit}
                                             onDeleteChat={onDeleteChat}
                                             resultCount={activeSearchId ? filteredResults.length : undefined}
-                                            displaySearches={displaySearches}
+                                            displaySearches={displayTabs}
                                             activeSearchId={activeSearchId}
                                             setActiveSearchId={setActiveSearchId}
-                                            handleTabDelete={handleTabDelete}
+                                            handleTabDelete={handleTabDeleteSafe}
                                             streamingSearchIds={streamingSearchIds}
                                             clientSort={clientSort}
                                             setClientSort={setClientSort}
@@ -390,9 +455,9 @@ export default function ChatPage() {
                                                 activeSearchId={activeSearchId}
                                                 filteredResults={filteredResults}
                                                 loading={(!!streamingSearchIds[activeSearchId] || !!loadingSearchIds[activeSearchId]) && (filteredResults.length === 0)}
-                                                hasMore={hasMoreMapValue}
+                                                hasMore={activeSearchId !== DEEP_RESEARCH_TAB_ID ? hasMoreMapValue : false}
                                                 isLoadingMore={isLoadingMore}
-                                                onLoadMore={handleLoadMoreWithFilters}
+                                                onLoadMore={activeSearchId !== DEEP_RESEARCH_TAB_ID ? handleLoadMoreWithFilters : () => { }}
                                                 clientSort={clientSort}
                                                 clientDateFilter={clientDateFilter}
                                                 selectedPlatforms={selectedPlatforms}

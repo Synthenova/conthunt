@@ -17,6 +17,7 @@ class SpokenDialogue(BaseModel):
     timestamp_end: Optional[str] = None
     speaker: Optional[str] = None
     text: Optional[str] = None
+    source_type: Optional[str] = Field(None, description="Type of speech: 'lyrics', 'voice_over', or 'dialogue'")
     tone: Optional[str] = None
     emotional_quality: Optional[str] = None
 
@@ -261,6 +262,66 @@ class TimelineSummary(BaseModel):
     climax: Optional[TimelineEvent] = None
     conclusion: Optional[TimelineEvent] = None
 
+# --- LITE (Root + first-level objects, strings only) ---
+class MetadataLite(BaseModel):
+    title: Optional[str] = None
+    duration_estimated: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    resolution_quality: Optional[str] = None
+    video_type: Optional[str] = None
+
+class TranscriptLite(BaseModel):
+    has_speech: Optional[str] = None
+    spoken_dialogue: Optional[str] = None
+    on_screen_text: Optional[str] = None
+
+class EnvironmentAndBackgroundLite(BaseModel):
+    primary_setting: Optional[str] = None
+    background_elements: Optional[str] = None
+
+class VisualAndCinematographicAnalysisLite(BaseModel):
+    camera_work: Optional[str] = None
+    lighting_design: Optional[str] = None
+    color_grading: Optional[str] = None
+    visual_effects_and_post: Optional[str] = None
+    graphics_and_text: Optional[str] = None
+    editing_style: Optional[str] = None
+
+class AudioAnalysisLite(BaseModel):
+    music: Optional[str] = None
+    sound_effects: Optional[str] = None
+    voice_and_dialogue: Optional[str] = None
+    overall_audio_mix: Optional[str] = None
+
+class ContentAndThemesLite(BaseModel):
+    primary_subject: Optional[str] = None
+    themes: Optional[str] = None
+    tone: Optional[str] = None
+    mood: Optional[str] = None
+    genre_or_category: Optional[str] = None
+    target_audience: Optional[str] = None
+    purpose: Optional[str] = None
+    key_messages: Optional[str] = None
+    branding: Optional[str] = None
+
+class TechnicalQualityLite(BaseModel):
+    video_quality: Optional[str] = None
+    production_values: Optional[str] = None
+
+class OverallAssessmentLite(BaseModel):
+    summary: Optional[str] = None
+    visual_style: Optional[str] = None
+    strengths: Optional[str] = None
+    areas_for_improvement: Optional[str] = None
+    emotional_impact: Optional[str] = None
+    memorability_score: Optional[str] = None
+    comparable_references: Optional[str] = None
+
+class TimelineSummaryLite(BaseModel):
+    intro: Optional[str] = None
+    key_moments: Optional[str] = None
+    climax: Optional[str] = None
+    conclusion: Optional[str] = None
 # --- MAIN MODEL ---
 class VideoAnalysisResult(BaseModel):
     """Structured analysis result following the detailed vidprompt schema."""
@@ -277,12 +338,34 @@ class VideoAnalysisResult(BaseModel):
     overall_assessment: Optional[OverallAssessment] = None
     timeline_summary: Optional[TimelineSummary] = None
 
+class VideoAnalysisLite(BaseModel):
+    """Root-level keys with first-level objects; all fields are strings."""
+    metadata: Optional[MetadataLite] = None
+    transcript: Optional[TranscriptLite] = None
+    hook: Optional[str] = None
+    call_to_action: Optional[str] = None
+    on_screen_texts: Optional[str] = None
+    key_topics: Optional[str] = None
+    summary: Optional[str] = None
+    hashtags: Optional[str] = None
+    characters: Optional[str] = None
+    props: Optional[str] = None
+    environment_and_background: Optional[EnvironmentAndBackgroundLite] = None
+    scenes: Optional[str] = None
+    visual_and_cinematographic_analysis: Optional[VisualAndCinematographicAnalysisLite] = None
+    audio_analysis: Optional[AudioAnalysisLite] = None
+    content_and_themes: Optional[ContentAndThemesLite] = None
+    technical_quality: Optional[TechnicalQualityLite] = None
+    overall_assessment: Optional[OverallAssessmentLite] = None
+    timeline_summary: Optional[TimelineSummaryLite] = None
+
 class VideoAnalysisResponse(BaseModel):
     """Response from video analysis endpoint."""
     id: Optional[UUID] = None
     media_asset_id: UUID
     status: str = "processing"  # processing, completed, failed
-    analysis: Optional[VideoAnalysisResult] = None
+    analysis: Optional[str] = None  # Markdown string
     error: Optional[str] = None
     created_at: Optional[datetime] = None
     cached: bool = False
+

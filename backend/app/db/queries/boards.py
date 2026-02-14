@@ -40,43 +40,77 @@ async def get_user_boards(
     """
     result = await conn.execute(
         text("""
-            SELECT 
-                b.id, b.user_id, b.name, b.created_at, b.updated_at,
-                (SELECT COUNT(*) FROM board_items bi WHERE bi.board_id = b.id) as item_count,
-                case when cast(:check_item_id as uuid) is not null then
-                    exists(select 1 from board_items bi where bi.board_id = b.id and bi.content_item_id = :check_item_id)
-                else false end as has_item,
-                preview.preview_urls
-            FROM boards b
-            LEFT JOIN LATERAL (
-                SELECT array_agg(item.preview_url ORDER BY item.added_at DESC) AS preview_urls
-                FROM (
-                    SELECT
-                        bi.added_at,
-                        COALESCE(best_asset.gcs_uri, best_asset.source_url) AS preview_url
-                    FROM board_items bi
-                    LEFT JOIN LATERAL (
-                        SELECT ma.gcs_uri, ma.source_url
-                        FROM media_assets ma
-                        WHERE ma.content_item_id = bi.content_item_id
-                          AND ma.asset_type IN ('thumbnail', 'cover', 'image')
-                        ORDER BY
-                            CASE ma.asset_type
-                                WHEN 'thumbnail' THEN 1
-                                WHEN 'cover' THEN 2
-                                WHEN 'image' THEN 3
-                                ELSE 99
-                            END
-                        LIMIT 1
-                    ) best_asset ON true
-                    WHERE bi.board_id = b.id
-                    ORDER BY bi.added_at DESC
-                    LIMIT 4
-                ) item
-                WHERE item.preview_url IS NOT NULL
-            ) preview ON true
-            WHERE b.user_id = :user_id
-            ORDER BY b.updated_at DESC
+            WITH user_boards AS (
+                SELECT b.id, b.user_id, b.name, b.created_at, b.updated_at
+                FROM boards b
+                WHERE b.user_id = :user_id
+            ),
+            board_item_agg AS (
+                SELECT
+                    bi.board_id,
+                    COUNT(*)::int AS item_count,
+                    BOOL_OR(bi.content_item_id = CAST(:check_item_id AS uuid)) AS has_item
+                FROM board_items bi
+                JOIN user_boards ub ON ub.id = bi.board_id
+                GROUP BY bi.board_id
+            ),
+            recent_items AS (
+                SELECT
+                    bi.board_id,
+                    bi.content_item_id,
+                    bi.added_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY bi.board_id
+                        ORDER BY bi.added_at DESC
+                    ) AS rn
+                FROM board_items bi
+                JOIN user_boards ub ON ub.id = bi.board_id
+            ),
+            best_preview_asset AS (
+                SELECT DISTINCT ON (ri.board_id, ri.content_item_id)
+                    ri.board_id,
+                    ri.added_at,
+                    COALESCE(ma.gcs_uri, ma.source_url) AS preview_url
+                FROM recent_items ri
+                LEFT JOIN media_assets ma
+                    ON ma.content_item_id = ri.content_item_id
+                   AND ma.asset_type IN ('thumbnail', 'cover', 'image')
+                WHERE ri.rn <= 4
+                ORDER BY
+                    ri.board_id,
+                    ri.content_item_id,
+                    CASE ma.asset_type
+                        WHEN 'thumbnail' THEN 1
+                        WHEN 'cover' THEN 2
+                        WHEN 'image' THEN 3
+                        ELSE 99
+                    END,
+                    ma.created_at DESC NULLS LAST
+            ),
+            board_preview AS (
+                SELECT
+                    bpa.board_id,
+                    array_agg(bpa.preview_url ORDER BY bpa.added_at DESC)
+                        FILTER (WHERE bpa.preview_url IS NOT NULL) AS preview_urls
+                FROM best_preview_asset bpa
+                GROUP BY bpa.board_id
+            )
+            SELECT
+                ub.id,
+                ub.user_id,
+                ub.name,
+                ub.created_at,
+                ub.updated_at,
+                COALESCE(bia.item_count, 0) AS item_count,
+                CASE
+                    WHEN :check_item_id IS NULL THEN false
+                    ELSE COALESCE(bia.has_item, false)
+                END AS has_item,
+                bp.preview_urls
+            FROM user_boards ub
+            LEFT JOIN board_item_agg bia ON bia.board_id = ub.id
+            LEFT JOIN board_preview bp ON bp.board_id = ub.id
+            ORDER BY ub.updated_at DESC
         """),
         {"user_id": user_id, "check_item_id": check_content_item_id}
     )
@@ -375,23 +409,108 @@ async def search_user_boards(
     Search boards by name OR by content items within them.
     Returns list of boards that match.
     """
-    pattern = f"%{query}%"
+    # Preserve prior behavior: an empty query returns all boards (ILIKE '%%' matched everything).
+    if not query or not query.strip():
+        result = await conn.execute(
+            text("""
+                WITH user_boards AS (
+                    SELECT b.id, b.user_id, b.name, b.created_at, b.updated_at
+                    FROM boards b
+                    WHERE b.user_id = :user_id
+                ),
+                user_board_items AS (
+                    SELECT bi.board_id, bi.content_item_id
+                    FROM board_items bi
+                    JOIN user_boards ub ON ub.id = bi.board_id
+                ),
+                board_counts AS (
+                    SELECT ubi.board_id, COUNT(*)::int AS item_count
+                    FROM user_board_items ubi
+                    GROUP BY ubi.board_id
+                )
+                SELECT
+                    ub.id,
+                    ub.user_id,
+                    ub.name,
+                    ub.created_at,
+                    ub.updated_at,
+                    COALESCE(bc.item_count, 0) AS item_count
+                FROM user_boards ub
+                LEFT JOIN board_counts bc ON bc.board_id = ub.id
+                ORDER BY ub.updated_at DESC
+            """),
+            {"user_id": user_id},
+        )
+
+        return [
+            {
+                "id": row[0],
+                "user_id": row[1],
+                "name": row[2],
+                "created_at": row[3],
+                "updated_at": row[4],
+                "item_count": row[5],
+            }
+            for row in result.fetchall()
+        ]
+
     result = await conn.execute(
         text("""
-            SELECT DISTINCT b.id, b.user_id, b.name, b.created_at, b.updated_at,
-                   (SELECT COUNT(*) FROM board_items bi WHERE bi.board_id = b.id) as item_count
-            FROM boards b
-            LEFT JOIN board_items bi ON b.id = bi.board_id
-            LEFT JOIN content_items ci ON bi.content_item_id = ci.id
-            WHERE b.user_id = :user_id
-              AND (
-                b.name ILIKE :pattern
-                OR ci.title ILIKE :pattern
-                OR ci.primary_text ILIKE :pattern
-              )
-            ORDER BY b.updated_at DESC
+            WITH q AS (
+                SELECT websearch_to_tsquery('english', :q) AS tsq
+            ),
+            user_boards AS (
+                SELECT b.id, b.user_id, b.name, b.created_at, b.updated_at, b.fts
+                FROM boards b
+                WHERE b.user_id = :user_id
+            ),
+            user_board_items AS (
+                SELECT bi.board_id, bi.content_item_id
+                FROM board_items bi
+                JOIN user_boards ub ON ub.id = bi.board_id
+            ),
+            board_name_hits AS (
+                SELECT ub.id, ts_rank(ub.fts, q.tsq) AS rank
+                FROM user_boards ub
+                CROSS JOIN q
+                WHERE ub.fts @@ q.tsq
+            ),
+            content_hits AS (
+                SELECT ubi.board_id AS id, MAX(ts_rank(ci.fts, q.tsq)) AS rank
+                FROM user_board_items ubi
+                JOIN content_items ci ON ci.id = ubi.content_item_id
+                CROSS JOIN q
+                WHERE ci.fts @@ q.tsq
+                GROUP BY ubi.board_id
+            ),
+            matched_boards AS (
+                SELECT id, MAX(rank) AS rank
+                FROM (
+                    SELECT id, rank FROM board_name_hits
+                    UNION ALL
+                    SELECT id, rank FROM content_hits
+                ) x
+                GROUP BY id
+            ),
+            board_counts AS (
+                SELECT ubi.board_id, COUNT(*)::int AS item_count
+                FROM user_board_items ubi
+                JOIN matched_boards mb ON mb.id = ubi.board_id
+                GROUP BY ubi.board_id
+            )
+            SELECT
+                ub.id,
+                ub.user_id,
+                ub.name,
+                ub.created_at,
+                ub.updated_at,
+                COALESCE(bc.item_count, 0) AS item_count
+            FROM user_boards ub
+            JOIN matched_boards mb ON mb.id = ub.id
+            LEFT JOIN board_counts bc ON bc.board_id = ub.id
+            ORDER BY mb.rank DESC, ub.updated_at DESC
         """),
-        {"user_id": user_id, "pattern": pattern}
+        {"user_id": user_id, "q": query}
     )
     
     return [
@@ -414,28 +533,47 @@ async def search_in_board(
     query: str,
 ) -> List[dict]:
     """Search for content items strictly within a board."""
-    pattern = f"%{query}%"
-    result = await conn.execute(
-        text("""
-            SELECT 
-                bi.board_id, bi.added_at,
-                ci.id, ci.platform, ci.external_id, ci.content_type,
-                ci.canonical_url, ci.title, ci.primary_text, ci.published_at,
-                ci.creator_handle, ci.author_id, ci.author_name, ci.author_url, ci.author_image_url,
-                ci.metrics
-            FROM board_items bi
-            JOIN content_items ci ON bi.content_item_id = ci.id
-            WHERE bi.board_id = :board_id
-              AND (
-                ci.title ILIKE :pattern
-                OR ci.primary_text ILIKE :pattern
-              )
-            ORDER BY bi.added_at DESC
-        """),
-        {"board_id": board_id, "pattern": pattern}
-    )
-    
-    rows = result.fetchall()
+    # Preserve prior behavior: an empty query returns all items in the board.
+    if not query or not query.strip():
+        result = await conn.execute(
+            text("""
+                SELECT
+                    bi.board_id, bi.added_at,
+                    ci.id, ci.platform, ci.external_id, ci.content_type,
+                    ci.canonical_url, ci.title, ci.primary_text, ci.published_at,
+                    ci.creator_handle, ci.author_id, ci.author_name, ci.author_url, ci.author_image_url,
+                    ci.metrics
+                FROM board_items bi
+                JOIN content_items ci ON bi.content_item_id = ci.id
+                WHERE bi.board_id = :board_id
+                ORDER BY bi.added_at DESC
+            """),
+            {"board_id": board_id},
+        )
+        rows = result.fetchall()
+    else:
+        result = await conn.execute(
+            text("""
+                WITH q AS (
+                    SELECT websearch_to_tsquery('english', :q) AS tsq
+                )
+                SELECT
+                    bi.board_id, bi.added_at,
+                    ci.id, ci.platform, ci.external_id, ci.content_type,
+                    ci.canonical_url, ci.title, ci.primary_text, ci.published_at,
+                    ci.creator_handle, ci.author_id, ci.author_name, ci.author_url, ci.author_image_url,
+                    ci.metrics
+                FROM board_items bi
+                JOIN content_items ci ON bi.content_item_id = ci.id
+                CROSS JOIN q
+                WHERE bi.board_id = :board_id
+                  AND ci.fts @@ q.tsq
+                ORDER BY ts_rank(ci.fts, q.tsq) DESC, bi.added_at DESC
+            """),
+            {"board_id": board_id, "q": query},
+        )
+        rows = result.fetchall()
+
     if not rows:
         return []
         

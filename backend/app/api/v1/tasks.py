@@ -36,6 +36,8 @@ class AnalysisTaskPayload(BaseModel):
     analysis_id: UUID
     media_asset_id: UUID
     video_uri: str
+    chat_id: UUID | None = None
+    user_id: UUID | None = None
 
 class TwelveLabsTaskPayload(BaseModel):
     media_asset_id: UUID
@@ -49,6 +51,7 @@ class RawArchiveTaskPayload(BaseModel):
     platform: str
     search_id: UUID
     raw_json_compressed: str  # base64-encoded gzip data
+    gcs_key: str | None = None
 
 class BoardInsightsTaskPayload(BaseModel):
     board_id: UUID
@@ -75,6 +78,7 @@ class ChatStreamTaskPayload(BaseModel):
     image_urls: list[str] | None = None
     auth_token: str | None = None
     filters: dict | None = None
+    user_id: UUID | None = None
 
 @router.post("/gemini/analyze")
 async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Request):
@@ -82,6 +86,8 @@ async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Req
     Handle background Gemini analysis task with retries.
     Waits inline for video to be ready (max 3 min), then analyzes.
     """
+    if payload.user_id:
+        pass
     logger.info(f"Received Gemini analysis task for {payload.media_asset_id}")
     executor = CloudTaskExecutor(request)
 
@@ -142,7 +148,9 @@ async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Req
         on_fail=_on_fail,
         analysis_id=payload.analysis_id,
         media_asset_id=payload.media_asset_id,
-        video_uri=final_video_uri
+        video_uri=final_video_uri,
+        chat_id=str(payload.chat_id) if payload.chat_id else None,
+        user_id=str(payload.user_id) if payload.user_id else None,
     )
 
 @router.post("/twelvelabs/index")
@@ -251,7 +259,8 @@ async def handle_raw_archive_task(payload: RawArchiveTaskPayload, request: Reque
         on_fail=_on_fail,
         platform=payload.platform,
         search_id=payload.search_id,
-        compressed_data=compressed_bytes
+        compressed_data=compressed_bytes,
+        key_override=payload.gcs_key,
     )
 
 @router.post("/boards/insights")
@@ -260,6 +269,7 @@ async def handle_board_insights_task(payload: BoardInsightsTaskPayload, request:
     Handle background board insights task with retries.
     Marks status='processing' on pickup.
     """
+
     from app.db.queries import get_board_insights
     from app.db import set_rls_user
     
@@ -304,6 +314,7 @@ async def handle_search_task(payload: SearchTaskPayload, request: Request):
     """
     Handle background search task with retries.
     """
+
     logger.info(f"Received search task for {payload.search_id}")
     executor = CloudTaskExecutor(request)
 
@@ -325,6 +336,7 @@ async def handle_load_more_task(payload: LoadMoreTaskPayload, request: Request):
     """
     Handle background load-more task with retries.
     """
+
     logger.info(f"Received load_more task for {payload.search_id}")
     executor = CloudTaskExecutor(request)
 
@@ -346,6 +358,8 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
     """
     Handle background chat stream task with retries.
     """
+    if payload.user_id:
+        pass
     logger.info(f"Received chat stream task for {payload.chat_id}")
     logger.info(f"Received chat stream task for {payload.filters}")
     executor = CloudTaskExecutor(request)
@@ -361,8 +375,13 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
             await r.xadd(
                 f"chat:{str(payload.chat_id)}:stream",
                 {"data": json.dumps({"type": "error", "error": str(e)})},
+                maxlen=settings.REDIS_STREAM_MAXLEN_CHAT,
+                approximate=True,
             )
-            await r.expire(f"chat:{str(payload.chat_id)}:stream", 60)
+            await r.expire(
+                f"chat:{str(payload.chat_id)}:stream",
+                settings.REDIS_STREAM_TTL_S_CHAT,
+            )
         finally:
             pass
 
@@ -379,6 +398,7 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
                 model_name=payload.model_name,
                 image_urls=payload.image_urls or [],
                 filters=payload.filters or {},
+                user_id=str(payload.user_id) if payload.user_id else None,
                 redis_client=redis_client,
             )
         finally:
