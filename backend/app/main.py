@@ -21,6 +21,7 @@ from app.realtime.stream_hub import StreamFanoutHub
 from app.api import v1_router
 from app.middleware.telemetry_context import TelemetryContextMiddleware
 from app.agent.runtime import create_agent_graph
+from app.integrations.langfuse_client import flush_langfuse
 from app.db.db_semaphore import (
     DBSemaphore,
     SemaphoreConfig,
@@ -144,6 +145,10 @@ async def lifespan(app: FastAPI):
         logger.debug("Deep agent checkpointer closed")
     await close_db()
     logger.debug("Database connections closed")
+    try:
+        flush_langfuse(reason="app_shutdown")
+    except Exception:
+        pass
 
 
 app = FastAPI(

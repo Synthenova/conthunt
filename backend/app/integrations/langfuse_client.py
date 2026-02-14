@@ -101,7 +101,12 @@ def _get_langfuse_client() -> Any | None:
             host=settings.LANGFUSE_HOST or None,
             tracer_provider=_langfuse_tracer_provider,
         )
-        logger.info("Langfuse client initialized successfully")
+        public_key_suffix = settings.LANGFUSE_PUBLIC_KEY[-6:] if settings.LANGFUSE_PUBLIC_KEY else ""
+        logger.info(
+            "Langfuse client initialized successfully (host=%s public_key_suffix=%s)",
+            settings.LANGFUSE_HOST or "default",
+            public_key_suffix,
+        )
     except Exception as exc:
         logger.warning("Failed to initialize Langfuse client: %s", exc)
         _langfuse_client = None
@@ -111,6 +116,17 @@ def _get_langfuse_client() -> Any | None:
 
 def get_langfuse_client() -> Any | None:
     return _get_langfuse_client()
+
+
+def flush_langfuse(*, reason: str = "manual") -> None:
+    """Force flush Langfuse traces (useful for serverless/shutdown)."""
+    client = _get_langfuse_client()
+    if client is not None and hasattr(client, "flush"):
+        try:
+            client.flush()
+            logger.debug("Langfuse traces flushed (reason=%s)", reason)
+        except Exception as exc:
+            logger.warning("Langfuse flush failed (reason=%s): %s", reason, exc)
 
 
 def _sync_langfuse_env(settings: Any) -> None:
@@ -241,10 +257,4 @@ def end_trace(handle: LangfuseTraceHandle, success: bool, error: str | None = No
         except Exception as exc:
             logger.debug("Langfuse end_trace update failed: %s", exc)
 
-    client = _get_langfuse_client()
-    if client is not None:
-        try:
-            if hasattr(client, "flush"):
-                client.flush()
-        except Exception:
-            pass
+    flush_langfuse(reason="end_trace")

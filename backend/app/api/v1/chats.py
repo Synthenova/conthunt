@@ -40,6 +40,7 @@ from app.agent.runtime import create_agent_graph
 from app.agent.deep_agent_runtime import create_deep_agent_graph
 from app.integrations.langfuse_client import (
     AgentRunContext,
+    flush_langfuse,
     get_langfuse_propagation_context,
     start_langfuse_root_observation,
 )
@@ -616,6 +617,11 @@ async def stream_generator_to_redis(
                 pass
 
         finally:
+            try:
+                flush_langfuse(reason="chat_stream_finally")
+            except Exception:
+                pass
+
             try:
                 await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
             except RedisConnectionError:
