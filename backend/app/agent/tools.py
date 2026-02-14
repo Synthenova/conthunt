@@ -67,48 +67,68 @@ async def report_chosen_videos(
     config: RunnableConfig,
 ) -> dict:
     """
-    Report chosen video IDs for the frontend to render.
-    This emits a tool event that the stream can forward as a structured payload.
+    Report chosen videos for the frontend to render.
+
+    Each entry in 'chosen' must have:
+      - ref: Video reference like 'viral cooking hacks:V3'
+      - reason: Why this video was chosen
+      - score: Relevance score (1-10)
     """
     chat_id = (config.get("configurable") or {}).get("chat_id")
     criteria_slug = (criteria_slug or "").strip()
     if not criteria_slug:
         return {"error": "criteria_slug is required"}
 
+    from app.agent.deep_research.ref_resolver import resolve_refs_batch
+
     # Normalize chosen payload
     normalized = []
-    chosen_video_ids: list[str] = []
-    invalid_media_asset_ids: list[str] = []
+    refs_to_resolve: list[str] = []
     for row in chosen or []:
         if not isinstance(row, dict):
             continue
-        mid = (row.get("media_asset_id") or "").strip()
-        if not mid:
+        ref = (row.get("ref") or "").strip()
+        if not ref:
             continue
         reason = str(row.get("reason") or "").strip()
-        normalized.append({"media_asset_id": mid, "reason": reason})
-        chosen_video_ids.append(mid)
+        score = int(row.get("score") or 0)
+        normalized.append({"ref": ref, "reason": reason, "score": score})
+        refs_to_resolve.append(ref)
 
-    # Validate IDs early: must be UUIDs (DB media_asset_id).
-    # If invalid, return an error so the agent can correct itself.
+    if not normalized:
+        return {"error": "No valid video refs provided"}
+
+    # Resolve refs → media_asset_ids
+    resolved = await resolve_refs_batch(str(chat_id), refs_to_resolve)
+
+    # Build list of resolved UUIDs
+    chosen_video_ids: list[str] = []
+    unresolved_refs: list[str] = []
+    for entry in normalized:
+        mid = resolved.get(entry["ref"])
+        if mid:
+            entry["media_asset_id"] = mid
+            chosen_video_ids.append(mid)
+        else:
+            unresolved_refs.append(entry["ref"])
+
+    if unresolved_refs and not chosen_video_ids:
+        return {
+            "error": "Could not resolve any video refs to media asset IDs.",
+            "unresolved_refs": unresolved_refs,
+            "hint": "Make sure the ref format is 'search query:VN' and the search exists.",
+        }
+
+    # Validate resolved UUIDs
     parsed_ids: list[UUID] = []
     for mid in chosen_video_ids:
         try:
             parsed_ids.append(UUID(str(mid)))
         except Exception:
-            invalid_media_asset_ids.append(mid)
-
-    if invalid_media_asset_ids:
-        return {
-            "error": "Invalid media_asset_id(s): expected UUID(s) of VIDEO media assets in DB.",
-            "criteria_slug": criteria_slug,
-            "invalid_media_asset_ids": invalid_media_asset_ids,
-            "hint": "Use `media_asset_id` values returned by tool outputs like get_search_overview(...). Do NOT use content IDs like v_... or URLs.",
-        }
+            pass
 
     def _safe_slug(s: str) -> str:
         import re
-
         s = s.lower()
         s = re.sub(r"[^a-z0-9_-]+", "-", s).strip("-")
         return s or "criteria"
@@ -117,8 +137,8 @@ async def report_chosen_videos(
 
     saved_as = None
     items = []
-    if chat_id:
-        # Build grid-ready items so the frontend can render instantly in the Deep Research tab.
+    if chat_id and parsed_ids:
+        # Build grid-ready items for frontend
         user_uuid = (config.get("configurable") or {}).get("user_id")
         if user_uuid:
             try:
@@ -128,21 +148,11 @@ async def report_chosen_videos(
             except Exception:
                 items = []
 
-        # If we couldn't resolve any items, treat this as an error: likely wrong IDs or access/RLS issue.
-        if chosen_video_ids and not items:
-            return {
-                "error": "No videos found for the provided media_asset_id(s).",
-                "criteria_slug": criteria_slug,
-                "chosen_video_ids": chosen_video_ids,
-                "hint": "Make sure you are passing DB media_asset_id UUIDs for VIDEO assets (not content IDs). If these came from an older run, re-fetch via get_search_overview(search_id).",
-            }
-
-        # Write chosen-vids-<criteria_slug>-NNN.json at root; never edit existing files.
+        # Write chosen-vids-<criteria_slug>-NNN.json at root
         prefix = f"chosen-vids-{safe_slug}-"
         existing = await gcs_store.list_paths(str(chat_id), prefix)
         max_n = 0
         for p in existing:
-            # Only root files chosen-vids-001.json etc
             if "/" in p:
                 continue
             if not p.startswith(prefix) or not p.endswith(".json"):
@@ -167,8 +177,8 @@ async def report_chosen_videos(
 
     return {
         "criteria_slug": criteria_slug,
-        "chosen": normalized,
-        "chosen_video_ids": chosen_video_ids,
+        "chosen_count": len(chosen_video_ids),
+        "unresolved_refs": unresolved_refs,
         "saved_as": saved_as,
         "items": items,
     }
@@ -367,6 +377,7 @@ async def get_video_analysis(
         
         # Trigger unified analysis flow (handles priority downloads, race conditions, etc.)
         try:
+            logger.info(f"[DEEP_TOOL] trigger_paid_analysis START user={db_user_id} asset={media_asset_uuid}")
             result = await analysis_service.trigger_paid_analysis(
                 user_id=db_user_id,
                 user_role=user_role,
@@ -375,19 +386,24 @@ async def get_video_analysis(
                 record_streak=not deep_research_enabled,
                 chat_id=chat_id,
             )
-            
-            # Convert to dict if needed
-            if hasattr(result, 'model_dump'):
-                result = result.model_dump()
+            logger.info(f"[DEEP_TOOL] trigger_paid_analysis DONE status={result.status} id={result.id}")
             
             # If already completed, return immediately
-            if result.get("status") == "completed" and result.get("analysis"):
-                return result
+            if result.status == "completed" and result.analysis:
+                # Return dict for tool output
+                return {
+                    "id": str(result.id),
+                    "media_asset_id": str(result.media_asset_id),
+                    "status": "completed",
+                    "analysis": result.analysis,
+                    "error": None,
+                    "cached": result.cached,
+                }
             
             # Otherwise, wait for completion via Postgres polling when deep research is enabled.
-            analysis_id = result.get("id")
+            analysis_id = str(result.id) if result.id else ""
             if not analysis_id:
-                return result  # Can't wait without ID
+                return result.model_dump() if hasattr(result, "model_dump") else result.__dict__  # Fallback
 
             if not chat_id:
                 return result
@@ -401,16 +417,23 @@ async def get_video_analysis(
 
             # First poll is intentionally delayed to avoid hammering the DB while the
             # analysis job is still being queued/downloaded.
+            logger.info(f"[DEEP_TOOL] polling SLEEP first_delay={first_delay_s}s asset={media_asset_uuid}")
             await asyncio.sleep(max(0.0, first_delay_s))
 
+            poll_count = 0
             while True:
+                poll_count += 1
                 async with get_db_connection() as conn:
                     await set_rls_user(conn, db_user_id)
                     analysis = await get_video_analysis_by_media_asset(conn, media_asset_uuid)
 
                 if analysis:
                     status = analysis.get("status", "")
+                    if poll_count % 5 == 1:
+                        logger.info(f"[DEEP_TOOL] poll #{poll_count} asset={media_asset_uuid} status={status}")
+
                     if status == "completed" and analysis.get("analysis_result"):
+                        logger.info(f"[DEEP_TOOL] COMPLETED asset={media_asset_uuid}")
                         analysis_data = analysis["analysis_result"]
                         analysis_str = analysis_data.get("analysis") if isinstance(analysis_data, dict) else str(analysis_data)
                         return {
@@ -422,6 +445,7 @@ async def get_video_analysis(
                             "cached": True,
                         }
                     if status == "failed":
+                        logger.error(f"[DEEP_TOOL] FAILED asset={media_asset_uuid} error={analysis.get('error')}")
                         return {
                             "id": str(analysis["id"]),
                             "media_asset_id": str(media_asset_uuid),
@@ -430,9 +454,12 @@ async def get_video_analysis(
                             "error": analysis.get("error", "Analysis failed"),
                             "cached": True,
                         }
+                else:
+                    logger.warning(f"[DEEP_TOOL] poll #{poll_count} asset={media_asset_uuid} NOT FOUND in DB")
 
                 now = loop.time()
                 if now >= deadline:
+                    logger.error(f"[DEEP_TOOL] TIMEOUT asset={media_asset_uuid} after {poll_timeout_s}s. Returning processing state.")
                     return {
                         "id": str(analysis_id),
                         "media_asset_id": str(media_asset_uuid),
@@ -447,7 +474,8 @@ async def get_video_analysis(
                 await asyncio.sleep(max(0.0, interval_s) + jitter)
             
         except Exception as limit_err:
-            return {"error": str(limit_err)}
+            logger.exception(f"[DEEP_TOOL] Exception in polling loop: {limit_err}")
+            return {"error": f"Polling Error: {str(limit_err)}"}
 
     except ValueError:
         return {"error": "Invalid media_asset_id format."}

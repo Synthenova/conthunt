@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # This avoids app-side QueuePool timeouts under high concurrency (e.g., deep research fanout).
     DB_USE_NULLPOOL: bool = True
     # Global DB backpressure (Redis ZSET + Lua). Fail-open by design if Redis is down.
-    DB_SEMAPHORE_ENABLED: bool = True
+    DB_SEMAPHORE_ENABLED: bool = False
     DB_SEM_KEY_PREFIX: str = "sem:db"
     DB_SEM_TTL_MS: int = 10_000
     DB_SEM_API_LIMIT: int = 7
@@ -54,8 +54,8 @@ class Settings(BaseSettings):
     QUEUE_CHAT_STREAM: str = "chat-stream-queue"
 
     # Deep research tuning
-    DEEP_RESEARCH_ANALYSIS_CONCURRENCY: int = 10
-    DEEP_RESEARCH_SEARCH_CONCURRENCY: int = 5
+    DEEP_RESEARCH_ANALYSIS_CONCURRENCY: int = 100
+    DEEP_RESEARCH_SEARCH_CONCURRENCY: int = 10
     DEEP_RESEARCH_MODEL: str = "openrouter/google/gemini-3-flash-preview"
     LANGGRAPH_RECURSION_LIMIT: int = 100
     # If true, stream all LangGraph events to Redis during deep research (very noisy; expensive).
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     # We poll Postgres for completion (no SSE/Redis dependency); keep this bounded.
     DEEP_RESEARCH_ANALYSIS_POLL_TIMEOUT_S: float = 240.0
     # Delay first poll after triggering analysis, then poll at a fixed cadence.
-    DEEP_RESEARCH_ANALYSIS_POLL_FIRST_DELAY_S: float = 40.0
+    DEEP_RESEARCH_ANALYSIS_POLL_FIRST_DELAY_S: float = 30.0
     DEEP_RESEARCH_ANALYSIS_POLL_INTERVAL_S: float = 5.0
 
     # ScrapeCreators API

@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List, Tuple
 
 import httpx
 from langchain_core.runnables import RunnableConfig
@@ -15,11 +15,6 @@ from app.core import get_settings
 from app.core.logging import logger
 
 settings = get_settings()
-
-from app.agent.deep_research.tools_analysis import (
-    analyze_search_batch_with_criteria,
-    answer_video_question,
-)
 
 
 def _get_chat_id_from_config(config: RunnableConfig) -> str | None:
@@ -110,8 +105,15 @@ def _normalize_query(q: str) -> str:
     return " ".join((q or "").strip().split())
 
 
-def _unique_media_asset_ids(items: Iterable[dict]) -> int:
-    return len({i.get("media_asset_id") for i in items if i.get("media_asset_id")})
+def _safe_int(val) -> int:
+    """Convert a value to int, returning 0 on any failure."""
+    try:
+        return int(val or 0)
+    except Exception:
+        return 0
+
+
+
 
 
 async def _wait_search_done(search_id: str, headers: Dict[str, str]) -> None:
@@ -172,21 +174,6 @@ async def _run_one_search(query: str, headers: Dict[str, str]) -> Tuple[str, Lis
     return str(search_id), items
 
 
-async def _read_progress(chat_id: str) -> dict:
-    progress = await _read_json_from_gcs(chat_id, "progress.json")
-    if not isinstance(progress, dict):
-        progress = {}
-    progress.setdefault("search_order", [])
-    progress.setdefault("searches", {})
-    progress.setdefault("errors_recent", [])
-    return progress
-
-
-async def _write_progress(chat_id: str, progress: dict) -> None:
-    progress["last_updated_at"] = _now_iso()
-    await _write_json_to_gcs(chat_id, "progress.json", progress)
-
-
 async def _record_error(progress: dict, query: str, error: str) -> None:
     errors = progress.get("errors_recent") or []
     errors.append({"ts": _now_iso(), "query": query, "error": error})
@@ -201,6 +188,10 @@ async def deep_search_batch_wait(
     """
     Run multiple searches in parallel (capped by DEEP_RESEARCH_SEARCH_CONCURRENCY), wait for completion,
     persist progress + per-search detail files, and return a structured summary.
+
+    Writes two versions of each search result:
+      - /searches_raw/search_N.json  (full data with UUIDs — agent-blocked)
+      - /searches/search_N.json      (slim, no UUIDs, with caption + hashtags — agent-readable)
     """
     headers = await _get_headers(config)
     if not headers.get("Authorization"):
@@ -210,89 +201,114 @@ async def deep_search_batch_wait(
     if not chat_id:
         return {"error": "chat_id is required."}
 
-    progress = await _read_progress(chat_id)
-    searches_index = await _read_json_from_gcs(chat_id, "searches.json")
-    if not isinstance(searches_index, dict):
-        searches_index = {}
+    from app.agent.deep_research.progress import (
+        read_progress as _read_prog,
+        write_progress as _write_prog,
+        get_next_search_number,
+        register_search,
+    )
 
-    normalized_to_query: Dict[str, str] = {}
+    progress = await _read_prog(chat_id)
+
+    # Deduplicate + normalize queries
+    unique_queries: list[str] = []
+    seen: set[str] = set()
     for q in (queries or []):
         nq = _normalize_query(q)
-        if not nq:
+        if not nq or nq in seen:
             continue
-        if nq in normalized_to_query:
-            continue
-        normalized_to_query[nq] = nq
+        seen.add(nq)
+        unique_queries.append(nq)
+
+    # Pre-assign search numbers (sequential, before parallel execution)
+    start_num = get_next_search_number(progress)
+    query_numbers: dict[str, int] = {}
+    for i, nq in enumerate(unique_queries):
+        query_numbers[nq] = start_num + i
+    progress["next_search_number"] = start_num + len(unique_queries)
 
     sem = asyncio.Semaphore(settings.DEEP_RESEARCH_SEARCH_CONCURRENCY)
-
     executed: List[dict] = []
     failed: List[dict] = []
+    files_written: List[str] = []
 
     async def _worker(nq: str) -> None:
+        search_number = query_numbers[nq]
         try:
             async with sem:
                 search_id, items = await _run_one_search(nq, headers)
 
             fetched_at = _now_iso()
-            detail_filename = f"search_{search_id}_detail.json"
-            await _write_json_to_gcs(
-                chat_id,
-                detail_filename,
-                {
-                    "search_id": search_id,
-                    "query": nq,
-                    "fetched_at": fetched_at,
-                    "summary_items": items,
-                },
-            )
-
             count = len(items)
-            unique_ids = _unique_media_asset_ids(items)
-            created_at = fetched_at
 
-            searches_index[str(search_id)] = {
+            # ── Build raw + slim item lists ──────────────────────────
+            raw_items: list[dict] = []
+            slim_items: list[dict] = []
+            for idx, it in enumerate(items, start=1):
+                metrics = it.get("metrics") or {}
+                raw_items.append({
+                    "video_id": idx,
+                    "media_asset_id": it.get("media_asset_id"),
+                    "title": it.get("title") or "",
+                    "platform": it.get("platform") or "",
+                    "creator_handle": it.get("creator_handle") or "",
+                    "published_at": it.get("published_at"),
+                    "metrics": metrics,
+                    "caption": it.get("primary_text") or it.get("caption") or "",
+                    "hashtags": it.get("hashtags") or [],
+                })
+                slim_items.append({
+                    "id": idx,
+                    "title": it.get("title") or "",
+                    "platform": it.get("platform") or "",
+                    "creator": it.get("creator_handle") or "",
+                    "views": _safe_int(metrics.get("view_count")),
+                    "likes": _safe_int(metrics.get("like_count")),
+                    "caption": it.get("primary_text") or it.get("caption") or "",
+                    "hashtags": it.get("hashtags") or [],
+                })
+
+            # ── Write raw file (full, with UUIDs — agent-blocked) ───
+            await _write_json_to_gcs(chat_id, f"searches_raw/search_{search_number}.json", {
+                "search_number": search_number,
+                "search_id": str(search_id),
                 "query": nq,
-                "created_at": created_at,
-                "count": count,
-                "unique_media_asset_ids": unique_ids,
-                "detail_file": detail_filename,
-            }
+                "fetched_at": fetched_at,
+                "items": raw_items,
+            })
 
-            # progress.json: concise ground truth
-            if str(search_id) not in progress["searches"]:
-                progress["search_order"].append(str(search_id))
-            progress["searches"][str(search_id)] = {
+            # ── Write slim file (no UUIDs — agent-readable) ─────────
+            slim_path = f"searches/search_{search_number}.json"
+            await _write_json_to_gcs(chat_id, slim_path, {
+                "search_number": search_number,
                 "query": nq,
-                "created_at": created_at,
-                "count": count,
-                "unique_media_asset_ids": unique_ids,
-                "analyzed_count": 0,
-                "unanalyzed_count": unique_ids,
-            }
+                "item_count": len(slim_items),
+                "items": slim_items,
+            })
+            files_written.append(f"/searches/search_{search_number}.json")
 
-            executed.append(
-                {
-                    "query": nq,
-                    "search_id": str(search_id),
-                    "count": count,
-                    "unique_media_asset_ids": unique_ids,
-                }
-            )
+            # ── Progress tracking ──────────────────────────────────
+            register_search(progress, search_number, nq, count, search_id=str(search_id))
+
+            executed.append({
+                "search_number": search_number,
+                "query": nq,
+                "item_count": count,
+            })
         except Exception as e:
             msg = str(e)
-            failed.append({"query": nq, "error": msg})
+            failed.append({"search_number": query_numbers[nq], "query": nq, "error": msg})
             await _record_error(progress, nq, msg)
 
-    await asyncio.gather(*[_worker(nq) for nq in normalized_to_query.values()])
+    await asyncio.gather(*[_worker(nq) for nq in unique_queries])
 
-    await _write_json_to_gcs(chat_id, "searches.json", searches_index)
-    await _write_progress(chat_id, progress)
+    # Persist progress
+    await _write_prog(chat_id, progress)
 
     tool_output = {
-        "executed": executed,
+        "executed": sorted(executed, key=lambda x: x["search_number"]),
         "failed": failed,
-        "concurrency": settings.DEEP_RESEARCH_SEARCH_CONCURRENCY,
+        "files_written": files_written,
     }
 
     await _append_jsonl_to_gcs(
@@ -303,68 +319,9 @@ async def deep_search_batch_wait(
             "tool": "deep_search_batch_wait",
             "input": {"queries": queries or []},
             "output": tool_output,
-            "writes": ["progress.json", "searches.json"],
+            "writes": ["progress.json"] + files_written,
         },
     )
 
     return tool_output
 
-
-@tool
-async def get_search_overview(
-    search_id: str,
-    config: RunnableConfig,
-    limit: int = 50,
-) -> dict:
-    """
-    Read a stored per-search detail file and return a compact overview (titles + key metrics).
-    """
-    chat_id = _get_chat_id_from_config(config)
-    if not chat_id:
-        return {"error": "chat_id is required."}
-
-    searches_index = await _read_json_from_gcs(chat_id, "searches.json")
-    if not isinstance(searches_index, dict):
-        searches_index = {}
-
-    entry = searches_index.get(str(search_id)) or {}
-    detail_file = entry.get("detail_file") or f"search_{search_id}_detail.json"
-
-    detail = await _read_json_from_gcs(chat_id, detail_file)
-    if not detail:
-        return {"error": f"Search detail not found for {search_id}"}
-
-    query = detail.get("query") or entry.get("query") or ""
-    items = detail.get("summary_items") or []
-    if not isinstance(items, list):
-        items = []
-
-    def _views(it: dict) -> int:
-        metrics = it.get("metrics") or {}
-        try:
-            return int(metrics.get("view_count") or 0)
-        except Exception:
-            return 0
-
-    items_sorted = sorted(items, key=_views, reverse=True)
-    slim = []
-    for it in items_sorted[: max(0, int(limit or 0))]:
-        metrics = it.get("metrics") or {}
-        slim.append(
-            {
-                "media_asset_id": it.get("media_asset_id"),
-                "title": it.get("title"),
-                "platform": it.get("platform"),
-                "creator_handle": it.get("creator_handle"),
-                "published_at": it.get("published_at"),
-                "view_count": metrics.get("view_count"),
-                "like_count": metrics.get("like_count"),
-            }
-        )
-
-    return {
-        "search_id": str(search_id),
-        "query": query,
-        "count": len(items),
-        "items": slim,
-    }

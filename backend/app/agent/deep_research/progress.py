@@ -11,9 +11,8 @@ def _now_iso() -> str:
 
 def _defaults() -> dict:
     return {
-        "search_order": [],
-        "searches": {},
-        "criteria": {},
+        "next_search_number": 1,
+        "searches_v2": [],
         "last_updated_at": _now_iso(),
     }
 
@@ -22,9 +21,8 @@ async def read_progress(chat_id: str) -> dict:
     data = await gcs_store.read_json(chat_id, "progress.json")
     if not isinstance(data, dict):
         data = _defaults()
-    data.setdefault("search_order", [])
-    data.setdefault("searches", {})
-    data.setdefault("criteria", {})
+    data.setdefault("next_search_number", 1)
+    data.setdefault("searches_v2", [])
     return data
 
 
@@ -33,14 +31,29 @@ async def write_progress(chat_id: str, progress: dict) -> None:
     await gcs_store.write_json(chat_id, "progress.json", progress)
 
 
-def bump_criteria_counts(progress: dict, criteria_slug: str, search_id: str, analyzed_inc: int) -> None:
-    crit = (progress.get("criteria") or {}).get(criteria_slug)
-    if not isinstance(crit, dict):
-        crit = {"total_analyzed": 0, "by_search_id": {}}
-    crit["total_analyzed"] = int(crit.get("total_analyzed") or 0) + int(analyzed_inc or 0)
-    by = crit.get("by_search_id") or {}
-    by[str(search_id)] = int(by.get(str(search_id)) or 0) + int(analyzed_inc or 0)
-    crit["by_search_id"] = by
-    progress.setdefault("criteria", {})
-    progress["criteria"][criteria_slug] = crit
+# ---------------------------------------------------------------------------
+# Numbered search helpers
+# ---------------------------------------------------------------------------
 
+def get_next_search_number(progress: dict) -> int:
+    """Return the next available search number."""
+    return int(progress.get("next_search_number") or 1)
+
+
+def register_search(
+    progress: dict,
+    search_number: int,
+    query: str,
+    item_count: int,
+    search_id: str = "",
+) -> None:
+    """Register a completed search in progress."""
+    searches_v2 = progress.get("searches_v2")
+    if not isinstance(searches_v2, list):
+        searches_v2 = []
+    searches_v2.append({
+        "number": search_number,
+        "query": query,
+        "item_count": item_count,
+    })
+    progress["searches_v2"] = searches_v2

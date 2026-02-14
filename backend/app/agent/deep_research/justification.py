@@ -11,64 +11,89 @@ from app.core import get_settings
 settings = get_settings()
 
 
-class JustificationOut(BaseModel):
-    score: float = Field(..., description="Similarity score 0.0 to 1.0")
-    reason: str = Field(..., description="Detailed justification for the score")
+class AnswerAndScoreOut(BaseModel):
+    score: int = Field(..., description="Relevance score 1-10")
+    answer: str = Field(..., description="Detailed answer to the research question about this video")
 
 
-async def justify_with_score(
+_SCORING_SYSTEM = """\
+You are evaluating a video against a research question.
+
+Provide:
+1. A relevance SCORE from 1-10
+2. A detailed ANSWER (200-300 words) explaining how this video relates to the question
+
+Scoring guidelines (BE STRICT):
+- 1-3: Tangentially related, weak signal, little to learn from
+- 4-5: Somewhat relevant but generic or unremarkable
+- 6-7: Clearly relevant with some useful insights
+- 8-9: Highly relevant, strong match, distinctive approach worth studying
+- 10:  Exceptional — directly answers the question with unique, actionable insight
+
+IMPORTANT: Be strict. Most videos should score 3-6.
+Reserve 7+ for genuinely standout content. A score of 8+ means
+"this specific video teaches something valuable about the question."
+
+Your answer should detail:
+- How the video relates to the research question
+- What specific strategies, techniques, or approaches it demonstrates
+- What makes it stand out (or not)
+- What could be learned from it
+"""
+
+
+async def answer_and_score(
     *,
-    criteria: str,
+    question: str,
     title: str,
     analysis_str: str,
+    video_meta: str,
     config: RunnableConfig,
-) -> JustificationOut:
-    """
-    Internal helper: produce a score + detailed justification, without exposing raw analysis.
+) -> AnswerAndScoreOut:
+    """Answer a research question about a video and score its relevance.
+
+    Args:
+        question: The research question to answer.
+        title: The video title.
+        analysis_str: Full video analysis text (~3k tokens).
+        video_meta: Compact metadata string (platform, creator, views, etc).
+        config: Runnable configuration.
+
+    Returns:
+        AnswerAndScoreOut with score (1-10) and answer (200-300 words).
     """
     model = init_chat_model(settings.DEEP_RESEARCH_MODEL, temperature=0.2)
 
-    # Prefer structured output if supported by the model wrapper.
     try:
-        structured = model.with_structured_output(JustificationOut)
+        structured = model.with_structured_output(AnswerAndScoreOut)
     except Exception:
         structured = None
 
-    system = SystemMessage(
-        content=(
-            "You score a video against criteria.\n"
-            "Return a score from 0.0 to 1.0 and a detailed justification.\n"
-            "Do not include the full raw analysis in the reason."
-        )
-    )
+    system = SystemMessage(content=_SCORING_SYSTEM)
     human = HumanMessage(
         content=(
-            f"Criteria:\n{criteria}\n\n"
-            f"Title:\n{title}\n\n"
-            f"Video analysis:\n{analysis_str}\n"
+            f"Research Question:\n{question}\n\n"
+            f"Video: {title}\n{video_meta}\n\n"
+            f"Full Video Analysis:\n{analysis_str}\n"
         )
     )
 
     user_id = (config.get("configurable") or {}).get("user_id")
-    with set_llm_context(user_id=user_id, route="deep_research.justify"):
+    with set_llm_context(user_id=user_id, route="deep_research.answer_and_score"):
         if structured is not None:
             out = await structured.ainvoke([system, human])
-            if isinstance(out, JustificationOut):
+            if isinstance(out, AnswerAndScoreOut):
                 return out
-            # Some wrappers return dict
-            return JustificationOut.model_validate(out)
+            return AnswerAndScoreOut.model_validate(out)
 
-        # Fallback: ask for JSON and parse it
+        # Fallback: ask for JSON
         fallback_model = model
         resp = await fallback_model.ainvoke(
             [
-                SystemMessage(content=system.content + "\nReturn JSON with keys: score, reason."),
+                SystemMessage(content=system.content + "\nReturn JSON with keys: score, answer."),
                 human,
             ]
         )
         text = str(getattr(resp, "content", resp))
-        # Best-effort parse; if invalid, raise.
         import json
-
-        return JustificationOut.model_validate(json.loads(text))
-
+        return AnswerAndScoreOut.model_validate(json.loads(text))

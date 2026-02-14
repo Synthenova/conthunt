@@ -21,7 +21,7 @@ FEATURE_CREDITS = {
 
 # Role to monthly credits mapping (matches Dodo product metadata)
 ROLE_CREDITS = {
-    "free": 1000 if get_settings().APP_ENV == "local" else 60,
+    "free": 10000 if get_settings().APP_ENV == "local" else 60,
     "creator": 1050,
     "pro_research": 3300,
 }
@@ -281,6 +281,10 @@ class CreditTracker:
             limit_row = limit_result.fetchone()
             limit_count = limit_row[0] if limit_row else None
 
+            # OVERRIDE: Increase search limit for local dev
+            if settings.APP_ENV == "local" and feature == "search_query":
+                limit_count = 1000
+
             used_result = await active_conn.execute(
                 text("""
                 SELECT COUNT(*)
@@ -364,6 +368,10 @@ class CreditTracker:
                 {"role": role}
             )
             usage_limits = {row[0]: row[1] for row in limits_result.fetchall()}
+
+            # OVERRIDE: Increase search limit for local dev
+            if get_settings().APP_ENV == "local":
+                usage_limits["search_query"] = 1000
 
             # Get usage per feature within current credit period
             result = await conn.execute(

@@ -21,6 +21,13 @@ class GCSBackend(BackendProtocol):
     bucket_name: str
     root_prefix: str = "deepagents"
 
+    # Paths that agents cannot read (tools can still write directly).
+    AGENT_BLOCKED_PREFIXES: tuple = ("/searches_raw",)
+
+    def _is_agent_blocked(self, path: str) -> bool:
+        norm = self._normalize_path(path) or ""
+        return any(norm.startswith(p) for p in self.AGENT_BLOCKED_PREFIXES)
+
     def __post_init__(self) -> None:
         self.root_prefix = self.root_prefix.strip("/")
         # We don't store client/bucket here anymore to ensure we use the unified get_gcs_client()
@@ -51,6 +58,8 @@ class GCSBackend(BackendProtocol):
         return client.list_blobs(self.bucket_name, prefix=prefix)
 
     def ls_info(self, path: str) -> list[FileInfo]:
+        if self._is_agent_blocked(path):
+            return []
         key = self._key(path)
         if not key:
             return []
@@ -89,6 +98,8 @@ class GCSBackend(BackendProtocol):
         return await super().als_info(path)
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
+        if self._is_agent_blocked(file_path):
+            return f"Error: '{file_path}' is an internal path and cannot be read."
         key = self._key(file_path)
         if not key:
             return f"Error: File '{file_path}' not found"
@@ -107,6 +118,8 @@ class GCSBackend(BackendProtocol):
         return numbered
 
     async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
+        if self._is_agent_blocked(file_path):
+            return f"Error: '{file_path}' is an internal path and cannot be read."
         # We can implement this via gcs_store.read_text for better async behavior
         chat_id = self.root_prefix.split("/")[-1] if "/" in self.root_prefix else ""
         if not chat_id:
@@ -130,6 +143,8 @@ class GCSBackend(BackendProtocol):
         return numbered
 
     def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        if self._is_agent_blocked(path):
+            return []
         base_key = self._key(path)
         if not base_key:
             return []
@@ -173,6 +188,8 @@ class GCSBackend(BackendProtocol):
         for blob in self._list_blobs(base_key):
             rel = blob.name[len(self.root_prefix) + 1 :] if self.root_prefix else blob.name
             rel_path = f"/{rel}"
+            if self._is_agent_blocked(rel_path):
+                continue
             if glob and not fnmatch.fnmatch(rel_path, glob):
                 continue
 

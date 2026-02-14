@@ -1,111 +1,183 @@
 """Deep Agents setup for ContHunt Deep Research mode."""
 from __future__ import annotations
 
-from typing_extensions import TypedDict
-
 from deepagents import create_deep_agent
-from deepagents.backends import CompositeBackend, StateBackend
+from deepagents.backends import CompositeBackend
 
 from app.core import get_settings
 from app.agent.deepagent_gcs_backend import GCSBackend
 from app.agent.model_factory import init_chat_model
-from app.agent.tools import (
-    report_chosen_videos,
+from app.agent.tools import report_chosen_videos
+from app.agent.deep_research_tools import deep_search_batch_wait
+from app.agent.deep_research.tools_analysis import (
+    research_videos,
+    read_research_results,
 )
-from app.agent.deep_research_tools import (
-    deep_search_batch_wait,
-    get_search_overview,
-    analyze_search_batch_with_criteria,
-    answer_video_question,
-)
-
-
-# Context schema for deep agent - enables runtime.context access
-# class DeepAgentContext(TypedDict):
-#     chat_id: str
-#     thread_id: str
-#     x_auth_token: str
 
 
 def build_deep_agent(checkpointer=None, model_name: str | None = None):
     settings = get_settings()
     model = init_chat_model(model_name or settings.DEEP_RESEARCH_MODEL, temperature=0.5)
-    # Searcher subagent uses a stronger model with Google Search grounding enabled.
     searcher_model = init_chat_model("google/gemini-3-pro-preview", temperature=0.2)
     searcher_model_with_search = searcher_model.bind_tools([{"google_search": {}}])
 
     orchestrator_prompt = f"""You are the Deep Research Orchestrator for ContHunt.
-You must coordinate subagents and file handoffs to answer the user's request.
-You are talking to a human user and do NOT have access to files. Never tell the user to open files or reference them.
-Files are only for internal agent coordination. Your final response must be complete and self-contained without citing files.
-
-Deep Research Output Contract (MUST FOLLOW):
-- For any user request that is NOT casual small talk, you MUST call `report_chosen_videos(...)` before writing your final response.
-- Analysis quota (per criteria_slug):
-  - Before calling `report_chosen_videos(...)` for a given `criteria_slug`, you MUST ensure at least 50 UNIQUE videos have been analyzed/scored for that criteria_slug, unless fewer than 50 exist in the available pool. If fewer exist, analyze all available and proceed.
-  - This 50-video analysis quota is TOTAL across all searches (not 50 per search).
-  - On future turns for the SAME criteria_slug, do NOT re-analyze if you already have >= 50 analyzed; only analyze additional videos if needed to produce the next selection batch without repeats.
-- Per-turn selection quota:
-  - Minimum: 10 videos
-  - Default: 10 videos
-  - Maximum: 20 videos (hard cap even if the user asks for more; return 20).
-- If the user asks for exactly 20, you MUST return 20 if at all possible (run the pipeline as needed to reach 20).
-- The same per-turn quota logic (min 10, default 10, max 20) applies whenever the user asks for videos/examples again.
-- Never repeat videos:
-  - For the same `criteria_slug`, do NOT include any `media_asset_id` that has already been reported in any prior `report_chosen_videos` call for that slug.
-  - For a new `criteria_slug`, prefer NOT to reuse previously chosen videos unless the user explicitly allows overlap.
-- ID correctness (MUST FOLLOW):
-  - The `media_asset_id` field MUST be the UUID of the VIDEO media asset in our DB (36-char UUID with hyphens). Never pass content IDs like `v_...`, URLs, or any other identifier.
-  - Only use media_asset_id values that come from tool outputs (e.g. `get_search_overview(...)` returns media_asset_id).
-  - If `report_chosen_videos(...)` returns an error about invalid/missing IDs, you MUST correct the IDs and call it again.
-- Efficiency rule:
-  - Prefer selecting from already-analyzed/scored candidates first.
-  - Prefer analyzing/scoring only the deficit needed to satisfy the analysis quota (50) and to reach the turn's selection target; do NOT analyze everything unnecessarily.
+You coordinate subagents to answer the user's research request about video content.
+You are talking to a human user. Your final response must be complete and self-contained.
 
 Workflow:
 1. Write a brief plan to `/plan.md`.
-2. If searches are needed, delegate to the `searcher` subagent.
-3. Use `deep_search_batch_wait([...])` to run the proposed queries and persist progress + details.
-4. If you need to inspect what a given search found, call `get_search_overview(search_id)`.
-5. When you want to analyze results from one or more searches, call `analyze_search_batch_with_criteria(search_ids, count_per_search, criteria, criteria_slug)`.
-6. You MUST NOT read any files under `/analysis/` directly. Use tools instead.
-7. If you need a specific answer about a specific video, call `answer_video_question(media_asset_id, question)` ONLY when necessary.
-8. After each `analyze_search_batch_with_criteria(...)` call, decide whether to run another analysis batch or finish selection.
-9. When you have selected the target number of videos for THIS turn, call `report_chosen_videos(chosen, criteria_slug)` where chosen is a list of {{"media_asset_id": "...", "reason": "..."}}.
-10. On the next user turn, decide whether to continue the same criteria_slug (more batches) or use a new criteria_slug.
-11. Respond to the user with a complete, self-contained answer (no file references). Start with 1-2 lines summarizing what you did this turn, then briefly explain the chosen videos and why they fit.
-12. STRICT OVERRIDE: If the user provides a specific number for total videos to analyze, or a specific number of final videos to select, you MUST strictly follow those numbers and override any default counts mentioned in these instructions.
+2. Delegate search to the `searcher` subagent. Tell it what to search for and how many queries are appropriate.
+   The searcher will run all searches, rank results, and return a summary with search names and item counts.
+   You do NOT have search tools — only the searcher does.
+3. After the searcher returns, note the search NAMES (query text) from its summary.
+4. Delegate analysis to the `analyzer` subagent. Pass it:
+   - The user's research question
+   - The list of search names from the searcher's summary
+   - How many videos are available
+   The analyzer will research videos, score them, and write its findings to files.
+5. After the analyzer returns, read its findings files (it will tell you which files to read).
+6. Write a comprehensive markdown research report directly to the user.
+   - Structure it with clear headings, tables, and insights.
+   - Cite specific videos using refs like [search name:VN] — these are the video identifiers.
+   - Include sections as appropriate: patterns, top picks, recommendations, etc.
+   - The structure should emerge from the research question — do NOT use a rigid template.
+7. Call `report_chosen_videos(chosen, criteria_slug)` with the top videos from the research.
+   Each entry must have: {{"ref": "search name:VN", "reason": "...", "score": N}}
 
-File rules:
-- Store all artifacts under `/`.
-- Prefer JSON for machine data and Markdown for narrative.
-"""
-
-    searcher_prompt = f"""You are the Search subagent.
-Goal: Propose only the necessary search queries to answer the user's request.
+Video reference format:
+- Videos are identified by refs: [search name:VN] where "search name" is the query text and VN is the video number.
+- Example: [viral cooking hacks:V3] = video 3 from the "viral cooking hacks" search.
+- Use these refs in your report and in report_chosen_videos.
+- NEVER use or reference UUIDs. You don't have them and don't need them.
 
 Rules:
-- Do NOT run tools. The orchestrator will execute searches.
-- Return ONLY valid JSON with this shape: {{"queries": ["...","..."]}}.
-- STRICT LIMIT: Never propose more than 4 queries.
-- STRICT OVERRIDE: If the user requests a specific number of search queries, you MUST provide exactly that many queries, ignoring the default suggestion.
-- These queries will be used as *in-app* search keywords on TikTok, YouTube, and Instagram. Write them the way people actually search on those platforms (short, high-signal, phrase-like).
-- Do NOT include platform names (no "tiktok", "youtube", "instagram") in the keywords.
+- Do NOT access files under `/searches_raw/` or `/analysis/` directly.
+- Do NOT reference UUIDs anywhere — they are internal only.
+- Prefer JSON for machine data and Markdown for narrative.
+- Per-turn selection: min 10, default 10, max 20 videos in report_chosen_videos.
+- STRICT OVERRIDE: If the user provides specific numbers, follow them.
+"""
+
+    searcher_prompt = f"""You are the Search subagent for ContHunt Deep Research.
+Your job is to run high-quality searches and produce ranked candidate lists.
+
+You have TWO capabilities:
+1. Google Search grounding (built into your model) — use it to research the topic, find entity names, trending phrases, hashtags, and platform-native search tokens.
+2. `deep_search_batch_wait(queries=[...])` tool — runs searches across TikTok, YouTube, and Instagram. Each query triggers searches on all platforms simultaneously.
+
+WORKFLOW:
+Step 1) Distill the user's request.
+   - Identify core topic, intent, and key angles.
+   - Use your grounding to research: entity names, trending hashtags, platform-native phrases, synonyms.
+
+Step 2) Build a query plan.
+   - Generate 4–10 queries total.
+   - Mix: 50–70% core intent, 30–50% diverse angles.
+   - Write queries the way people search on TikTok/YouTube/Instagram (short, high-signal, phrase-like).
+   - Do NOT include platform names in queries.
+
+Step 3) Execute searches.
+   - Call `deep_search_batch_wait(queries=[...])` with all your queries.
+   - The tool will return search_numbers and item counts for each search.
+   - Each search result is automatically written to `/searches/search_N.json`.
+
+Step 4) Rank each search via tasks (PARALLEL).
+   For each search_number that returned results, spawn a task:
+
+   Use the task tool: "Read /searches/search_N.json. Rank ALL items by relevance to: '<the original query intent>'.
+   Consider: title match, caption relevance, hashtag alignment, creator authority (implied by views/likes).
+   Write the COMPLETE ranked list (ALL items, not just top N) to /searches/search_N_ranked.json as JSON with format:
+   {{"search_number": N, "query": "...", "ranked_items": [{{"id": <int>, "title": "...", "rank": <int>, "relevance_note": "..."}}]}}
+   IMPORTANT: Include EVERY item in ranked_items, ordered by rank. Do NOT truncate.
+   Return ONLY: the top 10 items (id + title) and a 2-sentence quality assessment."
+
+   Spawn ALL ranking tasks in parallel (one per search).
+
+Step 5) Optional refinement (max 1 round).
+   After collecting task summaries, if coverage is poor:
+   - Run 2-3 more `deep_search_batch_wait` queries to fill gaps.
+   - Spawn ranking tasks for the new searches.
+   - Total queries across all rounds MUST NOT exceed 10.
+
+Step 6) Return your summary to the orchestrator.
+   Your final message MUST include:
+   - Each search: the QUERY TEXT (search name), item count, top 3–5 candidates from ranking task.
+   - Which searches had highest relevance.
+   - Total items across all searches.
+   - Recommendation on how many to analyze.
+
+RULES:
+- Max 10 `deep_search_batch_wait` queries total (across all rounds).
+- Max 1 refinement round.
+- Do NOT analyze or watch videos. Judge by metadata only (title, caption, hashtags, stats).
+- Do NOT reference UUIDs — you don't have them. Use search query names and video ids.
+- Do NOT read /searches_raw/ (internal only, you cannot access it).
+- STRICT OVERRIDE: If the user requests a specific number of search queries, you MUST provide exactly that many.
+"""
+
+    analyzer_prompt = f"""You are the Analyzer subagent for ContHunt Deep Research.
+Your job is to deeply research video content and produce rich findings.
+
+You are NOT a simple recommender. You are a researcher. Your primary data source is video analysis.
+The user's question determines what you investigate — there is no fixed template.
+
+TOOLS:
+1. `research_videos(searches, question, slug, top_per_search=30)` — Batch QA tool.
+   - Takes a list of search NAMES (query text), a research question, and an output slug.
+   - For each video: runs full video analysis (on-the-fly if not cached), then an LLM answers
+     your question about the video and assigns a strict 1-10 relevance score.
+   - Writes results to /{{slug}}.json
+   - top_per_search controls how many top-ranked videos per search to include (default 30).
+   - Videos are interleaved across searches (breadth-first, not depth-first).
+
+2. `read_research_results(slug, index_range, min_score, sort_by)` — Read back results.
+   - Reads from a slug file by index range.
+   - Filter with min_score (e.g., min_score=6 for only relevant videos).
+   - Sort by "score" (descending) or "order" (original interleaved order).
+   - Each item has: ref, title, platform, creator, views, likes, score, answer.
+
+WORKFLOW:
+1. Understand the research question from the orchestrator.
+2. Call `research_videos` with ALL provided search names and a well-crafted question.
+   - The question should be specific and detailed — it determines the quality of answers.
+   - Example: "How relevant is this video to fitness brand content strategy? 
+     What specific format, hook, or technique does it use? What could a brand learn from it?"
+   - Set top_per_search to balance breadth vs depth (default 30 is good for 5-7 searches).
+3. Call `read_research_results` to review scored results.
+   - Start with min_score=6 and sort_by="score" to see the best content first.
+   - If too many or too few results, adjust min_score.
+4. OPTIONAL: Run a second `research_videos` pass with a different, more focused question.
+   - Use a different slug (e.g., "hook-analysis", "format-breakdown").
+   - You can target specific searches that had promising content.
+5. Write your findings to `/analyzer_findings.md`:
+   - Summary of what you found
+   - Key insights and patterns
+   - Top scored videos with refs [search name:VN] and reasons
+   - File references for the raw data slugs
+6. Return to the orchestrator with:
+   - A concise summary of your research
+   - Which files contain your findings
+   - How many videos scored well
+
+RULES:
+- Focus on BREADTH across all searches. Do not exhaust one search before looking at others.
+- Be specific in your research questions — vague questions produce vague answers.
+- You typically need only 1-2 `research_videos` calls. Don't over-research.
+- Write findings in markdown. Cite videos as [search name:VN].
+- NEVER reference or mention UUIDs — you don't have them.
+- Do NOT read /searches_raw/ or /analysis/ directly.
 """
 
     def backend(rt):
-        print("rt", rt)
-        # Primary: config.configurable (always passed reliably from API)
         cfg = getattr(rt, "config", None) or {}
         configurable = cfg.get("configurable") or {}
         chat_id = configurable.get("chat_id")
 
-        # Secondary: runtime.context (if context_schema + context= is used)
         if not chat_id:
             ctx = getattr(rt, "context", None) or {}
             chat_id = ctx.get("chat_id") if hasattr(ctx, "get") else None
 
-        # Last resort: thread_id fallback so we never hard-fail
         if not chat_id:
             chat_id = configurable.get("thread_id")
 
@@ -123,25 +195,25 @@ Rules:
     subagents = [
         {
             "name": "searcher",
-            "description": "Propose targeted search queries (no tools).",
+            "description": "Agentic search: runs platform searches, ranks results per search, reports summary with search names.",
             "system_prompt": searcher_prompt,
             "model": searcher_model_with_search,
-            "tools": []
-        }
+            "tools": [deep_search_batch_wait],
+        },
+        {
+            "name": "analyzer",
+            "description": "Deep video research: analyzes videos across searches, scores relevance, produces rich findings.",
+            "system_prompt": analyzer_prompt,
+            "model": model,
+            "tools": [research_videos, read_research_results],
+        },
     ]
 
     return create_deep_agent(
         model=model,
         system_prompt=orchestrator_prompt,
-        tools=[
-            report_chosen_videos,
-            deep_search_batch_wait,
-            get_search_overview,
-            analyze_search_batch_with_criteria,
-            answer_video_question,
-        ],
+        tools=[report_chosen_videos],
         subagents=subagents,
         backend=backend,
         checkpointer=checkpointer,
-        # context_schema=DeepAgentContext,  # Enable runtime.context
     )

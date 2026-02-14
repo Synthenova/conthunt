@@ -54,6 +54,7 @@ class AnalysisService:
             
             # Check if already accessed (free re-view)
             already_accessed = await has_user_accessed_analysis(conn, user_id, media_asset_id)
+            logger.info(f"[DEEP_SERVICE] check_access user={user_id} asset={media_asset_id} already_accessed={already_accessed}")
         
             if not already_accessed:
                 # First access - check and charge credits
