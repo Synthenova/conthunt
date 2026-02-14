@@ -112,16 +112,24 @@ async def _execute_gemini_analysis(
     try:
         # 1. Build Message with prompt
         logger.info(f"[ANALYSIS] Building HumanMessage with video...")
-        message = HumanMessage(
-            content=[
-                {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
-                {      
-                    "type": "media",
-                    "file_uri": video_uri,
-                    "mime_type": "video/mp4",
-                }
-            ]
-        )
+        
+        is_youtube = "youtube.com" in video_uri or "youtu.be" in video_uri
+        
+        content = [{"type": "text", "text": DEFAULT_ANALYSIS_PROMPT}]
+        if is_youtube:  # OpenRouter
+            content.append({
+                "type": "video_url",
+                "video_url": {"url": video_uri}
+            })
+        else:  # Google
+            content.append({
+                "type": "media",
+                "file_uri": video_uri,
+                "mime_type": "video/mp4",
+            })
+
+        message = HumanMessage(content=content)
+
         
         # 2. Initialize LLM dynamically based on URL type
         is_youtube = "youtube.com" in video_uri or "youtu.be" in video_uri
@@ -135,10 +143,22 @@ async def _execute_gemini_analysis(
         logger.info(f"[ANALYSIS] Invoking Gemini LLM (markdown output)...")
         invoke_start = time.time()
 
+        # Provider-specific tokens parameter
+        llm_kwargs = {"max_tokens": 4096} if is_youtube else {"max_output_tokens": 4096}
+
         with set_llm_context(user_id=user_id, route="analysis.video"):
-            response = await llm.ainvoke([message], **{"max_output_tokens": 4096})
+            response = await llm.ainvoke([message], **llm_kwargs)
+
+        logger.info(f"[ANALYSIS] Gemini LLM response: {response}")
         
-        analysis_markdown = response.content
+        # Ensure analysis_markdown is a string (LLM can return a list of blocks)
+        if isinstance(response.content, list):
+            analysis_markdown = "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in response.content
+            )
+        else:
+            analysis_markdown = str(response.content)
         invoke_duration = time.time() - invoke_start
         
         logger.info(f"[ANALYSIS] Gemini LLM returned in {invoke_duration:.2f}s")
@@ -280,7 +300,7 @@ async def run_gemini_analysis(
             if existing and existing.get("analysis_result"):
                 analysis_data = existing["analysis_result"]
                 analysis_str = analysis_data.get("analysis") if isinstance(analysis_data, dict) else None
-            await conn.commit() # Commit before returning
+            await conn.commit() # Commit before returning            
             return VideoAnalysisResponse(
                 id=analysis_id,
                 media_asset_id=media_asset_id,
