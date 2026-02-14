@@ -55,7 +55,7 @@ Rules:
 - Do NOT access files under `/searches_raw/` or `/analysis/` directly.
 - Do NOT reference UUIDs anywhere — they are internal only.
 - Prefer JSON for machine data and Markdown for narrative.
-- Per-turn selection: min 10, default 10, max 20 videos in report_chosen_videos.
+- Choose as many strong videos as warranted; target a broad final set (report_chosen_videos) when quality is high; max 50.
 - STRICT OVERRIDE: If the user provides specific numbers, follow them.
 """
 
@@ -163,7 +163,9 @@ WORKFLOW:
 RULES:
 - Focus on BREADTH across all searches. Do not exhaust one search before looking at others.
 - Be specific in your research questions — vague questions produce vague answers.
-- You typically need only 1-2 `research_videos` calls. Don't over-research.
+- Hard budget: analyze at most 200 videos total in this turn.
+- Prefer one `research_videos` call; only run a second pass if still within the 200-video total budget.
+- Use interleaving behavior to ensure coverage from multiple searches, not a single search.
 - Write findings in markdown. Cite videos as [search name:VN].
 - NEVER reference or mention UUIDs — you don't have them.
 - Do NOT read /searches_raw/ or /analysis/ directly.
