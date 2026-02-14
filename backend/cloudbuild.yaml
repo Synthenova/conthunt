@@ -127,17 +127,5 @@ steps:
           --set-secrets=LLM_EST_COMPLETION_TOKENS_DEFAULT=LLM_EST_COMPLETION_TOKENS_DEFAULT:latest \
           --set-env-vars=GCP_PROJECT=$PROJECT_ID,GCLOUD_PROJECT=$PROJECT_ID
 
-  # ==========================================
-  # 3. Deploy Monitoring Dashboards
-  # ==========================================
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: 'deploy-dashboards'
-    entrypoint: bash
-    args:
-      - '-c'
-      - 'DEPLOY_DASHBOARDS=true PROJECT_ID=$PROJECT_ID ./scripts/observability/deploy_dashboards.sh'
-
-
-
 options:
   logging: CLOUD_LOGGING_ONLY
