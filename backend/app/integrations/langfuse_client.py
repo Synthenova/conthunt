@@ -14,6 +14,11 @@ except Exception:  # pragma: no cover
     TracerProvider = None
 
 try:
+    from opentelemetry.sdk.trace.sampling import ALWAYS_ON  # type: ignore
+except Exception:  # pragma: no cover
+    ALWAYS_ON = None
+
+try:
     from langfuse import Langfuse  # type: ignore
 except Exception:  # pragma: no cover
     Langfuse = None
@@ -94,7 +99,12 @@ def _get_langfuse_client() -> Any | None:
         if _langfuse_tracer_provider is None and TracerProvider is not None:
             # Keep Langfuse on its own tracer provider so generic app HTTP spans
             # are not mirrored into Langfuse unless explicitly instrumented.
-            _langfuse_tracer_provider = TracerProvider()
+            # Force independent sampling so Cloud Run parent sampling decisions
+            # do not suppress Langfuse traces.
+            if ALWAYS_ON is not None:
+                _langfuse_tracer_provider = TracerProvider(sampler=ALWAYS_ON)
+            else:
+                _langfuse_tracer_provider = TracerProvider()
         _langfuse_client = Langfuse(
             public_key=settings.LANGFUSE_PUBLIC_KEY,
             secret_key=settings.LANGFUSE_SECRET_KEY,
