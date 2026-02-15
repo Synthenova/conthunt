@@ -186,7 +186,7 @@ async def deep_search_batch_wait(
     config: RunnableConfig,
 ) -> dict:
     """
-    Run multiple searches in parallel (capped by DEEP_RESEARCH_SEARCH_CONCURRENCY), wait for completion,
+    Run multiple searches in parallel, wait for completion,
     persist progress + per-search detail files, and return a structured summary.
 
     Writes two versions of each search result:
@@ -227,7 +227,6 @@ async def deep_search_batch_wait(
         query_numbers[nq] = start_num + i
     progress["next_search_number"] = start_num + len(unique_queries)
 
-    sem = asyncio.Semaphore(settings.DEEP_RESEARCH_SEARCH_CONCURRENCY)
     executed: List[dict] = []
     failed: List[dict] = []
     files_written: List[str] = []
@@ -235,8 +234,7 @@ async def deep_search_batch_wait(
     async def _worker(nq: str) -> None:
         search_number = query_numbers[nq]
         try:
-            async with sem:
-                search_id, items = await _run_one_search(nq, headers)
+            search_id, items = await _run_one_search(nq, headers)
 
             fetched_at = _now_iso()
             count = len(items)
@@ -324,4 +322,3 @@ async def deep_search_batch_wait(
     )
 
     return tool_output
-

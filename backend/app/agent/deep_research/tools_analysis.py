@@ -17,10 +17,7 @@ from langchain_core.tools import tool
 from app.agent.deep_research import cache, gcs_store
 from app.agent.deep_research.justification import answer_and_score
 from app.agent.deep_research.progress import read_progress
-from app.core import get_settings
 from app.core.logging import logger
-
-settings = get_settings()
 
 
 def _now_iso() -> str:
@@ -191,70 +188,73 @@ async def research_videos(
             "search_errors": load_errors,
         }
 
-    concurrency = int(getattr(settings, "DEEP_RESEARCH_ANALYSIS_CONCURRENCY", 50))
-    sem = asyncio.Semaphore(concurrency)
+    analysis_by_asset, analysis_errors = await cache.ensure_analyses_batch(
+        chat_id,
+        [str(video["media_asset_id"]) for video in merged],
+        config,
+    )
+
     results: list[dict] = [None] * len(merged)  # type: ignore[list-item]
     failed_count = 0
 
     async def _process_one(idx: int, video: dict) -> None:
         nonlocal failed_count
-        async with sem:
-            try:
-                logger.info("[DEEP_RESEARCH] processing %d/%d ref=%s media_asset=%s", idx + 1, len(merged), video["ref"], video["media_asset_id"])
-                # Ensure analysis exists (runs on-the-fly if absent)
-                analysis_str = await cache.ensure_analysis(
-                    chat_id, video["media_asset_id"], config
-                )
-                logger.info("[DEEP_RESEARCH] analysis ready for ref=%s (len=%d)", video["ref"], len(analysis_str))
+        try:
+            logger.info("[DEEP_RESEARCH] processing %d/%d ref=%s media_asset=%s", idx + 1, len(merged), video["ref"], video["media_asset_id"])
+            media_asset_id = str(video["media_asset_id"])
+            analysis_str = analysis_by_asset.get(media_asset_id)
+            if not analysis_str:
+                raise RuntimeError(analysis_errors.get(media_asset_id) or "video analysis missing")
+            logger.info("[DEEP_RESEARCH] analysis ready for ref=%s (len=%d)", video["ref"], len(analysis_str))
 
-                # Build compact metadata string for the LLM
-                meta = (
-                    f"Platform: {video['platform']} | Creator: {video['creator']} | "
-                    f"Views: {video['views']:,} | Likes: {video['likes']:,}\n"
-                    f"Caption: {video['caption'][:200]}\n"
-                    f"Hashtags: {', '.join(video['hashtags'][:10])}"
-                )
+            # Build compact metadata string for the LLM
+            meta = (
+                f"Platform: {video['platform']} | Creator: {video['creator']} | "
+                f"Views: {video['views']:,} | Likes: {video['likes']:,}\n"
+                f"Caption: {video['caption'][:200]}\n"
+                f"Hashtags: {', '.join(video['hashtags'][:10])}"
+            )
 
-                # LLM: answer question + score
-                result = await answer_and_score(
-                    question=question,
-                    title=video["title"],
-                    analysis_str=analysis_str,
-                    video_meta=meta,
-                    config=config,
-                )
+            # LLM: answer question + score
+            result = await answer_and_score(
+                question=question,
+                title=video["title"],
+                analysis_str=analysis_str,
+                video_meta=meta,
+                config=config,
+            )
 
-                results[idx] = {
-                    "ref": video["ref"],
-                    "search_query": video["search_query"],
-                    "video_id": video["video_id"],
-                    "media_asset_id": video["media_asset_id"],
-                    "title": video["title"],
-                    "platform": video["platform"],
-                    "creator": video["creator"],
-                    "views": video["views"],
-                    "likes": video["likes"],
-                    "score": result.score,
-                    "answer": result.answer,
-                }
-            except Exception as e:
-                logger.warning(
-                    "research_videos: failed on %s: %s", video["ref"], str(e)
-                )
-                failed_count += 1
-                results[idx] = {
-                    "ref": video["ref"],
-                    "search_query": video["search_query"],
-                    "video_id": video["video_id"],
-                    "media_asset_id": video["media_asset_id"],
-                    "title": video["title"],
-                    "platform": video["platform"],
-                    "creator": video["creator"],
-                    "views": video["views"],
-                    "likes": video["likes"],
-                    "score": 0,
-                    "answer": f"[FAILED] {str(e)[:200]}",
-                }
+            results[idx] = {
+                "ref": video["ref"],
+                "search_query": video["search_query"],
+                "video_id": video["video_id"],
+                "media_asset_id": video["media_asset_id"],
+                "title": video["title"],
+                "platform": video["platform"],
+                "creator": video["creator"],
+                "views": video["views"],
+                "likes": video["likes"],
+                "score": result.score,
+                "answer": result.answer,
+            }
+        except Exception as e:
+            logger.warning(
+                "research_videos: failed on %s: %s", video["ref"], str(e)
+            )
+            failed_count += 1
+            results[idx] = {
+                "ref": video["ref"],
+                "search_query": video["search_query"],
+                "video_id": video["video_id"],
+                "media_asset_id": video["media_asset_id"],
+                "title": video["title"],
+                "platform": video["platform"],
+                "creator": video["creator"],
+                "views": video["views"],
+                "likes": video["likes"],
+                "score": 0,
+                "answer": f"[FAILED] {str(e)[:200]}",
+            }
 
     await asyncio.gather(*[_process_one(i, v) for i, v in enumerate(merged)])
 

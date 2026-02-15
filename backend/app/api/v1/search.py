@@ -396,15 +396,21 @@ async def search_worker(
         # Media downloads: Fan-out via Cloud Tasks
         if assets_to_download:
             logger.debug(f"Dispatching {len(assets_to_download)} media download tasks to Cloud Tasks...")
-            for asset_info in assets_to_download:
+            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            for i in range(0, len(assets_to_download), batch_size):
+                chunk = assets_to_download[i:i + batch_size]
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                     relative_uri="/v1/tasks/media/download",
-                    payload={
-                        "asset_id": str(asset_info["id"]),
-                        "platform": asset_info["platform"],
-                        "external_id": asset_info["external_id"]
-                    }
+                    payload=[
+                        {
+                            "asset_id": str(asset_info["id"]),
+                            "platform": asset_info["platform"],
+                            "external_id": asset_info["external_id"],
+                            "attempt_no": 0,
+                        }
+                        for asset_info in chunk
+                    ],
                 )
         
     except Exception as e:
@@ -670,15 +676,21 @@ async def load_more_worker(
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         if assets_to_download:
             logger.debug(f"Dispatching {len(assets_to_download)} media download tasks for load_more...")
-            for asset_info in assets_to_download:
+            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            for i in range(0, len(assets_to_download), batch_size):
+                chunk = assets_to_download[i:i + batch_size]
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                     relative_uri="/v1/tasks/media/download",
-                    payload={
-                        "asset_id": str(asset_info["id"]),
-                        "platform": asset_info["platform"],
-                        "external_id": asset_info["external_id"]
-                    }
+                    payload=[
+                        {
+                            "asset_id": str(asset_info["id"]),
+                            "platform": asset_info["platform"],
+                            "external_id": asset_info["external_id"],
+                            "attempt_no": 0,
+                        }
+                        for asset_info in chunk
+                    ],
                 )
         
     except Exception as e:
@@ -772,8 +784,6 @@ async def create_search(
             mode="live",
             status="running",
         )
-        from app.db.queries import streaks as streak_queries
-        await streak_queries.record_activity(conn, user_uuid, "search", timezone=timezone)
         # analytics outbox removed
         await conn.commit()
 

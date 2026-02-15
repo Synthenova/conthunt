@@ -766,10 +766,11 @@ Allowed values:
                 return {"error": f"Failed to start search for '{keyword}': {str(e)}"}
             return None
 
-        # Execute parallel searches (cap at 5 total)
+        # Execute parallel searches (cap configurable)
         tasks = []
+        max_searches = max(1, int(getattr(settings, "SEARCH_ENQUEUE_BATCH_SIZE", 5)))
         # sort_order: -1, -2, -3...
-        for idx, q in enumerate(queries[:5]):
+        for idx, q in enumerate(queries[:max_searches]):
             tasks.append(_execute_single_search(q, -(idx + 1)))
         
         results = await asyncio.gather(*tasks)

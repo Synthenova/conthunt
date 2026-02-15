@@ -45,7 +45,6 @@ steps:
           --set-secrets=GCP_REGION=GCP_REGION:latest \
           --set-secrets=REDIS_URL=REDIS_URL:latest \
           --set-secrets=REDIS_MAX_CONNECTIONS=REDIS_MAX_CONNECTIONS:latest \
-          --set-secrets=GOOGLE_API_KEY=GOOGLE_API_KEY:latest \
           --set-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest \
           --set-secrets=OPENAI_BASE_URL=OPENAI_BASE_URL:latest \
           --set-secrets=LOG_LEVEL=LOG_LEVEL:latest \
@@ -68,9 +67,6 @@ steps:
           --set-secrets=GCS_DEEPAGNT_FS=GCS_DEEPAGNT_FS:latest \
           --set-secrets=/secrets/gcs-signer/key.json=gcs-url-signer-key:latest \
           --set-env-vars=GCS_SIGNER_KEY_PATH=/secrets/gcs-signer/key.json \
-          --set-secrets=CDN_SIGNING_KEY_NAME=CDN_SIGNING_KEY_NAME:latest \
-          --set-secrets=CDN_SIGNING_KEY_VALUE=CDN_SIGNING_KEY_VALUE:latest \
-          --set-secrets=CDN_URL_PREFIX=CDN_URL_PREFIX:latest \
           --set-secrets=CLOUD_TASKS_SA_EMAIL=CLOUD_TASKS_SA_EMAIL:latest \
           --set-secrets=QUEUE_MEDIA_DOWNLOAD=QUEUE_MEDIA_DOWNLOAD:latest \
           --set-secrets=QUEUE_TWELVELABS=QUEUE_TWELVELABS:latest \
@@ -79,6 +75,10 @@ steps:
           --set-secrets=QUEUE_MEDIA_DOWNLOAD_PRIORITY=QUEUE_MEDIA_DOWNLOAD_PRIORITY:latest \
           --set-secrets=QUEUE_SEARCH_WORKER=QUEUE_SEARCH_WORKER:latest \
           --set-secrets=QUEUE_CHAT_STREAM=QUEUE_CHAT_STREAM:latest \
+          --set-secrets=GEMINI_TASK_ENQUEUE_BATCH_SIZE=GEMINI_TASK_ENQUEUE_BATCH_SIZE:latest \
+          --set-secrets=MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE=MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE:latest \
+          --set-secrets=SEARCH_ENQUEUE_BATCH_SIZE=SEARCH_ENQUEUE_BATCH_SIZE:latest \
+          --set-secrets=TASK_WORKER_MAX_ATTEMPTS=TASK_WORKER_MAX_ATTEMPTS:latest \
           --set-secrets=MEDIA_DOWNLOAD_ENABLED=MEDIA_DOWNLOAD_ENABLED:latest \
           --set-secrets=MEDIA_MAX_CONCURRENCY=MEDIA_MAX_CONCURRENCY:latest \
           --set-secrets=MEDIA_HTTP_TIMEOUT_S=MEDIA_HTTP_TIMEOUT_S:latest \
@@ -107,8 +107,6 @@ steps:
           --set-secrets=WHOP_COMPANY_ID=WHOP_COMPANY_ID:latest \
           --set-secrets=WHOP_PRODUCT_PRO=WHOP_PRODUCT_PRO:latest \
           --set-secrets=WHOP_PRODUCT_CREATOR=WHOP_PRODUCT_CREATOR:latest \
-          --set-secrets=DEEP_RESEARCH_ANALYSIS_CONCURRENCY=DEEP_RESEARCH_ANALYSIS_CONCURRENCY:latest \
-          --set-secrets=DEEP_RESEARCH_SEARCH_CONCURRENCY=DEEP_RESEARCH_SEARCH_CONCURRENCY:latest \
           --set-secrets=DEEP_RESEARCH_MODEL=DEEP_RESEARCH_MODEL:latest \
           --set-secrets=LANGGRAPH_RECURSION_LIMIT=LANGGRAPH_RECURSION_LIMIT:latest \
           --set-secrets=REDIS_STREAM_TTL_S_CHAT=REDIS_STREAM_TTL_S_CHAT:latest \

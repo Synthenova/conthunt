@@ -16,10 +16,6 @@ class CloudTasksService:
     def __init__(self):
         self.settings = get_settings()
         self.client = tasks_v2.CloudTasksClient()
-        # Local-dev safety valve: when we run tasks via asyncio.create_task(), those
-        # tasks execute in-process and can fan out without any Cloud Tasks dispatch cap.
-        # Bound local media downloads regardless of priority/semaphore bypass.
-        self._local_media_download_sem = asyncio.Semaphore(2)
 
     def get_parent(self, queue_name: str) -> str:
         return self.client.queue_path(
@@ -33,7 +29,7 @@ class CloudTasksService:
         self,
         queue_name: str,
         relative_uri: str,
-        payload: dict | None = None,
+        payload: dict | list[dict] | None = None,
         schedule_seconds: int | None = None,
         dispatch_deadline_seconds: int | None = None,
     ) -> str:
@@ -88,65 +84,38 @@ class CloudTasksService:
             raise e
 
     @trace_span("cloud_tasks.run_local_task")
-    async def _run_local_task(self, uri: str, payload: dict | None):
+    async def _run_local_task(self, uri: str, payload: dict | list[dict] | None):
         """
         Execute task logic locally (mirroring app/api/v1/tasks.py).
         All tasks have proper error handling to mark DB status as failed.
         """
         from uuid import UUID
         
-        if not payload:
+        if payload is None:
             payload = {}
-             
+
         if uri == "/v1/tasks/gemini/analyze":
-            from app.api.v1.analysis import _execute_gemini_analysis
-            from app.db.queries.analysis import update_analysis_status
-            from app.db.queries.content import get_media_asset_by_id
-            import asyncio
-            
-            analysis_id = UUID(payload["analysis_id"])
-            media_asset_id = UUID(payload["media_asset_id"])
-            try:
-                # Mark as processing on pickup
-                async with get_db_connection() as conn:
-                    await update_analysis_status(conn, analysis_id, status="processing")
-                    await conn.commit()
-                
-                # Check if YouTube (no wait needed)
-                async with get_db_connection() as conn:
-                    asset = await get_media_asset_by_id(conn, media_asset_id)
-                source_url = asset.get("source_url", "") if asset else ""
-                is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
-                
-                # Wait for video to be ready (max 3 min) - non-YouTube only
-                if not is_youtube:
-                    for attempt in range(12):
-                        async with get_db_connection() as conn:
-                            asset = await get_media_asset_by_id(conn, media_asset_id)
-                        status = asset.get("status", "") if asset else ""
-                        if status in ("stored", "downloaded"):
-                            break
-                        if status == "failed":
-                            raise Exception("Video download failed")
-                        logger.debug(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/12")
-                        await asyncio.sleep(10)
-                    else:
-                        raise Exception("Video not ready after 2 min timeout")
-                
-                await _execute_gemini_analysis(
-                    analysis_id=analysis_id,
-                    media_asset_id=media_asset_id,
-                    video_uri=payload["video_uri"],
-                    chat_id=payload.get("chat_id"),
-                    user_id=payload.get("user_id"),
-                )
-            except Exception as e:
-                logger.error(f"[LOCAL] Gemini analysis failed: {e}", exc_info=True)
-                async with get_db_connection() as conn:
-                    await update_analysis_status(conn, analysis_id, status="failed", error=str(e))
-                    await conn.commit()
-                
-        elif uri == "/v1/tasks/twelvelabs/index":
+            from app.api.v1.tasks import AnalysisTaskPayload, _handle_gemini_analysis_batch
+
+            payloads = payload if isinstance(payload, list) else [payload]
+            parsed = [AnalysisTaskPayload.model_validate(item or {}) for item in payloads]
+            await _handle_gemini_analysis_batch(parsed)
+            return
+
+        if uri == "/v1/tasks/media/download":
+            from app.api.v1.tasks import MediaDownloadTaskPayload, _handle_media_download_batch
+
+            payloads = payload if isinstance(payload, list) else [payload]
+            parsed = [MediaDownloadTaskPayload.model_validate(item or {}) for item in payloads]
+            await _handle_media_download_batch(parsed)
+            return
+
+        if isinstance(payload, list):
+            for item in payload:
+                await self._run_local_task(uri, item)
+            return
+             
+        if uri == "/v1/tasks/twelvelabs/index":
             from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
             from app.db.queries import update_twelvelabs_asset_status
             from app.db.queries.content import get_media_asset_by_id
@@ -186,37 +155,6 @@ class CloudTasksService:
                     )
                     await conn.commit()
                 
-        elif uri == "/v1/tasks/media/download":
-            from app.media.downloader import download_asset_with_claim, update_asset_failed
-            import httpx
-
-            asset_id = UUID(payload["asset_id"])
-            is_priority = payload.get("priority", False)
-            async with httpx.AsyncClient(timeout=self.settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
-                try:
-                    if is_priority:
-                        # Priority downloads should bypass local-dev caps (mirrors Cloud Tasks dispatch control).
-                        await download_asset_with_claim(
-                            http_client=client,
-                            asset_id=asset_id,
-                            platform=payload["platform"],
-                            external_id=payload["external_id"],
-                            skip_semaphore=True,
-                        )
-                    else:
-                        async with self._local_media_download_sem:
-                            await download_asset_with_claim(
-                                http_client=client,
-                                asset_id=asset_id,
-                                platform=payload["platform"],
-                                external_id=payload["external_id"],
-                                skip_semaphore=False,
-                            )
-                except Exception as e:
-                    logger.error(f"[LOCAL] Media download failed: {e}", exc_info=True)
-                    async with get_db_connection() as conn:
-                        await update_asset_failed(conn, asset_id, str(e))
-        
         elif uri == "/v1/tasks/raw/archive":
             from app.storage.raw_archive import upload_raw_compressed
             import base64

@@ -54,11 +54,17 @@ class Settings(BaseSettings):
     QUEUE_SEARCH_WORKER: str = "search-worker-queue"
     QUEUE_CHAT_STREAM: str = "chat-stream-queue"
 
+    # Task enqueue batching (outside worker)
+    GEMINI_TASK_ENQUEUE_BATCH_SIZE: int = 100
+    MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE: int = 50
+    SEARCH_ENQUEUE_BATCH_SIZE: int = 5
+
+    # Task worker retry policy
+    TASK_WORKER_MAX_ATTEMPTS: int = 5
+
     # Deep research tuning
-    DEEP_RESEARCH_ANALYSIS_CONCURRENCY: int = 100
-    DEEP_RESEARCH_SEARCH_CONCURRENCY: int = 10
     DEEP_RESEARCH_MODEL: str = "openrouter/google/gemini-3-flash-preview"
-    LANGGRAPH_RECURSION_LIMIT: int = 100
+    LANGGRAPH_RECURSION_LIMIT: int = 200
     # If true, stream all LangGraph events to Redis during deep research (very noisy; expensive).
     DEEP_RESEARCH_STREAM_DEBUG_EVENTS: bool = False
     # Deep research analysis waiting behavior (agent tool).

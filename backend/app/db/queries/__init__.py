@@ -64,7 +64,13 @@ from app.db.queries.analysis import (
     get_video_analyses_by_media_assets,
     insert_video_analysis,
     claim_or_create_analysis,
+    claim_or_create_analyses_batch,
+    rescue_stale_or_failed_analyses_batch,
     update_analysis_status,
+    update_analysis_status_processing_batch,
+    update_analysis_status_completed_batch,
+    update_analysis_status_failed_batch,
+    update_analysis_status_queued_batch,
     has_user_accessed_analysis,
     record_user_analysis_access,
 )
@@ -83,6 +89,8 @@ from app.db.queries.content import (
     get_content_item_by_id,
     get_video_media_asset_for_content_item,
     get_media_asset_by_id,
+    get_media_assets_by_ids,
+    get_media_asset_download_info_by_ids,
     get_media_asset_with_content,
     get_search_result_items_for_media_asset_ids,
 )
@@ -156,7 +164,13 @@ __all__ = [
     "get_video_analyses_by_media_assets",
     "insert_video_analysis",
     "claim_or_create_analysis",
+    "claim_or_create_analyses_batch",
+    "rescue_stale_or_failed_analyses_batch",
     "update_analysis_status",
+    "update_analysis_status_processing_batch",
+    "update_analysis_status_completed_batch",
+    "update_analysis_status_failed_batch",
+    "update_analysis_status_queued_batch",
     # Insights
     "get_board_insights",
     "upsert_pending_board_insights",
@@ -166,6 +180,9 @@ __all__ = [
     # Content
     "get_content_item_by_id",
     "get_video_media_asset_for_content_item",
+    "get_media_asset_by_id",
+    "get_media_assets_by_ids",
+    "get_media_asset_download_info_by_ids",
     "get_media_asset_with_content",
     # Users
     "get_user_role",

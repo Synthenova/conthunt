@@ -1096,6 +1096,21 @@ async def stream_chat(
     hub = getattr(request.app.state, "stream_hub", None)
 
     async def event_generator():
+        async def _safe_xread(streams: dict[str, str], *, count: int, block: int):
+            try:
+                return await redis_client.xread(streams, count=count, block=block)
+            except RedisConnectionError as exc:
+                logger.warning("Redis xread failed for chat stream %s: %s", chat_id, exc)
+                try:
+                    await redis_client.connection_pool.disconnect()
+                except Exception:
+                    pass
+                try:
+                    return await redis_client.xread(streams, count=count, block=block)
+                except RedisConnectionError as retry_exc:
+                    logger.warning("Redis xread retry failed for chat stream %s: %s", chat_id, retry_exc)
+                    return []
+
         async def catch_up_from_redis(last_id: str):
             """
             Bounded catch-up for replay/resume: read forward in chunks using XREAD (non-blocking).
@@ -1105,7 +1120,7 @@ async def stream_chat(
             cur = last_id or "0-0"
             # Drain until the stream has no more entries after cur.
             while True:
-                streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
+                streams = await _safe_xread({stream_key: cur}, count=200, block=0)
                 if not streams:
                     return
                 _, messages = streams[0]
@@ -1141,7 +1156,7 @@ async def stream_chat(
                 while True:
                     if await request.is_disconnected():
                         return
-                    streams = await redis_client.xread(
+                    streams = await _safe_xread(
                         {stream_key: last_id},
                         count=50,
                         block=10000,

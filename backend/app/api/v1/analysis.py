@@ -2,12 +2,12 @@ import logging
 import asyncio
 from uuid import UUID
 from datetime import datetime, timezone
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, Header
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from langchain_core.messages import HumanMessage
 from app.integrations.posthog_client import capture_event
 from dotenv import load_dotenv
-from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import text
 
 from app.core import logger
@@ -16,17 +16,22 @@ from app.db.session import get_db_connection
 from app.db import set_rls_user
 from app.agent.model_factory import init_chat_model
 from app.db.queries.analysis import (
+    claim_or_create_analyses_batch,
     get_video_analysis_by_media_asset,
+    get_video_analyses_by_media_assets,
+    rescue_stale_or_failed_analyses_batch,
     update_analysis_status,
 )
-from app.db.queries.content import get_media_asset_by_id
+from app.db.queries.content import (
+    get_media_asset_by_id,
+    get_media_asset_download_info_by_ids,
+    get_media_assets_by_ids,
+)
 from app.schemas.analysis import VideoAnalysisResponse
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.services.cloud_tasks import cloud_tasks
 from app.core import get_settings
 from app.prompts.video_analysis import DEFAULT_ANALYSIS_PROMPT
-from app.core.redis_client import get_global_redis
-from app.realtime.stream_hub import stream_id_gt
 from app.llm.context import set_llm_context
 
 settings = get_settings()
@@ -35,48 +40,9 @@ load_dotenv()
 
 router = APIRouter(tags=["video-analysis"])
 
-import json
-
-
-def _is_terminal_payload(payload_str: str | None) -> bool:
-    if not payload_str:
-        return False
-    return ('"type": "done"' in payload_str) or ('"type": "error"' in payload_str)
-
 # Initialize Gemini Model
 llm = init_chat_model("google/gemini-2.5-flash-lite-preview-09-2025", temperature=0.7)
 
-
-
-async def _publish_analysis_event(
-    chat_id: str | None,
-    analysis_id: UUID,
-    media_asset_id: UUID,
-    status: str,
-    error: str | None = None,
-) -> None:
-    if not chat_id:
-        return
-    payload = {
-        "type": "analysis",
-        "analysis_id": str(analysis_id),
-        "media_asset_id": str(media_asset_id),
-        "status": status,
-    }
-    if error:
-        payload["error"] = error
-    try:
-        redis_client = get_global_redis()
-        stream_key = f"analysis:{chat_id}:stream"
-        await redis_client.xadd(
-            stream_key,
-            {"data": json.dumps(payload)},
-            maxlen=settings.REDIS_STREAM_MAXLEN_SEARCH,
-            approximate=True,
-        )
-        await redis_client.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
-    except Exception as exc:
-        logger.warning("[ANALYSIS] Failed to publish analysis event: %s", exc)
 
 
 async def _execute_gemini_analysis(
@@ -86,7 +52,8 @@ async def _execute_gemini_analysis(
     chat_id: str | None = None,
     user_id: str | None = None,
     dispatched_at: float | None = None,
-) -> None:
+    persist: bool = True,
+) -> dict[str, Any]:
     """
     Background task: Run Gemini LLM and update analysis status.
     Called after creating a 'processing' record.
@@ -142,23 +109,17 @@ async def _execute_gemini_analysis(
         logger.info(f"[ANALYSIS] Result preview: {analysis_markdown[:200]}...")
         
         # 3. Update to completed - save as {"analysis": markdown_string}
-        logger.info(f"[ANALYSIS] Updating status to 'completed'...")
-        async with get_db_connection() as conn:
-            await update_analysis_status(
-                conn,
-                analysis_id=analysis_id,
-                status="completed",
-                analysis_result={"analysis": analysis_markdown},
-            )
-            await conn.commit()
-        await _publish_analysis_event(
-            chat_id=chat_id,
-            analysis_id=analysis_id,
-            media_asset_id=media_asset_id,
-            status="completed",
-        )
-        
-        
+        if persist:
+            logger.info(f"[ANALYSIS] Updating status to 'completed'...")
+            async with get_db_connection() as conn:
+                await update_analysis_status(
+                    conn,
+                    analysis_id=analysis_id,
+                    status="completed",
+                    analysis_result={"analysis": analysis_markdown},
+                )
+                await conn.commit()
+
         total_duration = time.time() - start_time
         
         # Telemetry: Analysis Completed
@@ -177,28 +138,23 @@ async def _execute_gemini_analysis(
         )
 
         logger.info(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
+        return {"analysis": analysis_markdown}
     
     except Exception as e:
         # Mark as failed so insights don't get stuck waiting
         logger.error(f"[ANALYSIS] ❌ Failed analysis for media_asset {media_asset_id} (URL: {video_uri}): {e}")
         logger.error(traceback.format_exc())
         try:
-            async with get_db_connection() as conn:
-                await update_analysis_status(
-                    conn,
-                    analysis_id=analysis_id,
-                    status="failed",
-                    error=f"{e} (URL: {video_uri})",
-                )
-                await conn.commit()
-            await _publish_analysis_event(
-                chat_id=chat_id,
-                analysis_id=analysis_id,
-                media_asset_id=media_asset_id,
-                status="failed",
-                error=str(e),
-            )
-            
+            if persist:
+                async with get_db_connection() as conn:
+                    await update_analysis_status(
+                        conn,
+                        analysis_id=analysis_id,
+                        status="failed",
+                        error=f"{e} (URL: {video_uri})",
+                    )
+                    await conn.commit()
+
             # Telemetry: Analysis Failed
             total_duration_ms = int((time.time() - start_time) * 1000)
             capture_event(
@@ -360,6 +316,7 @@ async def run_gemini_analysis(
                 "platform": platform,
                 "external_id": external_id,
                 "priority": True,  # Signal for local handler to skip semaphore
+                "attempt_no": 0,
             }
         )
 
@@ -383,6 +340,7 @@ async def run_gemini_analysis(
                 "chat_id": chat_id,
                 "user_id": user_id,
                 "dispatched_at": dispatched_at,
+                "attempt_no": 0,
             }
         )
     else:
@@ -408,6 +366,204 @@ async def run_gemini_analysis(
         created_at=datetime.utcnow(),
         cached=False,
     )
+
+
+async def run_gemini_analysis_batch(
+    media_asset_ids: list[UUID],
+    background_tasks: BackgroundTasks | None = None,
+    use_cloud_tasks: bool = True,
+    chat_id: str | None = None,
+    user_id: str | None = None,
+) -> list[VideoAnalysisResponse]:
+    """
+    Batch Gemini analysis dispatcher.
+    - Claims/creates analysis rows in bulk
+    - Rescues stale/failed rows in bulk
+    - Dispatches one or more batched task payloads
+    """
+    deduped_ids = list(dict.fromkeys(media_asset_ids))
+    if not deduped_ids:
+        return []
+
+    response_by_asset: dict[UUID, VideoAnalysisResponse] = {}
+    to_spawn_payloads: list[dict[str, Any]] = []
+    priority_download_asset_ids: list[UUID] = []
+
+    async with get_db_connection() as conn:
+        media_assets = await get_media_assets_by_ids(conn, deduped_ids)
+        media_by_id = {row["id"]: row for row in media_assets}
+        existing_asset_ids = [asset_id for asset_id in deduped_ids if asset_id in media_by_id]
+
+        for missing_id in [asset_id for asset_id in deduped_ids if asset_id not in media_by_id]:
+            response_by_asset[missing_id] = VideoAnalysisResponse(
+                media_asset_id=missing_id,
+                status="failed",
+                analysis=None,
+                error="Media asset not found",
+                created_at=datetime.utcnow(),
+                cached=False,
+            )
+
+        if existing_asset_ids:
+            create_result = await claim_or_create_analyses_batch(
+                conn,
+                media_asset_ids=existing_asset_ids,
+                prompt=DEFAULT_ANALYSIS_PROMPT,
+            )
+            was_created_map = {
+                asset_id: bool(meta.get("was_created"))
+                for asset_id, meta in create_result.items()
+            }
+
+            analyses = await get_video_analyses_by_media_assets(conn, existing_asset_ids)
+            analysis_by_asset = {row["media_asset_id"]: row for row in analyses}
+            rescued_ids = await rescue_stale_or_failed_analyses_batch(
+                conn,
+                [
+                    {
+                        "analysis_id": row["id"],
+                        "status": row.get("status"),
+                        "created_at": row.get("created_at"),
+                    }
+                    for row in analyses
+                ],
+            )
+
+            for row in analyses:
+                if row["id"] in rescued_ids:
+                    row["status"] = "queued"
+                    row["error"] = None
+                    row["created_at"] = datetime.utcnow()
+
+            for media_asset_id in existing_asset_ids:
+                media_asset = media_by_id[media_asset_id]
+                source_url = media_asset.get("source_url", "")
+                is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
+                video_uri = source_url if is_youtube else (
+                    media_asset.get("gcs_uri") or media_asset.get("video_url") or source_url
+                )
+
+                analysis_row = analysis_by_asset.get(media_asset_id)
+                if not analysis_row:
+                    response_by_asset[media_asset_id] = VideoAnalysisResponse(
+                        media_asset_id=media_asset_id,
+                        status="failed",
+                        analysis=None,
+                        error="Analysis row not found",
+                        created_at=datetime.utcnow(),
+                        cached=False,
+                    )
+                    continue
+
+                if not video_uri:
+                    response_by_asset[media_asset_id] = VideoAnalysisResponse(
+                        id=analysis_row["id"],
+                        media_asset_id=media_asset_id,
+                        status="failed",
+                        analysis=None,
+                        error="No video URL available for analysis",
+                        created_at=analysis_row.get("created_at"),
+                        cached=False,
+                    )
+                    continue
+
+                status = analysis_row.get("status", "queued")
+                if status == "completed":
+                    analysis_data = analysis_row.get("analysis_result") or {}
+                    analysis_text = analysis_data.get("analysis") if isinstance(analysis_data, dict) else None
+                    response_by_asset[media_asset_id] = VideoAnalysisResponse(
+                        id=analysis_row["id"],
+                        media_asset_id=media_asset_id,
+                        status="completed",
+                        analysis=analysis_text,
+                        error=analysis_row.get("error"),
+                        created_at=analysis_row.get("created_at"),
+                        cached=True,
+                    )
+                    continue
+
+                should_spawn = was_created_map.get(media_asset_id, False) or (analysis_row["id"] in rescued_ids)
+                if not should_spawn:
+                    response_by_asset[media_asset_id] = VideoAnalysisResponse(
+                        id=analysis_row["id"],
+                        media_asset_id=media_asset_id,
+                        status=status,
+                        analysis=None,
+                        error=analysis_row.get("error"),
+                        created_at=analysis_row.get("created_at"),
+                        cached=True,
+                    )
+                    continue
+
+                to_spawn_payloads.append(
+                    {
+                        "analysis_id": str(analysis_row["id"]),
+                        "media_asset_id": str(media_asset_id),
+                        "video_uri": video_uri,
+                        "chat_id": chat_id,
+                        "user_id": user_id,
+                        "dispatched_at": datetime.utcnow().timestamp(),
+                        "attempt_no": 0,
+                    }
+                )
+                if not is_youtube and media_asset.get("status") == "pending":
+                    priority_download_asset_ids.append(media_asset_id)
+
+                response_by_asset[media_asset_id] = VideoAnalysisResponse(
+                    id=analysis_row["id"],
+                    media_asset_id=media_asset_id,
+                    status="processing",
+                    analysis=None,
+                    created_at=datetime.utcnow(),
+                    cached=False,
+                )
+        await conn.commit()
+
+    if priority_download_asset_ids:
+        async with get_db_connection() as conn:
+            download_infos = await get_media_asset_download_info_by_ids(conn, priority_download_asset_ids)
+            await conn.commit()
+        if download_infos:
+            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            payloads = [
+                {
+                    "asset_id": str(row["media_asset_id"]),
+                    "platform": row.get("platform") or "unknown",
+                    "external_id": row.get("external_id") or "unknown",
+                    "priority": True,
+                    "attempt_no": 0,
+                }
+                for row in download_infos
+            ]
+            for idx in range(0, len(payloads), batch_size):
+                await cloud_tasks.create_http_task(
+                    queue_name=settings.QUEUE_MEDIA_DOWNLOAD_PRIORITY,
+                    relative_uri="/v1/tasks/media/download",
+                    payload=payloads[idx: idx + batch_size],
+                )
+
+    if to_spawn_payloads:
+        if use_cloud_tasks or not background_tasks:
+            batch_size = max(1, int(getattr(settings, "GEMINI_TASK_ENQUEUE_BATCH_SIZE", 100)))
+            for idx in range(0, len(to_spawn_payloads), batch_size):
+                await cloud_tasks.create_http_task(
+                    queue_name=settings.QUEUE_GEMINI,
+                    relative_uri="/v1/tasks/gemini/analyze",
+                    payload=to_spawn_payloads[idx: idx + batch_size],
+                )
+        else:
+            for payload in to_spawn_payloads:
+                asyncio.create_task(
+                    _execute_gemini_analysis(
+                        analysis_id=UUID(payload["analysis_id"]),
+                        media_asset_id=UUID(payload["media_asset_id"]),
+                        video_uri=payload["video_uri"],
+                        chat_id=payload.get("chat_id"),
+                        user_id=payload.get("user_id"),
+                    )
+                )
+
+    return [response_by_asset[asset_id] for asset_id in deduped_ids if asset_id in response_by_asset]
 
 
 @router.post(
@@ -505,148 +661,3 @@ async def get_video_analysis(
             cached=True,
         )
 
-
-@router.get("/analysis/{chat_id}/stream")
-async def stream_analysis(
-    chat_id: UUID,
-    request: Request,
-    user: dict = Depends(get_current_user),
-    last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-):
-    user_uuid = user["db_user_id"]
-    if not user_uuid:
-        raise HTTPException(status_code=401, detail="Invalid user token")
-
-    # Verify user owns this chat
-    async with get_db_connection() as conn:
-        await set_rls_user(conn, user_uuid)
-        res = await conn.execute(
-            text(
-                """
-                SELECT 1
-                FROM conthunt.chats
-                WHERE id = :chat_id AND deleted_at IS NULL
-                """
-            ),
-            {"chat_id": chat_id},
-        )
-        if not res.fetchone():
-            raise HTTPException(status_code=404, detail="Chat not found")
-
-    stream_key = f"analysis:{chat_id}:stream"
-    hub = getattr(request.app.state, "stream_hub", None)
-    # Use the app-scoped Redis client if available; it shares the same pool as the hub.
-    redis_client = getattr(request.app.state, "redis", None) or get_global_redis()
-
-    async def event_generator():
-        async def catch_up_from_redis(last_id: str):
-            nonlocal last_sent_id
-            cur = last_id or "0-0"
-            while True:
-                try:
-                    streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
-                except Exception as exc:
-                    # Most common cause: provider/proxy closes idle pooled sockets.
-                    # Let the loop continue; the next command should acquire a fresh connection.
-                    logger.warning("[ANALYSIS] Redis XREAD failed (catch-up): %s", exc)
-                    await asyncio.sleep(0.2)
-                    return
-                if not streams:
-                    return
-                _, messages = streams[0]
-                if not messages:
-                    return
-                for msg_id, data_map in messages:
-                    payload_str = data_map.get("data")
-                    cur = msg_id
-                    last_sent_id = msg_id
-                    if payload_str is None:
-                        continue
-                    yield {
-                        "id": msg_id,
-                        "event": "message",
-                        "data": payload_str,
-                    }
-                    await asyncio.sleep(0)
-                    if _is_terminal_payload(payload_str):
-                        return
-                if len(messages) < 200:
-                    return
-
-        if hub is None:
-            last_id = last_event_id or "0-0"
-            try:
-                while True:
-                    if await request.is_disconnected():
-                        return
-                    try:
-                        streams = await redis_client.xread(
-                            {stream_key: last_id},
-                            count=50,
-                            block=10000,
-                        )
-                    except Exception as exc:
-                        logger.warning("[ANALYSIS] Redis XREAD failed (live): %s", exc)
-                        await asyncio.sleep(0.2)
-                        continue
-                    if not streams:
-                        yield {"event": "ping", "data": ""}
-                        continue
-                    for _, messages in streams:
-                        for msg_id, data_map in messages:
-                            last_id = msg_id
-                            payload_str = data_map.get("data")
-                            yield {
-                                "id": msg_id,
-                                "event": "message",
-                                "data": payload_str,
-                            }
-                            await asyncio.sleep(0)
-                            if _is_terminal_payload(payload_str):
-                                return
-            except asyncio.CancelledError:
-                pass
-            return
-
-        queue = await hub.subscribe(stream_key)
-        last_sent_id = last_event_id or "0-0"
-        try:
-            async for ev in catch_up_from_redis(last_sent_id):
-                yield ev
-                if _is_terminal_payload(ev.get("data")):
-                    return
-
-            while True:
-                try:
-                    msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
-                except asyncio.TimeoutError:
-                    yield {"event": "ping", "data": ""}
-                    async for ev in catch_up_from_redis(last_sent_id):
-                        yield ev
-                        if _is_terminal_payload(ev.get("data")):
-                            return
-                    continue
-                if not payload_str:
-                    continue
-                if not stream_id_gt(msg_id, last_sent_id):
-                    continue
-                last_sent_id = msg_id
-                yield {
-                    "id": msg_id,
-                    "event": "message",
-                    "data": payload_str,
-                }
-                await asyncio.sleep(0)
-                if _is_terminal_payload(payload_str):
-                    return
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await hub.unsubscribe(stream_key, queue)
-
-    headers = {
-        "Cache-Control": "no-cache, no-transform",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-    }
-    return EventSourceResponse(event_generator(), headers=headers)

@@ -55,7 +55,7 @@ Rules:
 - Do NOT access files under `/searches_raw/` or `/analysis/` directly.
 - Do NOT reference UUIDs anywhere — they are internal only.
 - Prefer JSON for machine data and Markdown for narrative.
-- Choose as many strong videos as warranted; target a broad final set (report_chosen_videos) when quality is high; max 50.
+- Choose as many strong videos as warranted; target a broad final set (report_chosen_videos). Send atleast 50 videos. If lesser then provide whats available.
 - STRICT OVERRIDE: If the user provides specific numbers, follow them.
 """
 

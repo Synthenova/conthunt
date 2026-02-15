@@ -1,37 +1,90 @@
 import asyncio
 import base64
-import gzip
 import json
+import time
+from typing import Any, TypeVar
 from uuid import UUID
+
 import httpx
-
-from app.services.task_executor import CloudTaskExecutor
-from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel
 import redis.asyncio as redis
+from fastapi import APIRouter, Request
+from pydantic import BaseModel
 
-from app.core import get_settings, logger
-from app.core.telemetry_context import bind_telemetry, merge_telemetry, telemetry_from_mapping
-from app.core.redis_client import get_app_redis
-from app.db.session import get_db_connection
-from app.api.v1.analysis import _execute_gemini_analysis
-from app.api.v1.search import search_worker, load_more_worker
-from app.api.v1.chats import stream_generator_to_redis
 from app.agent.runtime import create_agent_graph
+from app.api.v1.analysis import _execute_gemini_analysis
+from app.api.v1.chats import stream_generator_to_redis
+from app.api.v1.search import load_more_worker, search_worker
+from app.core import get_settings, logger
+from app.core.redis_client import get_app_redis
+from app.core.telemetry_context import bind_telemetry, merge_telemetry, telemetry_from_mapping
+from app.db.queries import update_board_insights_status, update_twelvelabs_asset_status
+from app.db.queries.analysis import (
+    update_analysis_status,
+    update_analysis_status_completed_batch,
+    update_analysis_status_failed_batch,
+    update_analysis_status_processing_batch,
+    update_analysis_status_queued_batch,
+)
+from app.db.queries.content import get_media_asset_by_id, get_media_assets_by_ids
+from app.db.session import get_db_connection
+from app.media.downloader import (
+    claim_assets_for_download_batch,
+    download_asset_with_claim,
+    download_claimed_asset,
+    reset_assets_pending_batch,
+    update_asset_failed,
+    update_assets_failed_batch,
+    update_assets_stored_batch,
+)
 from app.services.board_insights import execute_board_insights
+from app.services.cloud_tasks import cloud_tasks
+from app.services.task_executor import CloudTaskExecutor
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
-from app.media.downloader import download_asset_with_claim, update_asset_failed
-from app.db.queries.analysis import update_analysis_status
-from app.db.queries import update_twelvelabs_asset_status, update_board_insights_status
-from app.db.queries.content import get_media_asset_by_id
 
 router = APIRouter()
 settings = get_settings()
 
+TPayload = TypeVar("TPayload", bound=BaseModel)
+
 
 def _get_request_redis(request: Request) -> redis.Redis:
-    """Return request-scoped Redis client."""
     return get_app_redis(request)
+
+
+def _normalize_payload(payload_or_list: TPayload | list[TPayload]) -> tuple[list[TPayload], bool]:
+    if isinstance(payload_or_list, list):
+        return payload_or_list, False
+    return [payload_or_list], True
+
+
+def _is_retryable_exception(exc: Exception) -> bool:
+    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500 or exc.response.status_code == 429
+    if isinstance(exc, (ValueError, TypeError, KeyError)):
+        return False
+    return True
+
+
+def _batch_summary(
+    *,
+    route: str,
+    processed: int,
+    succeeded: int,
+    failed: int,
+    retried_enqueued: int = 0,
+) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "route": route,
+        "batch": True,
+        "processed": processed,
+        "succeeded": succeeded,
+        "failed": failed,
+        "retried_enqueued": retried_enqueued,
+    }
+
 
 class AnalysisTaskPayload(BaseModel):
     analysis_id: UUID
@@ -40,25 +93,33 @@ class AnalysisTaskPayload(BaseModel):
     chat_id: UUID | None = None
     user_id: UUID | None = None
     dispatched_at: float | None = None
+    attempt_no: int = 0
+
 
 class TwelveLabsTaskPayload(BaseModel):
     media_asset_id: UUID
+
 
 class MediaDownloadTaskPayload(BaseModel):
     asset_id: UUID
     platform: str
     external_id: str
+    priority: bool = False
+    attempt_no: int = 0
+
 
 class RawArchiveTaskPayload(BaseModel):
     platform: str
     search_id: UUID
-    raw_json_compressed: str  # base64-encoded gzip data
+    raw_json_compressed: str
     gcs_key: str | None = None
+
 
 class BoardInsightsTaskPayload(BaseModel):
     board_id: UUID
     user_id: UUID
     user_role: str
+
 
 class SearchTaskPayload(BaseModel):
     search_id: UUID
@@ -67,11 +128,13 @@ class SearchTaskPayload(BaseModel):
     inputs: dict
     dispatched_at: float | None = None
 
+
 class LoadMoreTaskPayload(BaseModel):
     search_id: UUID
     user_uuid: UUID
     query: str
     platform_cursors: dict
+
 
 class ChatStreamTaskPayload(BaseModel):
     chat_id: UUID
@@ -91,15 +154,9 @@ class ChatStreamTaskPayload(BaseModel):
     subject_id: str | None = None
     message_client_id: str | None = None
 
-@router.post("/gemini/analyze")
-async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Request):
-    """
-    Handle background Gemini analysis task with retries.
-    Waits inline for video to be ready (max 3 min), then analyzes.
-    """
-    if payload.user_id:
-        pass
-    logger.info(f"Received Gemini analysis task for {payload.media_asset_id}")
+
+async def _handle_gemini_analysis_single(payload: AnalysisTaskPayload, request: Request) -> dict[str, Any]:
+    logger.info("Received Gemini analysis task for %s", payload.media_asset_id)
     executor = CloudTaskExecutor(request)
 
     async def _on_fail(e: Exception):
@@ -112,44 +169,40 @@ async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Req
             )
             await conn.commit()
 
-    # Mark as processing on pickup
     async with get_db_connection() as conn:
         await update_analysis_status(conn, payload.analysis_id, status="processing")
+        asset = await get_media_asset_by_id(conn, payload.media_asset_id)
         await conn.commit()
 
-    # Get asset info
-    async with get_db_connection() as conn:
-        asset = await get_media_asset_by_id(conn, payload.media_asset_id)
-    
     if not asset:
         await _on_fail(Exception("Media asset not found"))
         return {"status": "failed", "error": "Media asset not found"}
-    
+
     source_url = asset.get("source_url", "")
     is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
-    
-    # YouTube doesn't need GCS upload, others need to wait for download
+
     if not is_youtube:
-        # Poll until video ready or timeout (max 3 min)
-        for attempt in range(18):  # 18 x 10s = 3 min
+        for attempt in range(18):
             async with get_db_connection() as conn:
                 asset = await get_media_asset_by_id(conn, payload.media_asset_id)
-            
+                await conn.commit()
             status = asset.get("status", "") if asset else ""
             if status in ("stored", "downloaded"):
-                logger.info(f"Video ready (status={status}) for {payload.media_asset_id}")
                 break
             if status == "failed":
                 await _on_fail(Exception("Video download failed"))
                 return {"status": "failed", "error": "Video download failed"}
-            
-            logger.info(f"Video not ready (status={status}), waiting... attempt {attempt+1}/18 for {payload.media_asset_id}")
+            logger.info(
+                "Video not ready (status=%s), waiting... attempt %s/18 for %s",
+                status,
+                attempt + 1,
+                payload.media_asset_id,
+            )
             await asyncio.sleep(10)
         else:
             await _on_fail(Exception("Video not ready after 3 min timeout"))
             return {"status": "failed", "error": "Video not ready after timeout"}
 
-    # Use fresh video URI from asset if available (e.g. GCS URI after download)
     final_video_uri = payload.video_uri
     if asset:
         final_video_uri = asset.get("gcs_uri") or asset.get("video_url") or payload.video_uri
@@ -163,61 +216,232 @@ async def handle_gemini_analysis_task(payload: AnalysisTaskPayload, request: Req
         chat_id=str(payload.chat_id) if payload.chat_id else None,
         user_id=str(payload.user_id) if payload.user_id else None,
         dispatched_at=payload.dispatched_at,
+        persist=True,
     )
 
-@router.post("/twelvelabs/index")
-async def handle_twelvelabs_index_task(payload: TwelveLabsTaskPayload, request: Request):
-    """
-    Handle background TwelveLabs indexing task with retries.
-    Waits inline for video to be ready (max 3 min), then indexes.
-    """
-    logger.info(f"Received TwelveLabs indexing task for {payload.media_asset_id}")
+
+async def _handle_gemini_analysis_batch(items: list[AnalysisTaskPayload]) -> dict[str, Any]:
+    if not items:
+        return _batch_summary(route="gemini/analyze", processed=0, succeeded=0, failed=0)
+
+    deduped: dict[UUID, AnalysisTaskPayload] = {}
+    for item in items:
+        deduped[item.analysis_id] = item
+    task_items = list(deduped.values())
+
+    analysis_ids = [item.analysis_id for item in task_items]
+    media_asset_ids = [item.media_asset_id for item in task_items]
+
+    async with get_db_connection() as conn:
+        await update_analysis_status_processing_batch(conn, analysis_ids)
+        assets = await get_media_assets_by_ids(conn, media_asset_ids)
+        await conn.commit()
+    assets_by_id = {row["id"]: row for row in assets}
+
+    ready_jobs: list[dict[str, Any]] = []
+    failed_rows: list[dict[str, Any]] = []
+    failed_events: list[dict[str, Any]] = []
+
+    waiting_by_asset_id: dict[UUID, AnalysisTaskPayload] = {}
+    for item in task_items:
+        asset = assets_by_id.get(item.media_asset_id)
+        if not asset:
+            failed_rows.append({"analysis_id": item.analysis_id, "error": "Media asset not found"})
+            failed_events.append({"payload": item, "error": "Media asset not found"})
+            continue
+
+        source_url = asset.get("source_url", "")
+        is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
+        status = asset.get("status", "")
+
+        if is_youtube:
+            ready_jobs.append(
+                {
+                    "payload": item,
+                    "video_uri": source_url or item.video_uri,
+                }
+            )
+            continue
+
+        if status in ("stored", "downloaded"):
+            ready_jobs.append(
+                {
+                    "payload": item,
+                    "video_uri": asset.get("gcs_uri") or asset.get("video_url") or item.video_uri,
+                }
+            )
+            continue
+
+        if status == "failed":
+            failed_rows.append({"analysis_id": item.analysis_id, "error": "Video download failed"})
+            failed_events.append({"payload": item, "error": "Video download failed"})
+            continue
+
+        waiting_by_asset_id[item.media_asset_id] = item
+
+    for attempt in range(18):
+        if not waiting_by_asset_id:
+            break
+        async with get_db_connection() as conn:
+            polled_assets = await get_media_assets_by_ids(conn, list(waiting_by_asset_id.keys()))
+            await conn.commit()
+        polled_by_id = {row["id"]: row for row in polled_assets}
+        done_ids: list[UUID] = []
+
+        for media_asset_id, item in waiting_by_asset_id.items():
+            asset = polled_by_id.get(media_asset_id)
+            status = asset.get("status", "") if asset else ""
+            if status in ("stored", "downloaded"):
+                ready_jobs.append(
+                    {
+                        "payload": item,
+                        "video_uri": (asset.get("gcs_uri") or asset.get("video_url") or item.video_uri),
+                    }
+                )
+                done_ids.append(media_asset_id)
+            elif status == "failed":
+                failed_rows.append({"analysis_id": item.analysis_id, "error": "Video download failed"})
+                failed_events.append({"payload": item, "error": "Video download failed"})
+                done_ids.append(media_asset_id)
+
+        for media_asset_id in done_ids:
+            waiting_by_asset_id.pop(media_asset_id, None)
+
+        if waiting_by_asset_id:
+            await asyncio.sleep(10)
+
+    for item in waiting_by_asset_id.values():
+        failed_rows.append({"analysis_id": item.analysis_id, "error": "Video not ready after timeout"})
+        failed_events.append({"payload": item, "error": "Video not ready after timeout"})
+
+    success_rows: list[dict[str, Any]] = []
+    success_events: list[AnalysisTaskPayload] = []
+    runtime_failed_rows: list[dict[str, Any]] = []
+    retry_analysis_ids: list[UUID] = []
+    retry_payloads: list[dict[str, Any]] = []
+
+    async def _process_ready(job: dict[str, Any]) -> None:
+        payload: AnalysisTaskPayload = job["payload"]
+        video_uri = job["video_uri"]
+        try:
+            result = await _execute_gemini_analysis(
+                analysis_id=payload.analysis_id,
+                media_asset_id=payload.media_asset_id,
+                video_uri=video_uri,
+                chat_id=str(payload.chat_id) if payload.chat_id else None,
+                user_id=str(payload.user_id) if payload.user_id else None,
+                dispatched_at=payload.dispatched_at,
+                persist=False,
+            )
+            success_rows.append({"analysis_id": payload.analysis_id, "analysis": result.get("analysis", "")})
+            success_events.append(payload)
+        except Exception as exc:
+            err_text = f"{exc} (URL: {video_uri})"
+            attempt_no = int(payload.attempt_no or 0)
+            if _is_retryable_exception(exc) and (attempt_no + 1) < int(getattr(settings, "TASK_WORKER_MAX_ATTEMPTS", 5)):
+                retry_analysis_ids.append(payload.analysis_id)
+                retry_payloads.append(
+                    {
+                        "analysis_id": str(payload.analysis_id),
+                        "media_asset_id": str(payload.media_asset_id),
+                        "video_uri": payload.video_uri,
+                        "chat_id": str(payload.chat_id) if payload.chat_id else None,
+                        "user_id": str(payload.user_id) if payload.user_id else None,
+                        "dispatched_at": time.time(),
+                        "attempt_no": attempt_no + 1,
+                    }
+                )
+            else:
+                runtime_failed_rows.append({"analysis_id": payload.analysis_id, "error": err_text})
+                failed_events.append({"payload": payload, "error": str(exc)})
+
+    await asyncio.gather(*[_process_ready(job) for job in ready_jobs])
+
+    async with get_db_connection() as conn:
+        if success_rows:
+            await update_analysis_status_completed_batch(conn, success_rows)
+        all_failed_rows = failed_rows + runtime_failed_rows
+        if all_failed_rows:
+            await update_analysis_status_failed_batch(conn, all_failed_rows)
+        if retry_analysis_ids:
+            await update_analysis_status_queued_batch(conn, retry_analysis_ids)
+        await conn.commit()
+
+    if retry_payloads:
+        batch_size = max(1, int(getattr(settings, "GEMINI_TASK_ENQUEUE_BATCH_SIZE", 100)))
+        for idx in range(0, len(retry_payloads), batch_size):
+            await cloud_tasks.create_http_task(
+                queue_name=settings.QUEUE_GEMINI,
+                relative_uri="/v1/tasks/gemini/analyze",
+                payload=retry_payloads[idx: idx + batch_size],
+            )
+
+    failed_total = len(failed_rows) + len(runtime_failed_rows)
+    return _batch_summary(
+        route="gemini/analyze",
+        processed=len(task_items),
+        succeeded=len(success_rows),
+        failed=failed_total,
+        retried_enqueued=len(retry_payloads),
+    )
+
+
+@router.post("/gemini/analyze")
+async def handle_gemini_analysis_task(
+    payload: AnalysisTaskPayload | list[AnalysisTaskPayload],
+    request: Request,
+):
+    items, is_single = _normalize_payload(payload)
+    if is_single:
+        return await _handle_gemini_analysis_single(items[0], request)
+    return await _handle_gemini_analysis_batch(items)
+
+
+async def _handle_twelvelabs_index_single(payload: TwelveLabsTaskPayload, request: Request) -> dict[str, Any]:
+    logger.info("Received TwelveLabs indexing task for %s", payload.media_asset_id)
     executor = CloudTaskExecutor(request)
 
     async def _on_fail(e: Exception):
         async with get_db_connection() as conn:
-            # Mark both statuses as failed ensures we catch the error regardless of phase
             await update_twelvelabs_asset_status(
-                conn, 
-                media_asset_id=payload.media_asset_id, 
+                conn,
+                media_asset_id=payload.media_asset_id,
                 asset_status="failed",
-                index_status="failed", 
-                error=str(e)
+                index_status="failed",
+                error=str(e),
             )
             await conn.commit()
 
-    # Mark as processing on pickup
     async with get_db_connection() as conn:
         await update_twelvelabs_asset_status(
-            conn, 
-            media_asset_id=payload.media_asset_id, 
+            conn,
+            media_asset_id=payload.media_asset_id,
             asset_status="processing",
-            index_status="processing", 
+            index_status="processing",
         )
+        asset = await get_media_asset_by_id(conn, payload.media_asset_id)
         await conn.commit()
 
-    # Get asset info
-    async with get_db_connection() as conn:
-        asset = await get_media_asset_by_id(conn, payload.media_asset_id)
-    
     if not asset:
         await _on_fail(Exception("Media asset not found"))
         return {"status": "failed", "error": "Media asset not found"}
-    
-    # Poll until video ready or timeout (max 3 min)
-    for attempt in range(18):  # 18 x 10s = 3 min
+
+    for attempt in range(18):
         async with get_db_connection() as conn:
             asset = await get_media_asset_by_id(conn, payload.media_asset_id)
-        
+            await conn.commit()
         status = asset.get("status", "") if asset else ""
         if status in ("stored", "downloaded"):
-            logger.info(f"Video ready (status={status}) for TwelveLabs {payload.media_asset_id}")
             break
         if status == "failed":
             await _on_fail(Exception("Video download failed"))
             return {"status": "failed", "error": "Video download failed"}
-        
-        logger.info(f"Video not ready (status={status}), waiting... attempt {attempt+1}/18 for TwelveLabs {payload.media_asset_id}")
+        logger.info(
+            "Video not ready (status=%s), waiting... attempt %s/18 for TwelveLabs %s",
+            status,
+            attempt + 1,
+            payload.media_asset_id,
+        )
         await asyncio.sleep(10)
     else:
         await _on_fail(Exception("Video not ready after 3 min timeout"))
@@ -226,15 +450,37 @@ async def handle_twelvelabs_index_task(payload: TwelveLabsTaskPayload, request: 
     return await executor.run(
         handler=process_twelvelabs_indexing_by_media_asset,
         on_fail=_on_fail,
-        media_asset_id=payload.media_asset_id
+        media_asset_id=payload.media_asset_id,
     )
 
-@router.post("/media/download")
-async def handle_media_download_task(payload: MediaDownloadTaskPayload, request: Request):
-    """
-    Handle background media download task (one asset) with retries.
-    """
-    logger.debug(f"Received media download task for {payload.asset_id}")
+
+@router.post("/twelvelabs/index")
+async def handle_twelvelabs_index_task(
+    payload: TwelveLabsTaskPayload | list[TwelveLabsTaskPayload],
+    request: Request,
+):
+    items, is_single = _normalize_payload(payload)
+    if is_single:
+        return await _handle_twelvelabs_index_single(items[0], request)
+
+    results = []
+    for item in items:
+        try:
+            res = await _handle_twelvelabs_index_single(item, request)
+            results.append(res)
+        except Exception as exc:
+            results.append({"status": "failed", "error": str(exc)})
+    succeeded = sum(1 for row in results if row.get("status") == "ok")
+    return _batch_summary(
+        route="twelvelabs/index",
+        processed=len(items),
+        succeeded=succeeded,
+        failed=len(items) - succeeded,
+    )
+
+
+async def _handle_media_download_single(payload: MediaDownloadTaskPayload, request: Request) -> dict[str, Any]:
+    logger.debug("Received media download task for %s", payload.asset_id)
     executor = CloudTaskExecutor(request)
 
     async def _on_fail(e: Exception):
@@ -248,23 +494,114 @@ async def handle_media_download_task(payload: MediaDownloadTaskPayload, request:
             http_client=client,
             asset_id=payload.asset_id,
             platform=payload.platform,
-            external_id=payload.external_id
+            external_id=payload.external_id,
+            skip_semaphore=bool(payload.priority),
         )
 
-@router.post("/raw/archive")
-async def handle_raw_archive_task(payload: RawArchiveTaskPayload, request: Request):
-    """
-    Handle background raw archive task with retries.
-    """
+
+async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) -> dict[str, Any]:
+    if not items:
+        return _batch_summary(route="media/download", processed=0, succeeded=0, failed=0)
+
+    by_asset: dict[UUID, MediaDownloadTaskPayload] = {}
+    for item in items:
+        by_asset[item.asset_id] = item
+    task_items = list(by_asset.values())
+
+    async with get_db_connection() as conn:
+        claimed = await claim_assets_for_download_batch(conn, [item.asset_id for item in task_items])
+        await conn.commit()
+    claimed_by_id = {row["id"]: row for row in claimed}
+
+    stored_rows: list[dict[str, Any]] = []
+    failed_rows: list[dict[str, Any]] = []
+    retry_asset_ids: list[UUID] = []
+    retry_payloads: list[dict[str, Any]] = []
+
+    async with httpx.AsyncClient(timeout=settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
+        async def _process_claimed(item: MediaDownloadTaskPayload, claimed_asset: dict[str, Any]) -> None:
+            try:
+                stored = await download_claimed_asset(
+                    http_client=client,
+                    asset=claimed_asset,
+                    platform=item.platform,
+                    external_id=item.external_id,
+                )
+                stored_rows.append(stored)
+            except Exception as exc:
+                attempt_no = int(item.attempt_no or 0)
+                if _is_retryable_exception(exc) and (attempt_no + 1) < int(getattr(settings, "TASK_WORKER_MAX_ATTEMPTS", 5)):
+                    retry_asset_ids.append(item.asset_id)
+                    retry_payloads.append(
+                        {
+                            "asset_id": str(item.asset_id),
+                            "platform": item.platform,
+                            "external_id": item.external_id,
+                            "priority": item.priority,
+                            "attempt_no": attempt_no + 1,
+                        }
+                    )
+                else:
+                    failed_rows.append({"asset_id": item.asset_id, "error": str(exc)})
+
+        await asyncio.gather(
+            *[
+                _process_claimed(item, claimed_by_id[item.asset_id])
+                for item in task_items
+                if item.asset_id in claimed_by_id
+            ]
+        )
+
+    async with get_db_connection() as conn:
+        if stored_rows:
+            await update_assets_stored_batch(conn, stored_rows)
+        if failed_rows:
+            await update_assets_failed_batch(conn, failed_rows)
+        if retry_asset_ids:
+            await reset_assets_pending_batch(conn, retry_asset_ids)
+        await conn.commit()
+
+    if retry_payloads:
+        batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+        for idx in range(0, len(retry_payloads), batch_size):
+            await cloud_tasks.create_http_task(
+                queue_name=settings.QUEUE_MEDIA_DOWNLOAD_PRIORITY if any(p.get("priority") for p in retry_payloads[idx: idx + batch_size]) else settings.QUEUE_MEDIA_DOWNLOAD,
+                relative_uri="/v1/tasks/media/download",
+                payload=retry_payloads[idx: idx + batch_size],
+            )
+
+    # Unclaimed assets are treated as successful no-op (already processing/stored/failed).
+    succeeded = len(stored_rows) + (len(task_items) - len(claimed_by_id))
+    failed = len(failed_rows)
+    return _batch_summary(
+        route="media/download",
+        processed=len(task_items),
+        succeeded=succeeded,
+        failed=failed,
+        retried_enqueued=len(retry_payloads),
+    )
+
+
+@router.post("/media/download")
+async def handle_media_download_task(
+    payload: MediaDownloadTaskPayload | list[MediaDownloadTaskPayload],
+    request: Request,
+):
+    items, is_single = _normalize_payload(payload)
+    if is_single:
+        return await _handle_media_download_single(items[0], request)
+    return await _handle_media_download_batch(items)
+
+
+async def _handle_raw_archive_single(payload: RawArchiveTaskPayload, request: Request) -> dict[str, Any]:
     from app.storage.raw_archive import upload_raw_compressed
-    logger.debug(f"Received raw archive task for search {payload.search_id} platform {payload.platform}")
+
+    logger.debug("Received raw archive task for search %s platform %s", payload.search_id, payload.platform)
     executor = CloudTaskExecutor(request)
-    
-    # Decode base64 to get compressed bytes (already gzipped)
     compressed_bytes = base64.b64decode(payload.raw_json_compressed)
 
     async def _on_fail(e: Exception):
-        logger.error(f"Raw archive permanently failed for search {payload.search_id}")
+        logger.error("Raw archive permanently failed for search %s", payload.search_id)
 
     return await executor.run(
         handler=upload_raw_compressed,
@@ -275,17 +612,27 @@ async def handle_raw_archive_task(payload: RawArchiveTaskPayload, request: Reque
         key_override=payload.gcs_key,
     )
 
-@router.post("/boards/insights")
-async def handle_board_insights_task(payload: BoardInsightsTaskPayload, request: Request):
-    """
-    Handle background board insights task with retries.
-    Marks status='processing' on pickup.
-    """
 
-    from app.db.queries import get_board_insights
+@router.post("/raw/archive")
+async def handle_raw_archive_task(payload: RawArchiveTaskPayload | list[RawArchiveTaskPayload], request: Request):
+    items, is_single = _normalize_payload(payload)
+    if is_single:
+        return await _handle_raw_archive_single(items[0], request)
+    results = await asyncio.gather(*[_handle_raw_archive_single(item, request) for item in items], return_exceptions=True)
+    succeeded = sum(1 for row in results if isinstance(row, dict) and row.get("status") == "ok")
+    return _batch_summary(
+        route="raw/archive",
+        processed=len(items),
+        succeeded=succeeded,
+        failed=len(items) - succeeded,
+    )
+
+
+async def _handle_board_insights_single(payload: BoardInsightsTaskPayload, request: Request) -> dict[str, Any]:
     from app.db import set_rls_user
-    
-    logger.info(f"Received board insights task for board {payload.board_id}")
+    from app.db.queries import get_board_insights
+
+    logger.info("Received board insights task for board %s", payload.board_id)
     executor = CloudTaskExecutor(request)
 
     async def _on_fail(e: Exception):
@@ -301,16 +648,11 @@ async def handle_board_insights_task(payload: BoardInsightsTaskPayload, request:
                 )
                 await conn.commit()
 
-    # Mark as processing on pickup
     async with get_db_connection() as conn:
         await set_rls_user(conn, payload.user_id)
         row = await get_board_insights(conn, payload.board_id)
         if row and row.get("status") == "queued":
-            await update_board_insights_status(
-                conn,
-                insights_id=row["id"],
-                status="processing",
-            )
+            await update_board_insights_status(conn, insights_id=row["id"], status="processing")
             await conn.commit()
 
     return await executor.run(
@@ -321,17 +663,31 @@ async def handle_board_insights_task(payload: BoardInsightsTaskPayload, request:
         user_role=payload.user_role,
     )
 
-@router.post("/search/run")
-async def handle_search_task(payload: SearchTaskPayload, request: Request):
-    """
-    Handle background search task with retries.
-    """
 
-    logger.info(f"Received search task for {payload.search_id}")
+@router.post("/boards/insights")
+async def handle_board_insights_task(
+    payload: BoardInsightsTaskPayload | list[BoardInsightsTaskPayload],
+    request: Request,
+):
+    items, is_single = _normalize_payload(payload)
+    if is_single:
+        return await _handle_board_insights_single(items[0], request)
+    results = await asyncio.gather(*[_handle_board_insights_single(item, request) for item in items], return_exceptions=True)
+    succeeded = sum(1 for row in results if isinstance(row, dict) and row.get("status") == "ok")
+    return _batch_summary(
+        route="boards/insights",
+        processed=len(items),
+        succeeded=succeeded,
+        failed=len(items) - succeeded,
+    )
+
+
+async def _handle_search_run_single(payload: SearchTaskPayload, request: Request) -> dict[str, Any]:
+    logger.info("Received search task for %s", payload.search_id)
     executor = CloudTaskExecutor(request)
 
     async def _on_fail(e: Exception):
-        logger.error(f"Search task permanently failed for {payload.search_id}: {e}")
+        logger.error("Search task permanently failed for %s: %s", payload.search_id, e)
 
     return await executor.run(
         handler=search_worker,
@@ -344,17 +700,28 @@ async def handle_search_task(payload: SearchTaskPayload, request: Request):
         dispatched_at=payload.dispatched_at,
     )
 
-@router.post("/search/load_more")
-async def handle_load_more_task(payload: LoadMoreTaskPayload, request: Request):
-    """
-    Handle background load-more task with retries.
-    """
 
-    logger.info(f"Received load_more task for {payload.search_id}")
+@router.post("/search/run")
+async def handle_search_task(payload: SearchTaskPayload | list[SearchTaskPayload], request: Request):
+    items, is_single = _normalize_payload(payload)
+    if is_single:
+        return await _handle_search_run_single(items[0], request)
+    results = await asyncio.gather(*[_handle_search_run_single(item, request) for item in items], return_exceptions=True)
+    succeeded = sum(1 for row in results if isinstance(row, dict) and row.get("status") == "ok")
+    return _batch_summary(
+        route="search/run",
+        processed=len(items),
+        succeeded=succeeded,
+        failed=len(items) - succeeded,
+    )
+
+
+async def _handle_load_more_single(payload: LoadMoreTaskPayload, request: Request) -> dict[str, Any]:
+    logger.info("Received load_more task for %s", payload.search_id)
     executor = CloudTaskExecutor(request)
 
     async def _on_fail(e: Exception):
-        logger.error(f"Load more task permanently failed for {payload.search_id}: {e}")
+        logger.error("Load more task permanently failed for %s: %s", payload.search_id, e)
 
     return await executor.run(
         handler=load_more_worker,
@@ -366,15 +733,25 @@ async def handle_load_more_task(payload: LoadMoreTaskPayload, request: Request):
         redis_client=_get_request_redis(request),
     )
 
-@router.post("/chats/stream")
-async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Request):
-    """
-    Handle background chat stream task with retries.
-    """
-    if payload.user_id:
-        pass
-    logger.info(f"Received chat stream task for {payload.chat_id}")
-    logger.info(f"Received chat stream task for {payload.filters}")
+
+@router.post("/search/load_more")
+async def handle_load_more_task(payload: LoadMoreTaskPayload | list[LoadMoreTaskPayload], request: Request):
+    items, is_single = _normalize_payload(payload)
+    if is_single:
+        return await _handle_load_more_single(items[0], request)
+    results = await asyncio.gather(*[_handle_load_more_single(item, request) for item in items], return_exceptions=True)
+    succeeded = sum(1 for row in results if isinstance(row, dict) and row.get("status") == "ok")
+    return _batch_summary(
+        route="search/load_more",
+        processed=len(items),
+        succeeded=succeeded,
+        failed=len(items) - succeeded,
+    )
+
+
+async def _handle_chat_stream_single(payload: ChatStreamTaskPayload, request: Request) -> dict[str, Any]:
+    logger.info("Received chat stream task for %s", payload.chat_id)
+    logger.info("Received chat stream task filters=%s", payload.filters)
     executor = CloudTaskExecutor(request)
     telemetry_ctx = telemetry_from_mapping(payload.model_dump(exclude_none=True))
     telemetry_ctx = merge_telemetry(
@@ -389,25 +766,22 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
     )
 
     async def _on_fail(e: Exception):
-        logger.error(f"Chat stream task permanently failed for {payload.chat_id}: {e}")
+        logger.error("Chat stream task permanently failed for %s: %s", payload.chat_id, e)
         try:
-            r = _get_request_redis(request)
+            redis_client = _get_request_redis(request)
         except RuntimeError as exc:
             logger.warning("Redis client unavailable for chat stream error: %s", exc)
             return
-        try:
-            await r.xadd(
-                f"chat:{str(payload.chat_id)}:stream",
-                {"data": json.dumps({"type": "error", "error": str(e)})},
-                maxlen=settings.REDIS_STREAM_MAXLEN_CHAT,
-                approximate=True,
-            )
-            await r.expire(
-                f"chat:{str(payload.chat_id)}:stream",
-                settings.REDIS_STREAM_TTL_S_CHAT,
-            )
-        finally:
-            pass
+        await redis_client.xadd(
+            f"chat:{str(payload.chat_id)}:stream",
+            {"data": json.dumps({"type": "error", "error": str(e)})},
+            maxlen=settings.REDIS_STREAM_MAXLEN_CHAT,
+            approximate=True,
+        )
+        await redis_client.expire(
+            f"chat:{str(payload.chat_id)}:stream",
+            settings.REDIS_STREAM_TTL_S_CHAT,
+        )
 
     async def _run_chat_stream():
         graph, saver_cm = await create_agent_graph(settings.DATABASE_URL)
@@ -430,10 +804,22 @@ async def handle_chat_stream_task(payload: ChatStreamTaskPayload, request: Reque
             try:
                 await saver_cm.__aexit__(None, None, None)
             except Exception as e:
-                logger.warning(f"Failed to close chat saver context: {e}")
+                logger.warning("Failed to close chat saver context: %s", e)
 
     with bind_telemetry(telemetry_ctx):
-        return await executor.run(
-            handler=_run_chat_stream,
-            on_fail=_on_fail,
-        )
+        return await executor.run(handler=_run_chat_stream, on_fail=_on_fail)
+
+
+@router.post("/chats/stream")
+async def handle_chat_stream_task(payload: ChatStreamTaskPayload | list[ChatStreamTaskPayload], request: Request):
+    items, is_single = _normalize_payload(payload)
+    if is_single:
+        return await _handle_chat_stream_single(items[0], request)
+    results = await asyncio.gather(*[_handle_chat_stream_single(item, request) for item in items], return_exceptions=True)
+    succeeded = sum(1 for row in results if isinstance(row, dict) and row.get("status") == "ok")
+    return _batch_summary(
+        route="chats/stream",
+        processed=len(items),
+        succeeded=succeeded,
+        failed=len(items) - succeeded,
+    )

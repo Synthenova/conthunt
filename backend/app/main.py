@@ -41,10 +41,12 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.debug("Starting Conthunt backend...")
     logger.info(
-        "Deep Research config: analysis_concurrency=%s, search_concurrency=%s, model=%s",
-        settings.DEEP_RESEARCH_ANALYSIS_CONCURRENCY,
-        settings.DEEP_RESEARCH_SEARCH_CONCURRENCY,
+        "Deep Research config: model=%s | task_enqueue: gemini_batch=%s media_batch=%s search_batch=%s max_attempts=%s",
         settings.DEEP_RESEARCH_MODEL,
+        settings.GEMINI_TASK_ENQUEUE_BATCH_SIZE,
+        settings.MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE,
+        settings.SEARCH_ENQUEUE_BATCH_SIZE,
+        settings.TASK_WORKER_MAX_ATTEMPTS,
     )
     try:
         await init_db()
