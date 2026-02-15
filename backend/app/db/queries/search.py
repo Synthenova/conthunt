@@ -206,6 +206,12 @@ async def upsert_content_item(
                 primary_text = COALESCE(content_items.primary_text, EXCLUDED.primary_text),
                 canonical_url = COALESCE(content_items.canonical_url, EXCLUDED.canonical_url),
                 published_at = COALESCE(content_items.published_at, EXCLUDED.published_at)
+            WHERE
+                content_items.metrics IS DISTINCT FROM EXCLUDED.metrics
+                OR (content_items.title IS NULL AND EXCLUDED.title IS NOT NULL)
+                OR (content_items.primary_text IS NULL AND EXCLUDED.primary_text IS NOT NULL)
+                OR (content_items.canonical_url IS NULL AND EXCLUDED.canonical_url IS NOT NULL)
+                OR (content_items.published_at IS NULL AND EXCLUDED.published_at IS NOT NULL)
             RETURNING id, (xmax = 0) AS inserted
         """),
         {
@@ -223,7 +229,26 @@ async def upsert_content_item(
         }
     )
     row = result.fetchone()
-    return row[0], row[1]
+    if row:
+        return row[0], row[1]
+
+    # Conflict with no effective changes: fetch existing row without forcing a write.
+    existing = await conn.execute(
+        text("""
+            SELECT id
+            FROM content_items
+            WHERE platform = :platform AND external_id = :external_id
+            LIMIT 1
+        """),
+        {
+            "platform": item.platform,
+            "external_id": item.external_id,
+        },
+    )
+    existing_row = existing.fetchone()
+    if not existing_row:
+        raise RuntimeError("upsert_content_item: missing row after conflict")
+    return existing_row[0], False
 
 
 
@@ -304,12 +329,46 @@ async def upsert_content_items_batch(
                     author_name = COALESCE(content_items.author_name, EXCLUDED.author_name),
                     author_url = COALESCE(content_items.author_url, EXCLUDED.author_url),
                     author_image_url = COALESCE(content_items.author_image_url, EXCLUDED.author_image_url)
+                WHERE
+                    content_items.metrics IS DISTINCT FROM EXCLUDED.metrics
+                    OR (content_items.title IS NULL AND EXCLUDED.title IS NOT NULL)
+                    OR (content_items.primary_text IS NULL AND EXCLUDED.primary_text IS NOT NULL)
+                    OR (content_items.canonical_url IS NULL AND EXCLUDED.canonical_url IS NOT NULL)
+                    OR (content_items.published_at IS NULL AND EXCLUDED.published_at IS NOT NULL)
+                    OR (content_items.author_id IS NULL AND EXCLUDED.author_id IS NOT NULL)
+                    OR (content_items.author_name IS NULL AND EXCLUDED.author_name IS NOT NULL)
+                    OR (content_items.author_url IS NULL AND EXCLUDED.author_url IS NOT NULL)
+                    OR (content_items.author_image_url IS NULL AND EXCLUDED.author_image_url IS NOT NULL)
                 RETURNING id, platform, external_id, (xmax = 0) AS inserted
             """),
             {"data": json.dumps(chunk)}
         )
-        for row in result.fetchall():
+        rows = result.fetchall()
+        for row in rows:
             mapping[(row[1], row[2])] = (row[0], row[3])
+
+        if len(rows) < len(chunk):
+            returned_keys = {(row[1], row[2]) for row in rows}
+            missing_keys = [
+                {"platform": rec["platform"], "external_id": rec["external_id"]}
+                for rec in chunk
+                if (rec["platform"], rec["external_id"]) not in returned_keys
+            ]
+            if missing_keys:
+                existing_rows = await conn.execute(
+                    text("""
+                        SELECT ci.id, ci.platform, ci.external_id
+                        FROM content_items ci
+                        JOIN jsonb_to_recordset(CAST(:keys AS jsonb)) AS k(
+                            platform text, external_id text
+                        )
+                        ON ci.platform = k.platform
+                       AND ci.external_id = k.external_id
+                    """),
+                    {"keys": json.dumps(missing_keys)},
+                )
+                for existing in existing_rows.fetchall():
+                    mapping[(existing[1], existing[2])] = (existing[0], False)
     
     return mapping
 

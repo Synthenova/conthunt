@@ -87,16 +87,24 @@ async def claim_or_create_analysis(
         Tuple of (analysis_id, status, created_at, was_created)
     """
     analysis_id = uuid4()
-    # We use a dummy UPDATE to ensure we get the row back on conflict
     result = await conn.execute(
         text("""
-            INSERT INTO video_analyses (
-                id, media_asset_id, prompt, status, analysis_result
+            WITH inserted AS (
+                INSERT INTO video_analyses (
+                    id, media_asset_id, prompt, status, analysis_result
+                )
+                VALUES (:id, :media_asset_id, :prompt, 'queued', :analysis_result)
+                ON CONFLICT (media_asset_id) DO NOTHING
+                RETURNING id, status, created_at, TRUE AS was_inserted
             )
-            VALUES (:id, :media_asset_id, :prompt, 'queued', :analysis_result)
-            ON CONFLICT (media_asset_id) DO UPDATE
-            SET media_asset_id = EXCLUDED.media_asset_id
-            RETURNING id, status, created_at, (xmax = 0) AS was_inserted
+            SELECT id, status, created_at, was_inserted
+            FROM inserted
+            UNION ALL
+            SELECT va.id, va.status, va.created_at, FALSE AS was_inserted
+            FROM video_analyses va
+            WHERE va.media_asset_id = :media_asset_id
+              AND NOT EXISTS (SELECT 1 FROM inserted)
+            LIMIT 1
         """),
         {
             "id": analysis_id,
@@ -106,6 +114,8 @@ async def claim_or_create_analysis(
         }
     )
     row = result.fetchone()
+    if not row:
+        raise RuntimeError("claim_or_create_analysis: failed to fetch analysis row")
     return (row[0], row[1], row[2], row[3])
 
 
