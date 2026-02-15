@@ -563,12 +563,24 @@ async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) ->
         await conn.commit()
 
     if retry_payloads:
-        batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
-        for idx in range(0, len(retry_payloads), batch_size):
+        priority_retries = [p for p in retry_payloads if p.get("priority")]
+        normal_retries = [p for p in retry_payloads if not p.get("priority")]
+
+        if priority_retries:
+            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            for idx in range(0, len(priority_retries), batch_size):
+                await cloud_tasks.create_http_task(
+                    queue_name=settings.QUEUE_MEDIA_DOWNLOAD_PRIORITY,
+                    relative_uri="/v1/tasks/media/download",
+                    payload=priority_retries[idx: idx + batch_size],
+                )
+
+        # Normal retries are enqueued one asset per task to keep memory/throughput pressure low.
+        for payload in normal_retries:
             await cloud_tasks.create_http_task(
-                queue_name=settings.QUEUE_MEDIA_DOWNLOAD_PRIORITY if any(p.get("priority") for p in retry_payloads[idx: idx + batch_size]) else settings.QUEUE_MEDIA_DOWNLOAD,
+                queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                 relative_uri="/v1/tasks/media/download",
-                payload=retry_payloads[idx: idx + batch_size],
+                payload=payload,
             )
 
     # Unclaimed assets are treated as successful no-op (already processing/stored/failed).

@@ -379,24 +379,19 @@ async def search_worker(
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         # GCS uploads handled via Cloud Tasks above
         
-        # Media downloads: Fan-out via Cloud Tasks
+        # Media downloads: normal queue uses one asset per task (outside-queue throttling controls drip rate)
         if assets_to_download:
-            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks to Cloud Tasks...")
-            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
-            for i in range(0, len(assets_to_download), batch_size):
-                chunk = assets_to_download[i:i + batch_size]
+            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks to Cloud Tasks (1 asset/task)...")
+            for asset_info in assets_to_download:
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                     relative_uri="/v1/tasks/media/download",
-                    payload=[
-                        {
-                            "asset_id": str(asset_info["id"]),
-                            "platform": asset_info["platform"],
-                            "external_id": asset_info["external_id"],
-                            "attempt_no": 0,
-                        }
-                        for asset_info in chunk
-                    ],
+                    payload={
+                        "asset_id": str(asset_info["id"]),
+                        "platform": asset_info["platform"],
+                        "external_id": asset_info["external_id"],
+                        "attempt_no": 0,
+                    },
                 )
         
     except Exception as e:
@@ -648,22 +643,17 @@ async def load_more_worker(
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         if assets_to_download:
-            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks for load_more...")
-            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
-            for i in range(0, len(assets_to_download), batch_size):
-                chunk = assets_to_download[i:i + batch_size]
+            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks for load_more (1 asset/task)...")
+            for asset_info in assets_to_download:
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                     relative_uri="/v1/tasks/media/download",
-                    payload=[
-                        {
-                            "asset_id": str(asset_info["id"]),
-                            "platform": asset_info["platform"],
-                            "external_id": asset_info["external_id"],
-                            "attempt_no": 0,
-                        }
-                        for asset_info in chunk
-                    ],
+                    payload={
+                        "asset_id": str(asset_info["id"]),
+                        "platform": asset_info["platform"],
+                        "external_id": asset_info["external_id"],
+                        "attempt_no": 0,
+                    },
                 )
         
     except Exception as e:
