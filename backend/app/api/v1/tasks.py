@@ -111,7 +111,8 @@ class MediaDownloadTaskPayload(BaseModel):
 class RawArchiveTaskPayload(BaseModel):
     platform: str
     search_id: UUID
-    raw_json_compressed: str
+    raw_json_compressed: str | None = None
+    raw_json: dict | None = None
     gcs_key: str | None = None
 
 
@@ -594,23 +595,36 @@ async def handle_media_download_task(
 
 
 async def _handle_raw_archive_single(payload: RawArchiveTaskPayload, request: Request) -> dict[str, Any]:
-    from app.storage.raw_archive import upload_raw_compressed
+    from app.storage.raw_archive import upload_raw_compressed, upload_raw_json_gz
 
     logger.debug("Received raw archive task for search %s platform %s", payload.search_id, payload.platform)
     executor = CloudTaskExecutor(request)
-    compressed_bytes = base64.b64decode(payload.raw_json_compressed)
 
     async def _on_fail(e: Exception):
         logger.error("Raw archive permanently failed for search %s", payload.search_id)
 
-    return await executor.run(
-        handler=upload_raw_compressed,
-        on_fail=_on_fail,
-        platform=payload.platform,
-        search_id=payload.search_id,
-        compressed_data=compressed_bytes,
-        key_override=payload.gcs_key,
-    )
+    if payload.raw_json is not None:
+        return await executor.run(
+            handler=upload_raw_json_gz,
+            on_fail=_on_fail,
+            platform=payload.platform,
+            search_id=payload.search_id,
+            raw_json=payload.raw_json,
+            key_override=payload.gcs_key,
+        )
+
+    if payload.raw_json_compressed:
+        compressed_bytes = base64.b64decode(payload.raw_json_compressed)
+        return await executor.run(
+            handler=upload_raw_compressed,
+            on_fail=_on_fail,
+            platform=payload.platform,
+            search_id=payload.search_id,
+            compressed_data=compressed_bytes,
+            key_override=payload.gcs_key,
+        )
+
+    raise ValueError("raw archive payload missing both raw_json and raw_json_compressed")
 
 
 @router.post("/raw/archive")

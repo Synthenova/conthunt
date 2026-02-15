@@ -156,17 +156,27 @@ class CloudTasksService:
                     await conn.commit()
                 
         elif uri == "/v1/tasks/raw/archive":
-            from app.storage.raw_archive import upload_raw_compressed
+            from app.storage.raw_archive import upload_raw_compressed, upload_raw_json_gz
             import base64
             
             try:
-                compressed_bytes = base64.b64decode(payload["raw_json_compressed"])
-                await upload_raw_compressed(
-                    platform=payload["platform"],
-                    search_id=UUID(payload["search_id"]),
-                    compressed_data=compressed_bytes,
-                    key_override=payload.get("gcs_key"),
-                )
+                if payload.get("raw_json") is not None:
+                    await upload_raw_json_gz(
+                        platform=payload["platform"],
+                        search_id=UUID(payload["search_id"]),
+                        raw_json=payload["raw_json"],
+                        key_override=payload.get("gcs_key"),
+                    )
+                elif payload.get("raw_json_compressed"):
+                    compressed_bytes = base64.b64decode(payload["raw_json_compressed"])
+                    await upload_raw_compressed(
+                        platform=payload["platform"],
+                        search_id=UUID(payload["search_id"]),
+                        compressed_data=compressed_bytes,
+                        key_override=payload.get("gcs_key"),
+                    )
+                else:
+                    raise ValueError("raw archive payload missing both raw_json and raw_json_compressed")
             except Exception as e:
                 logger.error(f"[LOCAL] Raw archive failed: {e}", exc_info=True)
                 # No DB row for raw archive - just log

@@ -1,7 +1,5 @@
 """Search API endpoint - POST /v1/search with Redis streaming."""
 import asyncio
-import base64
-import gzip
 import time
 from datetime import datetime
 from typing import List
@@ -235,23 +233,26 @@ async def search_worker(
         
         # ========== DB WORK (happens after frontend is done) ==========
         assets_to_download = []
-        raw_archive_tasks = []
         raw_uris_by_platform: dict[str, str] = {}
 
         for result in collected_results:
             if result.success and result.parsed:
                 now = datetime.utcnow()
                 gcs_key = f"raw/{result.platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
-                raw_uris_by_platform[result.platform] = f"gs://{settings.GCS_BUCKET_RAW}/{gcs_key}"
-                raw_json_bytes = json.dumps(result.parsed.raw_response).encode("utf-8")
-                compressed = gzip.compress(raw_json_bytes)
-                compressed_b64 = base64.b64encode(compressed).decode("ascii")
-                raw_archive_tasks.append({
-                    "platform": result.platform,
-                    "search_id": str(search_id),
-                    "raw_json_compressed": compressed_b64,
-                    "gcs_key": gcs_key,
-                })
+                try:
+                    gcs_uri = await upload_raw_json_gz(
+                        platform=result.platform,
+                        search_id=search_id,
+                        raw_json=result.parsed.raw_response,
+                        key_override=gcs_key,
+                    )
+                    if gcs_uri:
+                        raw_uris_by_platform[result.platform] = gcs_uri
+                except Exception as archive_err:
+                    logger.warning("Failed to archive raw response for %s: %s", result.platform, archive_err)
+                finally:
+                    # Raw payload can be large; release it before DB batching.
+                    result.parsed.raw_response = {}
         
         max_attempts = 3
         for attempt in range(max_attempts):
@@ -364,21 +365,6 @@ async def search_worker(
                     await asyncio.sleep(0.2 * (attempt + 1))
                     continue
                 raise
-
-        if raw_archive_tasks:
-            for payload in raw_archive_tasks:
-                try:
-                    await cloud_tasks.create_http_task(
-                        queue_name=settings.QUEUE_RAW_ARCHIVE,
-                        relative_uri="/v1/tasks/raw/archive",
-                        payload=payload,
-                    )
-                except Exception as task_err:
-                    logger.warning(
-                        "Failed to enqueue raw archive task for %s: %s",
-                        payload.get("platform"),
-                        task_err,
-                    )
 
         # ========== FINISH STREAMING ==========
         # Push done event - frontend stops loading here
@@ -524,23 +510,25 @@ async def load_more_worker(
         
         # ========== DB WORK ==========
         assets_to_download = []
-        raw_archive_tasks = []
         raw_uris_by_platform: dict[str, str] = {}
 
         for result in collected_results:
             if result.success and result.parsed:
                 now = datetime.utcnow()
                 gcs_key = f"raw/{result.platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
-                raw_uris_by_platform[result.platform] = f"gs://{settings.GCS_BUCKET_RAW}/{gcs_key}"
-                raw_json_bytes = json.dumps(result.parsed.raw_response).encode("utf-8")
-                compressed = gzip.compress(raw_json_bytes)
-                compressed_b64 = base64.b64encode(compressed).decode("ascii")
-                raw_archive_tasks.append({
-                    "platform": result.platform,
-                    "search_id": str(search_id),
-                    "raw_json_compressed": compressed_b64,
-                    "gcs_key": gcs_key,
-                })
+                try:
+                    gcs_uri = await upload_raw_json_gz(
+                        platform=result.platform,
+                        search_id=search_id,
+                        raw_json=result.parsed.raw_response,
+                        key_override=gcs_key,
+                    )
+                    if gcs_uri:
+                        raw_uris_by_platform[result.platform] = gcs_uri
+                except Exception as archive_err:
+                    logger.warning("Failed to archive raw response for %s: %s", result.platform, archive_err)
+                finally:
+                    result.parsed.raw_response = {}
 
         max_attempts = 3
         for attempt in range(max_attempts):
@@ -648,21 +636,6 @@ async def load_more_worker(
                     await asyncio.sleep(0.2 * (attempt + 1))
                     continue
                 raise
-
-        if raw_archive_tasks:
-            for payload in raw_archive_tasks:
-                try:
-                    await cloud_tasks.create_http_task(
-                        queue_name=settings.QUEUE_RAW_ARCHIVE,
-                        relative_uri="/v1/tasks/raw/archive",
-                        payload=payload,
-                    )
-                except Exception as task_err:
-                    logger.warning(
-                        "Failed to enqueue raw archive task for %s: %s",
-                        payload.get("platform"),
-                        task_err,
-                    )
 
         # ========== FINISH STREAMING ==========
         await r.xadd(
