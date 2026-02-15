@@ -100,7 +100,7 @@ async def _execute_gemini_analysis(
         invoke_start = time.time()
 
         with set_llm_context(user_id=user_id, route="analysis.video"):
-            response = await llm.ainvoke([message], **{"max_output_tokens": 4096})
+            response = await llm.ainvoke([message],)
         
         analysis_markdown = response.content
         invoke_duration = time.time() - invoke_start
