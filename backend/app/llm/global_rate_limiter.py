@@ -124,6 +124,7 @@ def estimate_tokens(messages: Any, *, completion_tokens_hint: int | None = None)
 
 
 _THROTTLED_AVAILABLE: bool | None = None
+_REDIS_STORE: Any | None = None
 
 
 def _ensure_throttled_loaded() -> bool:
@@ -148,10 +149,9 @@ def _build_limiters(*, rpm: int, tpm: int, rpd: int, tpm_burst: int):
     if not _ensure_throttled_loaded():
         return None
 
-    from throttled.asyncio import RateLimiterType, Throttled, rate_limiter, store
+    from throttled.asyncio import RateLimiterType, Throttled, rate_limiter
 
-    settings = get_settings()
-    redis_store = store.RedisStore(server=settings.REDIS_URL, options={})
+    redis_store = _get_redis_store()
 
     start = Throttled(
         using=RateLimiterType.GCRA.value,
@@ -169,6 +169,29 @@ def _build_limiters(*, rpm: int, tpm: int, rpd: int, tpm_burst: int):
         store=redis_store,
     )
     return start, tokens, daily
+
+
+def _get_redis_store():
+    """
+    Build a single shared throttled RedisStore per process.
+    This avoids creating multiple independent redis pools from the limiter path.
+    """
+    global _REDIS_STORE
+    if _REDIS_STORE is not None:
+        return _REDIS_STORE
+
+    from throttled.asyncio import store
+
+    settings = get_settings()
+    # Keep limiter sockets bounded and below the app's main redis pool budget.
+    limiter_max_connections = max(2, min(10, int(settings.REDIS_MAX_CONNECTIONS // 2 or 2)))
+    options = {
+        "max_connections": limiter_max_connections,
+        "socket_keepalive": True,
+        "health_check_interval": 30,
+    }
+    _REDIS_STORE = store.RedisStore(server=settings.REDIS_URL, options=options)
+    return _REDIS_STORE
 
 
 _LIMITERS_BY_QUOTA: dict[tuple[int, int, int, int], tuple[Any, Any, Any]] = {}
