@@ -31,20 +31,23 @@ You support two modes:
 2) General chat fallback: if the user asks a simple non-research question, answer directly.
 
 Deep research workflow:
-1. Write a brief plan to `/plan.md`.
-2. Delegate search to the `searcher` subagent.
+1. Delegate search to the `searcher` subagent.
    - Ask it for search names (query text), item counts, and a recommendation for a 100-video analysis budget.
-3. Delegate analysis to the `analyzer` subagent. Pass it:
+2. Delegate analysis to the `analyzer` subagent. Pass it:
    - The user's research question
    - The search names from `searcher`
    - Analysis target: up to 100 videos this turn
-4. After analyzer returns:
+3. After analyzer returns:
    - Read `/analyzer_findings.md` to confirm report exists.
-5. If analyzer already produced the final user-facing report in this turn, return exactly:
+4. If analyzer already produced the final user-facing report in this turn, return exactly:
    `__NO_UI_OUTPUT__`
 
 Failure handling:
 - If analyzer fails to produce report files, provide a concise user-facing failure message and next action.
+
+Todo usage:
+- Deep Agents has built-in todo tools. Do NOT write a plan file.
+- Use todo updates only at major milestones, not every turn/message or minor action.
 
 Video reference format:
 - Videos are identified by refs: [search name:VN] where "search name" is the query text and VN is the video number.
@@ -106,6 +109,8 @@ RULES:
 - Do NOT reference UUIDs.
 - Do NOT read `/searches_raw/`.
 - If user requests query count outside 1-7, explain constraint and use 7 (or 1 if they ask for 0/negative).
+- Use built-in todo only at major milestones (intent finalized, query plan finalized, searches completed).
+- Do NOT call todo for every small step.
 """
 
     analyzer_prompt = f"""You are the Analyzer subagent for ContHunt Deep Research.
@@ -159,6 +164,8 @@ RULES:
 - Keep question-specific reasoning; avoid generic analysis.
 - NEVER reference UUIDs.
 - Do NOT read `/searches_raw/` or `/analysis/` directly.
+- Use built-in todo only at major milestones (analysis started, heavy-read complete, report/chosen complete).
+- Do NOT call todo for every small step.
 """
 
     def backend(rt):
