@@ -365,15 +365,30 @@ async def search_worker(
         # Media downloads: enqueue in batches to reduce DB claim/finalize query pressure.
         if assets_to_download:
             batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            dispatched_at = time.time()
             enqueue_payloads = [
                 {
                     "asset_id": str(asset_info["id"]),
                     "platform": asset_info["platform"],
                     "external_id": asset_info["external_id"],
                     "attempt_no": int(asset_info.get("attempt_no", 0) or 0),
+                    "dispatched_at": dispatched_at,
                 }
                 for asset_info in assets_to_download
             ]
+            for payload in enqueue_payloads:
+                capture_event(
+                    distinct_id="system:media_download",
+                    event="media_download_dispatched",
+                    properties={
+                        "asset_id": payload["asset_id"],
+                        "platform": payload["platform"],
+                        "priority": False,
+                        "attempt_no": payload["attempt_no"],
+                        "dispatched_at": payload["dispatched_at"],
+                        "source": "search_worker",
+                    },
+                )
             logger.debug(
                 "Dispatching %s media download tasks to Cloud Tasks in batches of %s...",
                 len(enqueue_payloads),
@@ -629,15 +644,30 @@ async def load_more_worker(
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         if assets_to_download:
             batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            dispatched_at = time.time()
             enqueue_payloads = [
                 {
                     "asset_id": str(asset_info["id"]),
                     "platform": asset_info["platform"],
                     "external_id": asset_info["external_id"],
                     "attempt_no": int(asset_info.get("attempt_no", 0) or 0),
+                    "dispatched_at": dispatched_at,
                 }
                 for asset_info in assets_to_download
             ]
+            for payload in enqueue_payloads:
+                capture_event(
+                    distinct_id="system:media_download",
+                    event="media_download_dispatched",
+                    properties={
+                        "asset_id": payload["asset_id"],
+                        "platform": payload["platform"],
+                        "priority": False,
+                        "attempt_no": payload["attempt_no"],
+                        "dispatched_at": payload["dispatched_at"],
+                        "source": "load_more_worker",
+                    },
+                )
             logger.debug(
                 "Dispatching %s media download tasks for load_more in batches of %s...",
                 len(enqueue_payloads),

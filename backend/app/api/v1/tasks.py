@@ -39,6 +39,7 @@ from app.services.cloud_tasks import cloud_tasks
 from app.services.task_executor import CloudTaskExecutor
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.llm.global_rate_limiter import LlmRateLimited
+from app.integrations.posthog_client import capture_event
 
 router = APIRouter()
 settings = get_settings()
@@ -130,6 +131,7 @@ class MediaDownloadTaskPayload(BaseModel):
     external_id: str
     priority: bool = False
     attempt_no: int = 0
+    dispatched_at: float | None = None
 
 
 class RawArchiveTaskPayload(BaseModel):
@@ -530,6 +532,21 @@ async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) ->
 
     async with httpx.AsyncClient(timeout=settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
         async def _process_claimed(item: MediaDownloadTaskPayload, claimed_asset: dict[str, Any]) -> None:
+            started_at = time.time()
+            dispatch_to_start_ms = None
+            if item.dispatched_at:
+                dispatch_to_start_ms = max(0.0, (started_at - float(item.dispatched_at)) * 1000.0)
+            capture_event(
+                distinct_id="system:media_download",
+                event="media_download_started",
+                properties={
+                    "asset_id": str(item.asset_id),
+                    "platform": item.platform,
+                    "priority": bool(item.priority),
+                    "attempt_no": int(item.attempt_no or 0),
+                    "dispatch_to_start_ms": dispatch_to_start_ms,
+                },
+            )
             try:
                 stored = await download_claimed_asset(
                     http_client=client,
@@ -538,7 +555,45 @@ async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) ->
                     external_id=item.external_id,
                 )
                 stored_rows.append(stored)
+                finished_at = time.time()
+                download_ms = max(0.0, (finished_at - started_at) * 1000.0)
+                end_to_end_ms = None
+                if item.dispatched_at:
+                    end_to_end_ms = max(0.0, (finished_at - float(item.dispatched_at)) * 1000.0)
+                capture_event(
+                    distinct_id="system:media_download",
+                    event="media_download_finished",
+                    properties={
+                        "asset_id": str(item.asset_id),
+                        "platform": item.platform,
+                        "priority": bool(item.priority),
+                        "attempt_no": int(item.attempt_no or 0),
+                        "success": True,
+                        "download_ms": download_ms,
+                        "end_to_end_ms": end_to_end_ms,
+                        "bytes": stored.get("size_bytes"),
+                    },
+                )
             except Exception as exc:
+                finished_at = time.time()
+                download_ms = max(0.0, (finished_at - started_at) * 1000.0)
+                end_to_end_ms = None
+                if item.dispatched_at:
+                    end_to_end_ms = max(0.0, (finished_at - float(item.dispatched_at)) * 1000.0)
+                capture_event(
+                    distinct_id="system:media_download",
+                    event="media_download_finished",
+                    properties={
+                        "asset_id": str(item.asset_id),
+                        "platform": item.platform,
+                        "priority": bool(item.priority),
+                        "attempt_no": int(item.attempt_no or 0),
+                        "success": False,
+                        "download_ms": download_ms,
+                        "end_to_end_ms": end_to_end_ms,
+                        "error": str(exc)[:200],
+                    },
+                )
                 attempt_no = int(item.attempt_no or 0)
                 if _is_retryable_exception(exc) and (attempt_no + 1) < int(getattr(settings, "TASK_WORKER_MAX_ATTEMPTS", 5)):
                     retry_asset_ids.append(item.asset_id)
@@ -549,6 +604,7 @@ async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) ->
                             "external_id": item.external_id,
                             "priority": item.priority,
                             "attempt_no": attempt_no + 1,
+                            "dispatched_at": time.time(),
                         }
                     )
                 else:
@@ -577,6 +633,19 @@ async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) ->
 
         if priority_retries:
             batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            for payload in priority_retries:
+                capture_event(
+                    distinct_id="system:media_download",
+                    event="media_download_dispatched",
+                    properties={
+                        "asset_id": payload["asset_id"],
+                        "platform": payload["platform"],
+                        "priority": True,
+                        "attempt_no": payload["attempt_no"],
+                        "dispatched_at": payload.get("dispatched_at"),
+                        "source": "media_download_retry",
+                    },
+                )
             for idx in range(0, len(priority_retries), batch_size):
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD_PRIORITY,
@@ -586,6 +655,18 @@ async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) ->
 
         # Normal retries are enqueued one asset per task to keep memory/throughput pressure low.
         for payload in normal_retries:
+            capture_event(
+                distinct_id="system:media_download",
+                event="media_download_dispatched",
+                properties={
+                    "asset_id": payload["asset_id"],
+                    "platform": payload["platform"],
+                    "priority": False,
+                    "attempt_no": payload["attempt_no"],
+                    "dispatched_at": payload.get("dispatched_at"),
+                    "source": "media_download_retry",
+                },
+            )
             await cloud_tasks.create_http_task(
                 queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                 relative_uri="/v1/tasks/media/download",

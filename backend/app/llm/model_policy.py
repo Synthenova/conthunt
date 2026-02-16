@@ -28,10 +28,10 @@ MODEL_LIMIT_OVERRIDES: dict[str, dict[str, int]] = {
         "tpm_burst": 400_000,
     },
     "openrouter/google/gemini-2.5-flash-lite-preview-09-2025": {
-        "rpm": 4000,
-        "tpm": 4_000_000,
-        "rpd": 100_000,
-        "tpm_burst": 400_000,
+        "rpm": 16_000,
+        "tpm": 16_000_000,
+        "rpd": 400_000,
+        "tpm_burst": 1_600_000,
     },
     "google-vertex/gemini-3-flash-preview": {
         "rpm": 1000,
@@ -46,10 +46,10 @@ MODEL_LIMIT_OVERRIDES: dict[str, dict[str, int]] = {
         "tpm_burst": 150_000,
     },
     "openrouter/google/gemini-3-flash-preview": {
-        "rpm": 1000,
-        "tpm": 1_000_000,
-        "rpd": 10_000,
-        "tpm_burst": 150_000,
+        "rpm": 4000,
+        "tpm": 4_000_000,
+        "rpd": 40_000,
+        "tpm_burst": 400_000,
     },
 }
 

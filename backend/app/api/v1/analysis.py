@@ -341,7 +341,19 @@ async def run_gemini_analysis(
                 "external_id": external_id,
                 "priority": True,  # Signal for local handler to skip semaphore
                 "attempt_no": 0,
+                "dispatched_at": datetime.utcnow().timestamp(),
             }
+        )
+        capture_event(
+            distinct_id="system:media_download",
+            event="media_download_dispatched",
+            properties={
+                "asset_id": str(media_asset_id),
+                "platform": platform,
+                "priority": True,
+                "attempt_no": 0,
+                "source": "analysis_single_priority",
+            },
         )
 
     # 4. Spawn background task for LLM processing
@@ -556,9 +568,22 @@ async def run_gemini_analysis_batch(
                     "external_id": row.get("external_id") or "unknown",
                     "priority": True,
                     "attempt_no": 0,
+                    "dispatched_at": datetime.utcnow().timestamp(),
                 }
                 for row in download_infos
             ]
+            for payload in payloads:
+                capture_event(
+                    distinct_id="system:media_download",
+                    event="media_download_dispatched",
+                    properties={
+                        "asset_id": payload["asset_id"],
+                        "platform": payload["platform"],
+                        "priority": True,
+                        "attempt_no": payload["attempt_no"],
+                        "source": "analysis_batch_priority",
+                    },
+                )
             for idx in range(0, len(payloads), batch_size):
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD_PRIORITY,

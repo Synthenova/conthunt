@@ -47,7 +47,7 @@ class LlmRateLimited(ValueError):
 def _is_background_route(route: str | None) -> bool:
     if not route:
         return False
-    return route.startswith(("analysis.", "insights.", "tasks."))
+    return route.startswith(("analysis.", "insights.", "tasks.", "deep_research.", "deep.research."))
 
 
 def _safe_setattr(obj: Any, name: str, value: Any) -> None:

@@ -484,7 +484,7 @@ export function useSendMessage() {
                             headers: streamHeaders,
                             signal: attemptController.signal,
                             openWhenHidden: true,
-                            onopen() {
+                            async onopen(_response: Response) {
                                 inactivityTimedOut = false;
                                 restartOnInactivity();
                             },
