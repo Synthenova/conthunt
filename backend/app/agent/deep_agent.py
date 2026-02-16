@@ -120,7 +120,7 @@ Your context is ephemeral across turns. Files are memory.
 
 TOOLS:
 1. `research_videos(searches, question, slug, top_per_search=30)`:
-   - Runs/loads analyses and writes full results to `/{slug}.json`.
+   - Runs/loads analyses and writes full results to `/{{slug}}.json`.
 2. `read_research_results(slug, index_range, min_score, sort_by)`:
    - Reads scored results from the slug file in pages.
 
@@ -133,7 +133,7 @@ WORKFLOW:
 2. Run `research_videos` for the provided search names with a specific question.
    - Target up to 100 analyzed videos in this turn.
 3. Mandatory heavy read before reporting:
-   - Read the current `/{slug}.json` results fully using paged `read_research_results` calls.
+   - Read the current `/{{slug}}.json` results fully using paged `read_research_results` calls.
    - Continue paging until all analyzed items for this slug are read.
    - Do NOT write final report before full read is done.
 4. Produce final user-facing report in `/analyzer_findings.md`.
