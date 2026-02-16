@@ -40,11 +40,7 @@ Deep research workflow:
    - Analysis target: up to 100 videos this turn
 4. After analyzer returns:
    - Read `/analyzer_findings.md` to confirm report exists.
-   - Read `/analyzer_chosen_videos.json` to get the chosen refs payload.
-5. Call `report_chosen_videos(chosen, criteria_slug)` using the analyzer's chosen payload.
-   - If unresolved duplicates are returned, tell analyzer to provide one replacement set and call `report_chosen_videos` at most one more time.
-   - Never call `report_chosen_videos` more than 2 times total in a turn.
-6. If analyzer already produced the final user-facing report in this turn, return exactly:
+5. If analyzer already produced the final user-facing report in this turn, return exactly:
    `__NO_UI_OUTPUT__`
 
 Failure handling:
@@ -123,6 +119,8 @@ TOOLS:
    - Runs/loads analyses and writes full results to `/{{slug}}.json`.
 2. `read_research_results(slug, index_range, min_score, sort_by)`:
    - Reads scored results from the slug file in pages.
+3. `report_chosen_videos(chosen, criteria_slug)`:
+   - Persist chosen videos for frontend rendering.
 
 REQUIRED FILE MEMORY:
 - Read relevant `chosen-vids-*.json` files at turn start to identify already-chosen refs.
@@ -139,17 +137,21 @@ WORKFLOW:
 4. Produce final user-facing report in `/analyzer_findings.md`.
    - This report is the main deep-research content shown to user.
    - Include concrete refs like [search name:VN], key patterns, and recommendations.
-5. Prepare chosen payload in `/analyzer_chosen_videos.json` with format:
-   {{"criteria_slug":"...", "chosen":[{{"ref":"search name:VN","reason":"...","score":N}}]}}
+5. Call `report_chosen_videos(chosen, criteria_slug)` directly with refs from this analysis.
+   - Choose as many strong videos as possible (high-volume output is preferred).
+   - Order chosen entries by score/rating descending (best first).
+   - Select at most 50 videos.
+   - Include only genuinely relevant/high-quality videos; do not pad with weak picks.
+   - If many strong videos exist, include a broad set up to your available strong pool.
 6. Return a short operational summary to orchestrator:
    - report file path
-   - chosen payload file path
+   - chosen tool result summary
    - processed count, failed count
    - duplicate count noticed from prior chosen history if applicable
 
 DUPLICATE/LOOP POLICY:
 - Try to exclude previously chosen refs on first pass.
-- If orchestrator reports duplicates after tool submission, provide at most one replacement set.
+- If chosen tool returns duplicates/unresolved refs, provide at most one replacement set.
 - After one replacement attempt, finalize and do not loop.
 
 RULES:
@@ -195,14 +197,14 @@ RULES:
             "description": "Deep video research: analyzes videos across searches, scores relevance, produces rich findings.",
             "system_prompt": analyzer_prompt,
             "model": model,
-            "tools": [research_videos, read_research_results],
+            "tools": [research_videos, read_research_results, report_chosen_videos],
         },
     ]
 
     return create_deep_agent(
         model=model,
         system_prompt=orchestrator_prompt,
-        tools=[report_chosen_videos],
+        tools=[],
         subagents=subagents,
         backend=backend,
         checkpointer=checkpointer,

@@ -293,14 +293,9 @@ async def research_videos(
 
             results[idx] = {
                 "ref": video["ref"],
-                "search_query": video["search_query"],
-                "video_id": video["video_id"],
-                "media_asset_id": video["media_asset_id"],
                 "title": video["title"],
                 "platform": video["platform"],
                 "creator": video["creator"],
-                "views": video["views"],
-                "likes": video["likes"],
                 "score": result.score,
                 "answer": result.answer,
             }
@@ -311,14 +306,9 @@ async def research_videos(
             failed_count += 1
             results[idx] = {
                 "ref": video["ref"],
-                "search_query": video["search_query"],
-                "video_id": video["video_id"],
-                "media_asset_id": video["media_asset_id"],
                 "title": video["title"],
                 "platform": video["platform"],
                 "creator": video["creator"],
-                "views": video["views"],
-                "likes": video["likes"],
                 "score": 0,
                 "answer": f"[FAILED] {str(e)[:200]}",
             }
@@ -421,8 +411,6 @@ async def read_research_results(
             "title": it.get("title", ""),
             "platform": it.get("platform", ""),
             "creator": it.get("creator", ""),
-            "views": it.get("views", 0),
-            "likes": it.get("likes", 0),
             "score": it.get("score", 0),
             "answer": it.get("answer", ""),
         })
