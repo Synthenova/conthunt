@@ -150,6 +150,7 @@ async def update_asset_stored(
                 mime_type = :mime_type,
                 bytes = :bytes
             WHERE id = :id
+              AND status = 'downloading'
         """),
         {
             "id": asset_id,
@@ -214,6 +215,7 @@ async def update_assets_stored_batch(
                 asset_id uuid, gcs_uri text, sha256 text, mime_type text, bytes bigint
             )
             WHERE ma.id = x.asset_id
+              AND ma.status = 'downloading'
             """
         ),
         {"payload": json.dumps(payload)},
@@ -450,6 +452,7 @@ async def download_asset_with_claim(
                         UPDATE media_assets 
                         SET status = 'stored'
                         WHERE id = :id
+                          AND status = 'downloading'
                     """),
                     {"id": asset_id}
                 )

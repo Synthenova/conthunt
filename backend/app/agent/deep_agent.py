@@ -18,7 +18,7 @@ from app.agent.deep_research.tools_analysis import (
 def build_deep_agent(checkpointer=None, model_name: str | None = None):
     settings = get_settings()
     model = init_chat_model(model_name or settings.DEEP_RESEARCH_MODEL, temperature=0.5)
-    searcher_model = init_chat_model("google/gemini-3-pro-preview", temperature=0.2)
+    searcher_model = init_chat_model("google/gemini-3-flash-preview", temperature=0.2)
     searcher_model_with_search = searcher_model.bind_tools([{"google_search": {}}])
 
     orchestrator_prompt = f"""You are the Deep Research Orchestrator for ContHunt.

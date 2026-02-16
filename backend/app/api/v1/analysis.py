@@ -40,8 +40,17 @@ load_dotenv()
 
 router = APIRouter(tags=["video-analysis"])
 
-# Initialize Gemini Model
+# Non-YouTube analysis path: Google provider model (existing behavior).
 llm = init_chat_model("google/gemini-2.5-flash-lite-preview-09-2025", temperature=0.7)
+
+# YouTube analysis path: OpenRouter + Google AI Studio provider pin.
+youtube_llm = init_chat_model(
+    "openrouter/google/gemini-2.5-flash-lite-preview-09-2025",
+    temperature=0.7,
+    llm_init_kwargs={
+        "extra_body": {"provider": {"only": ["Google AI Studio"]}},
+    },
+)
 
 
 
@@ -82,25 +91,40 @@ async def _execute_gemini_analysis(
     )
     
     try:
-        # 1. Build Message with prompt
-        logger.info(f"[ANALYSIS] Building HumanMessage with video...")
-        message = HumanMessage(
-            content=[
-                {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
-                {      
-                    "type": "media",
-                    "file_uri": video_uri,
-                    "mime_type": "video/mp4",
-                }
-            ]
-        )
+        is_youtube = "youtube.com" in video_uri or "youtu.be" in video_uri
+
+        # 1. Build message in provider-specific format.
+        logger.info("[ANALYSIS] Building HumanMessage with video (is_youtube=%s)...", is_youtube)
+        if is_youtube:
+            message = HumanMessage(
+                content=[
+                    {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
+                    {
+                        "type": "video_url",
+                        "video_url": {"url": video_uri},
+                    },
+                ]
+            )
+            invoke_llm = youtube_llm
+        else:
+            message = HumanMessage(
+                content=[
+                    {"type": "text", "text": DEFAULT_ANALYSIS_PROMPT},
+                    {
+                        "type": "media",
+                        "file_uri": video_uri,
+                        "mime_type": "video/mp4",
+                    },
+                ]
+            )
+            invoke_llm = llm
         
         # 2. Invoke LLM (plain text output - markdown)
         logger.info(f"[ANALYSIS] Invoking Gemini LLM (markdown output)...")
         invoke_start = time.time()
 
         with set_llm_context(user_id=user_id, route="analysis.video"):
-            response = await llm.ainvoke([message],)
+            response = await invoke_llm.ainvoke([message],)
         
         analysis_markdown = response.content
         invoke_duration = time.time() - invoke_start
@@ -660,4 +684,3 @@ async def get_video_analysis(
             created_at=existing["created_at"],
             cached=True,
         )
-

@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 from app.core import get_settings, logger
 from app.llm.context import get_llm_route
+from app.llm.model_policy import canonicalize_model_key, resolve_model_limits
 
 
 class LlmRateLimited(ValueError):
@@ -139,7 +140,7 @@ def _ensure_throttled_loaded() -> bool:
     return True
 
 
-def _build_limiters():
+def _build_limiters(*, rpm: int, tpm: int, rpd: int, tpm_burst: int):
     """
     Lazy construction so importing this module doesn't hard-require `throttled`
     before you freeze/install it.
@@ -154,30 +155,31 @@ def _build_limiters():
 
     start = Throttled(
         using=RateLimiterType.GCRA.value,
-        quota=rate_limiter.per_min(settings.LLM_MODEL_GLOBAL_RPM, burst=1),
+        quota=rate_limiter.per_min(rpm, burst=1),
         store=redis_store,
     )
     tokens = Throttled(
         using=RateLimiterType.GCRA.value,
-        quota=rate_limiter.per_min(settings.LLM_MODEL_GLOBAL_TPM, burst=settings.LLM_MODEL_GLOBAL_TPM_BURST),
+        quota=rate_limiter.per_min(tpm, burst=tpm_burst),
         store=redis_store,
     )
     daily = Throttled(
         using=RateLimiterType.FIXED_WINDOW.value,
-        quota=rate_limiter.per_day(settings.LLM_MODEL_GLOBAL_RPD),
+        quota=rate_limiter.per_day(rpd),
         store=redis_store,
     )
     return start, tokens, daily
 
 
-_LIMITERS: tuple[Any, Any, Any] | None = None
+_LIMITERS_BY_QUOTA: dict[tuple[int, int, int, int], tuple[Any, Any, Any]] = {}
 
 
-def _get_limiters() -> tuple[Any, Any, Any]:
-    global _LIMITERS
-    if _LIMITERS is not None:
-        return _LIMITERS
-    built = _build_limiters()
+def _get_limiters(*, rpm: int, tpm: int, rpd: int, tpm_burst: int) -> tuple[Any, Any, Any]:
+    key = (int(rpm), int(tpm), int(rpd), int(tpm_burst))
+    existing = _LIMITERS_BY_QUOTA.get(key)
+    if existing is not None:
+        return existing
+    built = _build_limiters(rpm=key[0], tpm=key[1], rpd=key[2], tpm_burst=key[3])
     if built is None:
         raise LlmRateLimited(
             kind="misconfigured_throttled_missing",
@@ -185,8 +187,8 @@ def _get_limiters() -> tuple[Any, Any, Any]:
             route=get_llm_route(),
             retry_after_s=None,
         )
-    _LIMITERS = built
-    return _LIMITERS
+    _LIMITERS_BY_QUOTA[key] = built
+    return built
 
 
 async def enforce_model_global_limits(
@@ -204,6 +206,8 @@ async def enforce_model_global_limits(
     4) TPM reservation with wait-and-retry
     """
     settings = get_settings()
+    model_key = canonicalize_model_key(model_key)
+    limits = resolve_model_limits(model_key, settings)
     route = get_llm_route()
     is_bg = _is_background_route(route)
     start_timeout = (
@@ -218,7 +222,12 @@ async def enforce_model_global_limits(
     )
 
     try:
-        start_limiter, token_limiter, daily_limiter = _get_limiters()
+        start_limiter, token_limiter, daily_limiter = _get_limiters(
+            rpm=limits.rpm,
+            tpm=limits.tpm,
+            rpd=limits.rpd,
+            tpm_burst=limits.tpm_burst,
+        )
     except LlmRateLimited:
         raise
     except Exception as exc:
@@ -232,7 +241,7 @@ async def enforce_model_global_limits(
 
     # 0) Ensure call can ever pass the token limiter.
     est_tokens = estimate_tokens(messages, completion_tokens_hint=completion_tokens_hint)
-    if est_tokens > int(settings.LLM_MODEL_GLOBAL_TPM_BURST):
+    if est_tokens > int(limits.tpm_burst):
         raise LlmRateLimited(
             kind="tpm_call_too_large",
             model_key=model_key,
@@ -242,7 +251,8 @@ async def enforce_model_global_limits(
 
     # 1) Daily cap: fail-fast.
     try:
-        r = await daily_limiter.limit(k_rpd, cost=1, timeout=0)
+        # throttled expects non-blocking timeout as -1 (not 0).
+        r = await daily_limiter.limit(k_rpd, cost=1, timeout=-1)
     except TypeError:
         # Some versions use positional args; keep compatibility.
         r = await daily_limiter.limit(k_rpd, cost=1)

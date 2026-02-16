@@ -16,6 +16,20 @@ class CloudTasksService:
     def __init__(self):
         self.settings = get_settings()
         self.client = tasks_v2.CloudTasksClient()
+        self._local_media_download_normal_sem: asyncio.Semaphore | None = None
+        self._local_media_download_priority_sem: asyncio.Semaphore | None = None
+
+    def _get_local_media_download_semaphore(self, queue_name: str) -> asyncio.Semaphore | None:
+        """Local-only queue concurrency caps for media download tasks."""
+        if queue_name == self.settings.QUEUE_MEDIA_DOWNLOAD:
+            if self._local_media_download_normal_sem is None:
+                self._local_media_download_normal_sem = asyncio.Semaphore(1)
+            return self._local_media_download_normal_sem
+        if queue_name == self.settings.QUEUE_MEDIA_DOWNLOAD_PRIORITY:
+            if self._local_media_download_priority_sem is None:
+                self._local_media_download_priority_sem = asyncio.Semaphore(10)
+            return self._local_media_download_priority_sem
+        return None
 
     def get_parent(self, queue_name: str) -> str:
         return self.client.queue_path(
@@ -38,14 +52,26 @@ class CloudTasksService:
         """
         if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:            
             import asyncio
-            async def _run():
-                # Local task execution
-                # Ensure DB slots are charged against the "tasks" semaphore key, not the
-                # originating API request context.
-                with db_kind_override("tasks"):
-                    await self._run_local_task(relative_uri, payload)
+            local_media_sem = None
+            if relative_uri == "/v1/tasks/media/download":
+                local_media_sem = self._get_local_media_download_semaphore(queue_name)
 
-            asyncio.create_task(_run())
+            async def _run_single(local_payload):
+                with db_kind_override("tasks"):
+                    if local_media_sem is not None:
+                        async with local_media_sem:
+                            await self._run_local_task(relative_uri, local_payload)
+                    else:
+                        await self._run_local_task(relative_uri, local_payload)
+
+            # Local-only queue control for media downloads:
+            # - normal queue: 1 concurrent item
+            # - priority queue: 10 concurrent items
+            if relative_uri == "/v1/tasks/media/download" and isinstance(payload, list):
+                for item in payload:
+                    asyncio.create_task(_run_single(item))
+            else:
+                asyncio.create_task(_run_single(payload))
             return "local-task-id"
 
         url = f"{self.settings.API_BASE_URL}{relative_uri}"

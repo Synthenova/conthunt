@@ -29,10 +29,8 @@ from app.db.queries.content import get_media_asset_by_id, get_media_assets_by_id
 from app.db.session import get_db_connection
 from app.media.downloader import (
     claim_assets_for_download_batch,
-    download_asset_with_claim,
     download_claimed_asset,
     reset_assets_pending_batch,
-    update_asset_failed,
     update_assets_failed_batch,
     update_assets_stored_batch,
 )
@@ -40,6 +38,7 @@ from app.services.board_insights import execute_board_insights
 from app.services.cloud_tasks import cloud_tasks
 from app.services.task_executor import CloudTaskExecutor
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
+from app.llm.global_rate_limiter import LlmRateLimited
 
 router = APIRouter()
 settings = get_settings()
@@ -65,6 +64,31 @@ def _is_retryable_exception(exc: Exception) -> bool:
     if isinstance(exc, (ValueError, TypeError, KeyError)):
         return False
     return True
+
+
+def _is_llm_429_retryable_exception(exc: Exception) -> bool:
+    if isinstance(exc, LlmRateLimited):
+        return exc.kind in {"rpd", "rpm", "tpm"}
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            return int(exc.response.status_code) == 429
+        except Exception:
+            return False
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        try:
+            return int(status_code) == 429
+        except Exception:
+            return False
+    response = getattr(exc, "response", None)
+    if response is not None:
+        response_status_code = getattr(response, "status_code", None)
+        if response_status_code is not None:
+            try:
+                return int(response_status_code) == 429
+            except Exception:
+                return False
+    return False
 
 
 def _batch_summary(
@@ -158,7 +182,7 @@ class ChatStreamTaskPayload(BaseModel):
 
 async def _handle_gemini_analysis_single(payload: AnalysisTaskPayload, request: Request) -> dict[str, Any]:
     logger.info("Received Gemini analysis task for %s", payload.media_asset_id)
-    executor = CloudTaskExecutor(request)
+    executor = CloudTaskExecutor(request, retry_decider=_is_llm_429_retryable_exception)
 
     async def _on_fail(e: Exception):
         async with get_db_connection() as conn:
@@ -339,7 +363,7 @@ async def _handle_gemini_analysis_batch(items: list[AnalysisTaskPayload]) -> dic
         except Exception as exc:
             err_text = f"{exc} (URL: {video_uri})"
             attempt_no = int(payload.attempt_no or 0)
-            if _is_retryable_exception(exc) and (attempt_no + 1) < int(getattr(settings, "TASK_WORKER_MAX_ATTEMPTS", 5)):
+            if _is_llm_429_retryable_exception(exc) and (attempt_no + 1) < int(getattr(settings, "TASK_WORKER_MAX_ATTEMPTS", 5)):
                 retry_analysis_ids.append(payload.analysis_id)
                 retry_payloads.append(
                     {
@@ -481,23 +505,8 @@ async def handle_twelvelabs_index_task(
 
 
 async def _handle_media_download_single(payload: MediaDownloadTaskPayload, request: Request) -> dict[str, Any]:
-    logger.debug("Received media download task for %s", payload.asset_id)
-    executor = CloudTaskExecutor(request)
-
-    async def _on_fail(e: Exception):
-        async with get_db_connection() as conn:
-            await update_asset_failed(conn, payload.asset_id, str(e))
-
-    async with httpx.AsyncClient(timeout=settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
-        return await executor.run(
-            handler=download_asset_with_claim,
-            on_fail=_on_fail,
-            http_client=client,
-            asset_id=payload.asset_id,
-            platform=payload.platform,
-            external_id=payload.external_id,
-            skip_semaphore=bool(payload.priority),
-        )
+    logger.debug("Received single media download task for %s; routing through batch path", payload.asset_id)
+    return await _handle_media_download_batch([payload])
 
 
 async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) -> dict[str, Any]:

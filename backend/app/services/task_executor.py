@@ -18,10 +18,16 @@ class CloudTaskExecutor:
     on_fail callback (to update DB status) and returns 200 OK (stopping Cloud Tasks).
     """
     
-    def __init__(self, request: Request, max_retries: int = 5):
+    def __init__(
+        self,
+        request: Request,
+        max_retries: int = 5,
+        retry_decider: Optional[Callable[[Exception], bool]] = None,
+    ):
         # Header is set by Cloud Tasks: 0, 1, 2...
         self.retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
         self.max_retries = max_retries
+        self.retry_decider = retry_decider
 
     @trace_span("cloud_tasks.executor.run")
     async def run(
@@ -70,6 +76,12 @@ class CloudTaskExecutor:
         """
         Determine if exception is transient/retryable.
         """
+        if self.retry_decider is not None:
+            try:
+                return bool(self.retry_decider(e))
+            except Exception:
+                return False
+
         # HTTP Network/Timeout errors are retryable
         if isinstance(e, (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)):
             return True

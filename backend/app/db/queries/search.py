@@ -299,15 +299,19 @@ async def upsert_content_items_batch(
 
     mapping = {}
     for chunk in _chunked(prepared_items, _BATCH_CHUNK_SIZE):
-        result = await conn.execute(
-            text("""
+        chunk_json = json.dumps(chunk)
+
+        # Phase 1: insert only (no conflict updates). This avoids locking/updating hot rows.
+        inserted_result = await conn.execute(
+            text(
+                """
                 INSERT INTO content_items (
                     id, platform, external_id, content_type, canonical_url,
                     title, primary_text, published_at, creator_handle,
                     author_id, author_name, author_url, author_image_url,
                     metrics, payload
                 )
-                SELECT 
+                SELECT
                     id, platform, external_id, content_type, canonical_url,
                     title, primary_text, published_at, creator_handle,
                     author_id, author_name, author_url, author_image_url,
@@ -318,57 +322,99 @@ async def upsert_content_items_batch(
                     author_id text, author_name text, author_url text, author_image_url text,
                     metrics jsonb, payload jsonb
                 )
-                ON CONFLICT (platform, external_id) DO UPDATE SET
-                    metrics = EXCLUDED.metrics,
-                    updated_at = now(),
-                    title = COALESCE(content_items.title, EXCLUDED.title),
-                    primary_text = COALESCE(content_items.primary_text, EXCLUDED.primary_text),
-                    canonical_url = COALESCE(content_items.canonical_url, EXCLUDED.canonical_url),
-                    published_at = COALESCE(content_items.published_at, EXCLUDED.published_at),
-                    author_id = COALESCE(content_items.author_id, EXCLUDED.author_id),
-                    author_name = COALESCE(content_items.author_name, EXCLUDED.author_name),
-                    author_url = COALESCE(content_items.author_url, EXCLUDED.author_url),
-                    author_image_url = COALESCE(content_items.author_image_url, EXCLUDED.author_image_url)
-                WHERE
-                    content_items.metrics IS DISTINCT FROM EXCLUDED.metrics
-                    OR (content_items.title IS NULL AND EXCLUDED.title IS NOT NULL)
-                    OR (content_items.primary_text IS NULL AND EXCLUDED.primary_text IS NOT NULL)
-                    OR (content_items.canonical_url IS NULL AND EXCLUDED.canonical_url IS NOT NULL)
-                    OR (content_items.published_at IS NULL AND EXCLUDED.published_at IS NOT NULL)
-                    OR (content_items.author_id IS NULL AND EXCLUDED.author_id IS NOT NULL)
-                    OR (content_items.author_name IS NULL AND EXCLUDED.author_name IS NOT NULL)
-                    OR (content_items.author_url IS NULL AND EXCLUDED.author_url IS NOT NULL)
-                    OR (content_items.author_image_url IS NULL AND EXCLUDED.author_image_url IS NOT NULL)
-                RETURNING id, platform, external_id, (xmax = 0) AS inserted
-            """),
-            {"data": json.dumps(chunk)}
+                ON CONFLICT (platform, external_id) DO NOTHING
+                RETURNING id, platform, external_id
+                """
+            ),
+            {"data": chunk_json},
         )
-        rows = result.fetchall()
-        for row in rows:
-            mapping[(row[1], row[2])] = (row[0], row[3])
+        inserted_rows = inserted_result.fetchall()
+        inserted_keys = {(row[1], row[2]) for row in inserted_rows}
 
-        if len(rows) < len(chunk):
-            returned_keys = {(row[1], row[2]) for row in rows}
-            missing_keys = [
-                {"platform": rec["platform"], "external_id": rec["external_id"]}
-                for rec in chunk
-                if (rec["platform"], rec["external_id"]) not in returned_keys
+        # Phase 2: update only existing rows that actually changed.
+        if len(inserted_keys) < len(chunk):
+            inserted_keys_payload = [
+                {"platform": platform, "external_id": external_id}
+                for (platform, external_id) in inserted_keys
             ]
-            if missing_keys:
-                existing_rows = await conn.execute(
-                    text("""
-                        SELECT ci.id, ci.platform, ci.external_id
-                        FROM content_items ci
-                        JOIN jsonb_to_recordset(CAST(:keys AS jsonb)) AS k(
-                            platform text, external_id text
+            await conn.execute(
+                text(
+                    """
+                    WITH input_rows AS (
+                        SELECT
+                            platform, external_id, title, primary_text, canonical_url, published_at,
+                            metrics, author_id, author_name, author_url, author_image_url
+                        FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
+                            id uuid, platform text, external_id text, content_type text, canonical_url text,
+                            title text, primary_text text, published_at timestamptz, creator_handle text,
+                            author_id text, author_name text, author_url text, author_image_url text,
+                            metrics jsonb, payload jsonb
                         )
-                        ON ci.platform = k.platform
-                       AND ci.external_id = k.external_id
-                    """),
-                    {"keys": json.dumps(missing_keys)},
+                    )
+                    UPDATE content_items ci
+                    SET
+                        metrics = i.metrics,
+                        updated_at = now(),
+                        title = COALESCE(ci.title, i.title),
+                        primary_text = COALESCE(ci.primary_text, i.primary_text),
+                        canonical_url = COALESCE(ci.canonical_url, i.canonical_url),
+                        published_at = COALESCE(ci.published_at, i.published_at),
+                        author_id = COALESCE(ci.author_id, i.author_id),
+                        author_name = COALESCE(ci.author_name, i.author_name),
+                        author_url = COALESCE(ci.author_url, i.author_url),
+                        author_image_url = COALESCE(ci.author_image_url, i.author_image_url)
+                    FROM input_rows i
+                    WHERE ci.platform = i.platform
+                      AND ci.external_id = i.external_id
+                      AND (
+                            ci.metrics IS DISTINCT FROM i.metrics
+                            OR (ci.title IS NULL AND i.title IS NOT NULL)
+                            OR (ci.primary_text IS NULL AND i.primary_text IS NOT NULL)
+                            OR (ci.canonical_url IS NULL AND i.canonical_url IS NOT NULL)
+                            OR (ci.published_at IS NULL AND i.published_at IS NOT NULL)
+                            OR (ci.author_id IS NULL AND i.author_id IS NOT NULL)
+                            OR (ci.author_name IS NULL AND i.author_name IS NOT NULL)
+                            OR (ci.author_url IS NULL AND i.author_url IS NOT NULL)
+                            OR (ci.author_image_url IS NULL AND i.author_image_url IS NOT NULL)
+                      )
+                      AND NOT EXISTS (
+                            SELECT 1
+                            FROM jsonb_to_recordset(CAST(:inserted_keys AS jsonb)) AS ins(
+                                platform text, external_id text
+                            )
+                            WHERE ins.platform = i.platform
+                              AND ins.external_id = i.external_id
+                      )
+                    """
+                ),
+                {
+                    "data": chunk_json,
+                    "inserted_keys": json.dumps(inserted_keys_payload),
+                },
+            )
+
+        # Build id mapping in one pass for all chunk keys.
+        chunk_keys = [
+            {"platform": rec["platform"], "external_id": rec["external_id"]}
+            for rec in chunk
+        ]
+        existing_rows = await conn.execute(
+            text(
+                """
+                SELECT ci.id, ci.platform, ci.external_id
+                FROM content_items ci
+                JOIN jsonb_to_recordset(CAST(:keys AS jsonb)) AS k(
+                    platform text, external_id text
                 )
-                for existing in existing_rows.fetchall():
-                    mapping[(existing[1], existing[2])] = (existing[0], False)
+                  ON ci.platform = k.platform
+                 AND ci.external_id = k.external_id
+                """
+            ),
+            {"keys": json.dumps(chunk_keys)},
+        )
+        for existing in existing_rows.fetchall():
+            key = (existing[1], existing[2])
+            mapping[key] = (existing[0], key in inserted_keys)
     
     return mapping
 
@@ -467,7 +513,7 @@ async def insert_media_assets_batch(
             "content_item_id": str(asset["content_item_id"]),
             "asset_type": asset["asset_type"],
             "source_url": asset["source_url"],
-            "source_url_list": json.dumps(asset.get("source_url_list")) if asset.get("source_url_list") else None,
+            "source_url_list": asset.get("source_url_list"),
         })
 
     for chunk in _chunked(prepared_assets, _BATCH_CHUNK_SIZE):
@@ -477,9 +523,9 @@ async def insert_media_assets_batch(
                     id, content_item_id, asset_type, source_url, source_url_list, status
                 )
                 SELECT 
-                    id, content_item_id, asset_type, source_url, source_url_list::jsonb, 'pending'
+                    id, content_item_id, asset_type, source_url, source_url_list, 'pending'
                 FROM jsonb_to_recordset(CAST(:data AS jsonb)) AS x(
-                    id uuid, content_item_id uuid, asset_type text, source_url text, source_url_list text
+                    id uuid, content_item_id uuid, asset_type text, source_url text, source_url_list jsonb
                 )
                 ON CONFLICT (id) DO NOTHING
             """),

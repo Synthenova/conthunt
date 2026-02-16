@@ -11,7 +11,6 @@ import httpx
 import json
 import redis.asyncio as redis
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
 from sse_starlette.sse import EventSourceResponse
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 
@@ -41,15 +40,6 @@ def _is_terminal_payload(payload_str: str | None) -> bool:
     if not payload_str:
         return False
     return ('"type": "done"' in payload_str) or ('"type": "error"' in payload_str)
-
-def _is_deadlock_error(err: Exception) -> bool:
-    if isinstance(err, DBAPIError):
-        orig = err.orig
-        if getattr(orig, "sqlstate", None) == "40P01":
-            return True
-    if getattr(err, "sqlstate", None) == "40P01":
-        return True
-    return "deadlock detected" in str(err).lower()
 
 
 @trace_span("search.call_platform")
@@ -254,7 +244,9 @@ async def search_worker(
                     # Raw payload can be large; release it before DB batching.
                     result.parsed.raw_response = {}
         
-        max_attempts = 3
+        # Cloud Tasks + CloudTaskExecutor already handle retry policy.
+        # Keep in-handler DB attempts to 1 to avoid retry multiplication.
+        max_attempts = 1
         for attempt in range(max_attempts):
             assets_to_download = []
             try:
@@ -354,16 +346,7 @@ async def search_worker(
                     await conn.commit()
                     logger.info(f"Saved search {search_id} with {rank} results (batch mode)")
                 break
-            except Exception as e:
-                if _is_deadlock_error(e) and attempt < max_attempts - 1:
-                    logger.warning(
-                        "Deadlock detected for search %s, retrying (%s/%s)",
-                        search_id,
-                        attempt + 1,
-                        max_attempts,
-                    )
-                    await asyncio.sleep(0.2 * (attempt + 1))
-                    continue
+            except Exception:
                 raise
 
         # ========== FINISH STREAMING ==========
@@ -379,19 +362,28 @@ async def search_worker(
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         # GCS uploads handled via Cloud Tasks above
         
-        # Media downloads: normal queue uses one asset per task (outside-queue throttling controls drip rate)
+        # Media downloads: enqueue in batches to reduce DB claim/finalize query pressure.
         if assets_to_download:
-            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks to Cloud Tasks (1 asset/task)...")
-            for asset_info in assets_to_download:
+            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            enqueue_payloads = [
+                {
+                    "asset_id": str(asset_info["id"]),
+                    "platform": asset_info["platform"],
+                    "external_id": asset_info["external_id"],
+                    "attempt_no": int(asset_info.get("attempt_no", 0) or 0),
+                }
+                for asset_info in assets_to_download
+            ]
+            logger.debug(
+                "Dispatching %s media download tasks to Cloud Tasks in batches of %s...",
+                len(enqueue_payloads),
+                batch_size,
+            )
+            for idx in range(0, len(enqueue_payloads), batch_size):
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                     relative_uri="/v1/tasks/media/download",
-                    payload={
-                        "asset_id": str(asset_info["id"]),
-                        "platform": asset_info["platform"],
-                        "external_id": asset_info["external_id"],
-                        "attempt_no": 0,
-                    },
+                    payload=enqueue_payloads[idx: idx + batch_size],
                 )
         
     except Exception as e:
@@ -525,7 +517,9 @@ async def load_more_worker(
                 finally:
                     result.parsed.raw_response = {}
 
-        max_attempts = 3
+        # Cloud Tasks + CloudTaskExecutor already handle retry policy.
+        # Keep in-handler DB attempts to 1 to avoid retry multiplication.
+        max_attempts = 1
         for attempt in range(max_attempts):
             assets_to_download = []
             try:
@@ -620,16 +614,7 @@ async def load_more_worker(
                     await conn.commit()
                     logger.info(f"Load more for search {search_id}: added {len(items_with_rank)} results")
                 break
-            except Exception as e:
-                if _is_deadlock_error(e) and attempt < max_attempts - 1:
-                    logger.warning(
-                        "Deadlock detected for load more %s, retrying (%s/%s)",
-                        search_id,
-                        attempt + 1,
-                        max_attempts,
-                    )
-                    await asyncio.sleep(0.2 * (attempt + 1))
-                    continue
+            except Exception:
                 raise
 
         # ========== FINISH STREAMING ==========
@@ -643,17 +628,26 @@ async def load_more_worker(
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         if assets_to_download:
-            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks for load_more (1 asset/task)...")
-            for asset_info in assets_to_download:
+            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            enqueue_payloads = [
+                {
+                    "asset_id": str(asset_info["id"]),
+                    "platform": asset_info["platform"],
+                    "external_id": asset_info["external_id"],
+                    "attempt_no": int(asset_info.get("attempt_no", 0) or 0),
+                }
+                for asset_info in assets_to_download
+            ]
+            logger.debug(
+                "Dispatching %s media download tasks for load_more in batches of %s...",
+                len(enqueue_payloads),
+                batch_size,
+            )
+            for idx in range(0, len(enqueue_payloads), batch_size):
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                     relative_uri="/v1/tasks/media/download",
-                    payload={
-                        "asset_id": str(asset_info["id"]),
-                        "platform": asset_info["platform"],
-                        "external_id": asset_info["external_id"],
-                        "attempt_no": 0,
-                    },
+                    payload=enqueue_payloads[idx: idx + batch_size],
                 )
         
     except Exception as e:
