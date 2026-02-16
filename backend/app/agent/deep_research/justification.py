@@ -21,7 +21,7 @@ You are evaluating a video against a research question.
 
 Provide:
 1. A relevance SCORE from 1-10
-2. A detailed ANSWER (200-300 words) explaining how this video relates to the question
+2. A concise ANSWER (80-120 words) explaining how this video relates to the question
 
 Scoring guidelines (BE STRICT):
 - 1-3: Tangentially related, weak signal, little to learn from
@@ -34,7 +34,7 @@ IMPORTANT: Be strict. Most videos should score 3-6.
 Reserve 7+ for genuinely standout content. A score of 8+ means
 "this specific video teaches something valuable about the question."
 
-Your answer should detail:
+Your answer should briefly cover:
 - How the video relates to the research question
 - What specific strategies, techniques, or approaches it demonstrates
 - What makes it stand out (or not)
@@ -60,7 +60,7 @@ async def answer_and_score(
         config: Runnable configuration.
 
     Returns:
-        AnswerAndScoreOut with score (1-10) and answer (200-300 words).
+        AnswerAndScoreOut with score (1-10) and answer (80-120 words).
     """
     model = init_chat_model(settings.DEEP_RESEARCH_MODEL, temperature=0.2)
 

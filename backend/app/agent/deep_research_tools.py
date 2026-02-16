@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
 import httpx
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
+from app.agent.model_factory import init_chat_model
 from app.agent.tools import _get_api_base_url, _get_headers
 from app.core import get_settings
 from app.core.logging import logger
@@ -113,6 +115,41 @@ def _safe_int(val) -> int:
         return 0
 
 
+@tool
+async def web_search(
+    query: str,
+    config: RunnableConfig,
+) -> dict:
+    """Run grounded web search and return concise results for search planning."""
+    q = (query or "").strip()
+    if not q:
+        return {"error": "query is required"}
+
+    today_utc = datetime.now(timezone.utc).date().isoformat()
+    model = init_chat_model("google/gemini-3-flash-preview", temperature=0.2)
+    grounded_model = model.bind_tools([{"google_search": {}}])
+
+    response = await grounded_model.ainvoke(
+        [
+            SystemMessage(
+                content=(
+                    f"Current UTC date: {today_utc}. "
+                    "Use google_search grounding to gather current web signals. "
+                    "Return concise findings relevant to the query."
+                )
+            ),
+            HumanMessage(content=q),
+        ]
+    )
+
+    return {
+        "query": q,
+        "content": getattr(response, "content", response),
+        "tool_calls": getattr(response, "tool_calls", None) or [],
+        "metadata": getattr(response, "additional_kwargs", {}) or {},
+    }
+
+
 
 
 
@@ -191,7 +228,7 @@ async def deep_search_batch_wait(
 
     Writes two versions of each search result:
       - /searches_raw/search_N.json  (full data with UUIDs — agent-blocked)
-      - /searches/search_N.json      (slim, no UUIDs, with caption + hashtags — agent-readable)
+      - /searches/search_N.json      (slim, no UUIDs, already ranked by views desc)
     """
     headers = await _get_headers(config)
     if not headers.get("Authorization"):
@@ -220,6 +257,21 @@ async def deep_search_batch_wait(
         seen.add(nq)
         unique_queries.append(nq)
 
+    if len(unique_queries) < 1:
+        return {
+            "error": "At least 1 query is required.",
+            "status": "invalid_query_count",
+            "query_count": len(unique_queries),
+            "allowed_range": {"min": 1, "max": 7},
+        }
+    if len(unique_queries) > 7:
+        return {
+            "error": "Too many queries. Maximum allowed is 7.",
+            "status": "invalid_query_count",
+            "query_count": len(unique_queries),
+            "allowed_range": {"min": 1, "max": 7},
+        }
+
     # Pre-assign search numbers (sequential, before parallel execution)
     start_num = get_next_search_number(progress)
     query_numbers: dict[str, int] = {}
@@ -239,11 +291,12 @@ async def deep_search_batch_wait(
             fetched_at = _now_iso()
             count = len(items)
 
-            # ── Build raw + slim item lists ──────────────────────────
+            # ── Build raw item list (full) + ranked slim list (lean) ─
             raw_items: list[dict] = []
-            slim_items: list[dict] = []
+            slim_with_views: list[dict] = []
             for idx, it in enumerate(items, start=1):
                 metrics = it.get("metrics") or {}
+                view_count = _safe_int(metrics.get("view_count"))
                 raw_items.append({
                     "video_id": idx,
                     "media_asset_id": it.get("media_asset_id"),
@@ -255,15 +308,24 @@ async def deep_search_batch_wait(
                     "caption": it.get("primary_text") or it.get("caption") or "",
                     "hashtags": it.get("hashtags") or [],
                 })
-                slim_items.append({
+                slim_with_views.append({
                     "id": idx,
                     "title": it.get("title") or "",
-                    "platform": it.get("platform") or "",
-                    "creator": it.get("creator_handle") or "",
-                    "views": _safe_int(metrics.get("view_count")),
-                    "likes": _safe_int(metrics.get("like_count")),
                     "caption": it.get("primary_text") or it.get("caption") or "",
                     "hashtags": it.get("hashtags") or [],
+                    "_views": view_count,  # internal ranking key only; removed before writing
+                })
+
+            # Deterministic ranking at tool level: highest views first.
+            slim_with_views.sort(key=lambda x: x.get("_views", 0), reverse=True)
+            slim_items: list[dict] = []
+            for rank, row in enumerate(slim_with_views, start=1):
+                slim_items.append({
+                    "id": row["id"],
+                    "title": row["title"],
+                    "caption": row["caption"],
+                    "hashtags": row["hashtags"],
+                    "rank": rank,
                 })
 
             # ── Write raw file (full, with UUIDs — agent-blocked) ───
@@ -275,12 +337,13 @@ async def deep_search_batch_wait(
                 "items": raw_items,
             })
 
-            # ── Write slim file (no UUIDs — agent-readable) ─────────
+            # ── Write slim ranked file (no UUIDs, no metrics) ───────
             slim_path = f"searches/search_{search_number}.json"
             await _write_json_to_gcs(chat_id, slim_path, {
                 "search_number": search_number,
                 "query": nq,
                 "item_count": len(slim_items),
+                "ranking": "views_desc",
                 "items": slim_items,
             })
             files_written.append(f"/searches/search_{search_number}.json")
