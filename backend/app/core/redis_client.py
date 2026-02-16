@@ -43,11 +43,12 @@ def get_global_redis() -> redis.Redis:
 
         pool = BlockingConnectionPool.from_url(
             settings.REDIS_URL,
-            max_connections=settings.REDIS_MAX_CONNECTIONS,
-            timeout=10.0,
+            max_connections=settings.REDIS_MAIN_MAX_CONNECTIONS,
+            timeout=settings.REDIS_MAIN_POOL_TIMEOUT_S,
             decode_responses=True,
             health_check_interval=30,
             socket_keepalive=True,
+            client_name="conthunt-main-fallback",
         )
         _global_redis = redis.Redis(connection_pool=pool)
     return _global_redis

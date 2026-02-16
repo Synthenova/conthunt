@@ -108,6 +108,16 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
     REDIS_MAX_CONNECTIONS: int = 15  # 15 × 2 instances = 30 (free tier limit)
+    # Per-role Redis pool budgets
+    REDIS_MAIN_MAX_CONNECTIONS: int = 5
+    REDIS_STREAM_MAX_CONNECTIONS: int = 2
+    REDIS_LIMITER_MAX_CONNECTIONS: int = 2
+    REDIS_MAIN_POOL_TIMEOUT_S: float = 10.0
+    REDIS_STREAM_POOL_TIMEOUT_S: float = 10.0
+    REDIS_LIMITER_POOL_TIMEOUT_S: float = 5.0
+    # Capacity guardrail logs
+    REDIS_MAX_CLIENTS_BUDGET: int = 25
+    APP_MAX_INSTANCES: int = 2
 
     # Redis Streams (SSE replay buffer)
     # These are for "live-ish" updates only; DB remains the durable source of truth.
@@ -116,6 +126,7 @@ class Settings(BaseSettings):
     REDIS_STREAM_MAXLEN_CHAT: int = 10_000
     REDIS_STREAM_MAXLEN_SEARCH: int = 5_000
     REDIS_STREAM_MAXLEN_SEARCH_MORE: int = 5_000
+    CHAT_STREAM_WRITER_HEARTBEAT_S: float = 10.0
 
     # Openrouter
     OPENAI_BASE_URL: str = "https://openrouter.ai/api/v1"
@@ -134,6 +145,11 @@ class Settings(BaseSettings):
     LLM_LIMIT_TIMEOUT_TOKENS_INTERACTIVE_S: float = 5.0
     LLM_LIMIT_TIMEOUT_START_BACKGROUND_S: float = 30.0
     LLM_LIMIT_TIMEOUT_TOKENS_BACKGROUND_S: float = 30.0
+    # Limiter infrastructure guardrails (Redis outages/saturation).
+    LLM_LIMITER_INFRA_COOLDOWN_S: float = 2.0
+    LLM_LIMITER_INFRA_ERROR_BURST_THRESHOLD: int = 5
+    LLM_LIMITER_INFRA_LOG_SAMPLE_EVERY: int = 50
+    LLM_LIMITER_INFRA_LOG_INTERVAL_S: float = 30.0
 
     # Token estimation (fallback when callers don't provide max tokens).
     LLM_EST_COMPLETION_TOKENS_DEFAULT: int = 1024

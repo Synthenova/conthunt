@@ -287,18 +287,33 @@ async def stream_generator_to_redis(
     r = redis_client
     stream_key = f"chat:{chat_id}:stream"
     stream_maxlen = settings.REDIS_STREAM_MAXLEN_CHAT
+    xadd_retry_count = 0
+    heartbeat_task: asyncio.Task | None = None
+    stop_heartbeat = asyncio.Event()
 
     async def _xadd(payload: dict) -> None:
+        nonlocal xadd_retry_count
         data = {"data": json.dumps(payload, default=str)}
         try:
             await r.xadd(stream_key, data, maxlen=stream_maxlen, approximate=True)
         except RedisConnectionError:
-            # Server/proxy dropped the socket. Disconnect pool and retry once.
-            try:
-                await r.connection_pool.disconnect()
-            except Exception:
-                pass
+            # Retry once without tearing down the whole pool.
+            xadd_retry_count += 1
             await r.xadd(stream_key, data, maxlen=stream_maxlen, approximate=True)
+
+    async def _heartbeat_loop() -> None:
+        interval_s = max(1.0, float(getattr(settings, "CHAT_STREAM_WRITER_HEARTBEAT_S", 10.0)))
+        while not stop_heartbeat.is_set():
+            try:
+                await asyncio.wait_for(stop_heartbeat.wait(), timeout=interval_s)
+                break
+            except asyncio.TimeoutError:
+                pass
+            try:
+                await _xadd({"type": "ping", "source": "writer"})
+            except Exception:
+                # Best-effort heartbeat only.
+                pass
 
     with bind_telemetry(telemetry_ctx):
         emit_action_started(telemetry_ctx, metadata={"chat_id": chat_id})
@@ -310,6 +325,7 @@ async def stream_generator_to_redis(
             telemetry_ctx.subject_id,
         )
         try:
+            heartbeat_task = asyncio.create_task(_heartbeat_loop())
             deep_research_enabled = bool((filters or {}).get("deep_research_enabled"))
             graph_to_use = graph
             if deep_research_enabled:
@@ -578,6 +594,7 @@ async def stream_generator_to_redis(
                     "output_chars": output_chars,
                     "output_chunks": output_chunks,
                     "deep_research_enabled": deep_research_enabled,
+                    "redis_xadd_retries": xadd_retry_count,
                 },
             )
             logger.info(
@@ -618,6 +635,12 @@ async def stream_generator_to_redis(
 
         finally:
             try:
+                stop_heartbeat.set()
+                if heartbeat_task:
+                    try:
+                        await heartbeat_task
+                    except Exception:
+                        pass
                 flush_langfuse(reason="chat_stream_finally")
             except Exception:
                 pass
@@ -625,10 +648,6 @@ async def stream_generator_to_redis(
             try:
                 await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
             except RedisConnectionError:
-                try:
-                    await r.connection_pool.disconnect()
-                except Exception:
-                    pass
                 try:
                     await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
                 except Exception:
@@ -1096,15 +1115,15 @@ async def stream_chat(
     hub = getattr(request.app.state, "stream_hub", None)
 
     async def event_generator():
+        xread_retry_count = 0
+
         async def _safe_xread(streams: dict[str, str], *, count: int, block: int):
+            nonlocal xread_retry_count
             try:
                 return await redis_client.xread(streams, count=count, block=block)
             except RedisConnectionError as exc:
                 logger.warning("Redis xread failed for chat stream %s: %s", chat_id, exc)
-                try:
-                    await redis_client.connection_pool.disconnect()
-                except Exception:
-                    pass
+                xread_retry_count += 1
                 try:
                     return await redis_client.xread(streams, count=count, block=block)
                 except RedisConnectionError as retry_exc:
@@ -1220,6 +1239,8 @@ async def stream_chat(
             pass
         finally:
             await hub.unsubscribe(stream_key, queue)
+            if xread_retry_count:
+                logger.info("chat stream %s xread_retries=%s", chat_id, xread_retry_count)
 
     # Best-effort anti-buffer headers for common proxies/CDNs.
     # (e.g. nginx respects X-Accel-Buffering; Cache-Control: no-transform helps prevent

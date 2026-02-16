@@ -389,6 +389,16 @@ export function useSendMessage() {
         let receivedChunks = 0;
         let streamSettled = false;
         let streamStartedAt = 0;
+        let lastEventId: string | null = null;
+        const INACTIVITY_TIMEOUT_MS = 25_000;
+        let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const clearInactivityTimer = () => {
+            if (inactivityTimer) {
+                clearTimeout(inactivityTimer);
+                inactivityTimer = null;
+            }
+        };
 
         try {
             const payload: any = {
@@ -438,201 +448,260 @@ export function useSendMessage() {
             trackChatStreamStarted(streamContext);
             streamStartedAt = performance.now();
 
-            // 2. Stream the response.
-            const streamPromise = fetchEventSource(`${BACKEND_URL}/v1/chats/${targetChatId}/stream`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    ...toTelemetryHeaders(streamContext),
-                },
-                signal: controller.signal,
-                onmessage(msg) {
-                    if (!msg.data) return;
+            // 2. Stream the response with explicit reconnect + Last-Event-ID replay.
+            const streamPromise = (async () => {
+                while (!streamSettled && !controller.signal.aborted) {
+                    let inactivityTimedOut = false;
+                    const attemptController = new AbortController();
+
+                    const onOuterAbort = () => {
+                        if (!attemptController.signal.aborted) {
+                            attemptController.abort();
+                        }
+                    };
+                    controller.signal.addEventListener('abort', onOuterAbort);
+
+                    const restartOnInactivity = () => {
+                        clearInactivityTimer();
+                        inactivityTimer = setTimeout(() => {
+                            if (!streamSettled && !attemptController.signal.aborted) {
+                                inactivityTimedOut = true;
+                                attemptController.abort();
+                            }
+                        }, INACTIVITY_TIMEOUT_MS);
+                    };
+
                     try {
-                        const data = JSON.parse(msg.data);
+                        const streamHeaders: Record<string, string> = {
+                            'Authorization': `Bearer ${token}`,
+                            ...toTelemetryHeaders(streamContext),
+                        };
+                        if (lastEventId) {
+                            streamHeaders['Last-Event-ID'] = lastEventId;
+                        }
 
-                        switch (data.type) {
-                            case 'user_message_id':
-                                // Update user message ID from backend
-                                setUserMessageId(data.id);
-                                break;
-                            case 'content_delta':
-                                // Append streaming content
-                                let textContent = '';
-                                if (Array.isArray(data.content)) {
-                                    textContent = data.content
-                                        .filter((c: any) => c.type === 'text')
-                                        .map((c: any) => c.text || '')
-                                        .join('');
-                                } else if (typeof data.content === 'string') {
-                                    textContent = data.content;
+                        await fetchEventSource(`${BACKEND_URL}/v1/chats/${targetChatId}/stream`, {
+                            headers: streamHeaders,
+                            signal: attemptController.signal,
+                            openWhenHidden: true,
+                            onopen() {
+                                inactivityTimedOut = false;
+                                restartOnInactivity();
+                            },
+                            onmessage(msg) {
+                                if (msg.id) {
+                                    lastEventId = msg.id;
                                 }
+                                if (!msg.data) return;
+                                restartOnInactivity();
+                                try {
+                                    const data = JSON.parse(msg.data);
 
-                                if (textContent) {
-                                    receivedChars += textContent.length;
-                                    receivedChunks += 1;
-                                    appendDelta(textContent, data.id);
-                                }
-                                break;
-                            case 'tool_start':
-                                // Add to streaming tools
-                                useChatStore.setState(state => ({
-                                    streamingTools: [...state.streamingTools, {
-                                        name: data.tool,
-                                        runId: data.run_id,
-                                        input: data.input,
-                                        hasResult: false,
-                                        isStreaming: true
-                                    }]
-                                }));
-                                break;
-                            case 'tool_end':
-                                // Update matching tool in streaming tools with result
-                                useChatStore.setState(state => {
-                                    const tools = [...state.streamingTools];
-                                    // Prefer run_id match (stable), fallback to last tool with matching name.
-                                    let realIndex = -1;
-                                    if (data.run_id) {
-                                        realIndex = tools.findIndex(t => t.runId === data.run_id);
-                                    }
-                                    if (realIndex === -1) {
-                                        const reversedTools = [...tools].reverse();
-                                        const index = reversedTools.findIndex(t => t.name === data.tool && !t.hasResult);
-                                        if (index !== -1) {
-                                            realIndex = tools.length - 1 - index;
-                                        }
-                                    }
-
-                                    if (realIndex !== -1) {
-                                        tools[realIndex] = {
-                                            ...tools[realIndex],
-                                            hasResult: true,
-                                            result: typeof data.output === 'string' ? data.output : JSON.stringify(data.output),
-                                            isStreaming: false
-                                        };
-                                    }
-                                    return { streamingTools: tools };
-                                });
-
-                                // Extract search IDs from search tool output
-                                if (data.tool === 'search') {
-                                    let output = data.output;
-                                    if (typeof output === 'string') {
-                                        try {
-                                            output = JSON.parse(output);
-                                        } catch (e) {
-                                            console.error('Failed to parse tool output string', e);
-                                        }
-                                    }
-
-                                    const newTags: Array<{ id: string; label?: string }> = [];
-
-                                    // Handle new structure (generated_queries with metadata)
-                                    if (output?.generated_queries && Array.isArray(output.generated_queries)) {
-                                        output.generated_queries.forEach((q: any) => {
-                                            if (q.search_id) {
-                                                addCanvasSearchId(q.search_id, q.keyword);
-                                                newTags.push({ id: q.search_id, label: q.keyword });
+                                    switch (data.type) {
+                                        case 'user_message_id':
+                                            // Update user message ID from backend
+                                            setUserMessageId(data.id);
+                                            break;
+                                        case 'content_delta':
+                                            // Append streaming content
+                                            let textContent = '';
+                                            if (Array.isArray(data.content)) {
+                                                textContent = data.content
+                                                    .filter((c: any) => c.type === 'text')
+                                                    .map((c: any) => c.text || '')
+                                                    .join('');
+                                            } else if (typeof data.content === 'string') {
+                                                textContent = data.content;
                                             }
-                                        });
-                                    }
-                                    // Handle legacy structure (search_ids as objects)
-                                    // Note: New structure has search_ids as strings, which we skip here as we need keywords
-                                    else if (output?.search_ids && Array.isArray(output.search_ids)) {
-                                        // Only process if it looks like the old object format
-                                        if (output.search_ids.length > 0 && typeof output.search_ids[0] === 'object') {
-                                            output.search_ids.forEach((s: any) => {
-                                                if (s.search_id) {
-                                                    addCanvasSearchId(s.search_id, s.keyword);
-                                                    newTags.push({ id: s.search_id, label: s.keyword });
-                                                }
-                                            });
-                                        }
-                                    }
 
-                                    if (newTags.length > 0) {
-                                        // Optimistically update chat-tags cache so tabs appear during stream
-                                        const key = ['chat-tags', targetChatId];
-                                        const prev = queryClient.getQueryData<any[]>(key) || [];
-                                        if (newTags.length) {
-                                            const dedup = new Map(prev.map(t => [t.id, t]));
-                                            newTags.forEach(t => {
-                                                if (!dedup.has(t.id)) {
-                                                    dedup.set(t.id, {
-                                                        type: 'search',
-                                                        id: t.id,
-                                                        label: t.label || t.id,
-                                                        sort_order: (prev.length ? (prev[0].sort_order ?? 0) - 1 : 0),
-                                                        source: 'agent',
+                                            if (textContent) {
+                                                receivedChars += textContent.length;
+                                                receivedChunks += 1;
+                                                appendDelta(textContent, data.id);
+                                            }
+                                            break;
+                                        case 'tool_start':
+                                            // Add to streaming tools
+                                            useChatStore.setState(state => ({
+                                                streamingTools: [...state.streamingTools, {
+                                                    name: data.tool,
+                                                    runId: data.run_id,
+                                                    input: data.input,
+                                                    hasResult: false,
+                                                    isStreaming: true
+                                                }]
+                                            }));
+                                            break;
+                                        case 'tool_end':
+                                            // Update matching tool in streaming tools with result
+                                            useChatStore.setState(state => {
+                                                const tools = [...state.streamingTools];
+                                                // Prefer run_id match (stable), fallback to last tool with matching name.
+                                                let realIndex = -1;
+                                                if (data.run_id) {
+                                                    realIndex = tools.findIndex(t => t.runId === data.run_id);
+                                                }
+                                                if (realIndex === -1) {
+                                                    const reversedTools = [...tools].reverse();
+                                                    const index = reversedTools.findIndex(t => t.name === data.tool && !t.hasResult);
+                                                    if (index !== -1) {
+                                                        realIndex = tools.length - 1 - index;
+                                                    }
+                                                }
+
+                                                if (realIndex !== -1) {
+                                                    tools[realIndex] = {
+                                                        ...tools[realIndex],
+                                                        hasResult: true,
+                                                        result: typeof data.output === 'string' ? data.output : JSON.stringify(data.output),
+                                                        isStreaming: false
+                                                    };
+                                                }
+                                                return { streamingTools: tools };
+                                            });
+
+                                            // Extract search IDs from search tool output
+                                            if (data.tool === 'search') {
+                                                let output = data.output;
+                                                if (typeof output === 'string') {
+                                                    try {
+                                                        output = JSON.parse(output);
+                                                    } catch (e) {
+                                                        console.error('Failed to parse tool output string', e);
+                                                    }
+                                                }
+
+                                                const newTags: Array<{ id: string; label?: string }> = [];
+
+                                                // Handle new structure (generated_queries with metadata)
+                                                if (output?.generated_queries && Array.isArray(output.generated_queries)) {
+                                                    output.generated_queries.forEach((q: any) => {
+                                                        if (q.search_id) {
+                                                            addCanvasSearchId(q.search_id, q.keyword);
+                                                            newTags.push({ id: q.search_id, label: q.keyword });
+                                                        }
                                                     });
                                                 }
-                                            });
-                                            const next = Array.from(dedup.values()).sort((a, b) => {
-                                                const ao = a.sort_order ?? 0;
-                                                const bo = b.sort_order ?? 0;
-                                                return ao - bo;
-                                            });
-                                            queryClient.setQueryData(key, next);
-                                        }
-                                        queryClient.invalidateQueries({ queryKey: key });
+                                                // Handle legacy structure (search_ids as objects)
+                                                // Note: New structure has search_ids as strings, which we skip here as we need keywords
+                                                else if (output?.search_ids && Array.isArray(output.search_ids)) {
+                                                    // Only process if it looks like the old object format
+                                                    if (output.search_ids.length > 0 && typeof output.search_ids[0] === 'object') {
+                                                        output.search_ids.forEach((s: any) => {
+                                                            if (s.search_id) {
+                                                                addCanvasSearchId(s.search_id, s.keyword);
+                                                                newTags.push({ id: s.search_id, label: s.keyword });
+                                                            }
+                                                        });
+                                                    }
+                                                }
+
+                                                if (newTags.length > 0) {
+                                                    // Optimistically update chat-tags cache so tabs appear during stream
+                                                    const key = ['chat-tags', targetChatId];
+                                                    const prev = queryClient.getQueryData<any[]>(key) || [];
+                                                    if (newTags.length) {
+                                                        const dedup = new Map(prev.map(t => [t.id, t]));
+                                                        newTags.forEach(t => {
+                                                            if (!dedup.has(t.id)) {
+                                                                dedup.set(t.id, {
+                                                                    type: 'search',
+                                                                    id: t.id,
+                                                                    label: t.label || t.id,
+                                                                    sort_order: (prev.length ? (prev[0].sort_order ?? 0) - 1 : 0),
+                                                                    source: 'agent',
+                                                                });
+                                                            }
+                                                        });
+                                                        const next = Array.from(dedup.values()).sort((a, b) => {
+                                                            const ao = a.sort_order ?? 0;
+                                                            const bo = b.sort_order ?? 0;
+                                                            return ao - bo;
+                                                        });
+                                                        queryClient.setQueryData(key, next);
+                                                    }
+                                                    queryClient.invalidateQueries({ queryKey: key });
+                                                }
+                                            }
+                                            break;
+                                        case 'chosen_videos':
+                                            if (Array.isArray(data.ids)) {
+                                                useChatStore.getState().setChosenVideoIds(data.ids);
+                                            }
+                                            if (Array.isArray(data.items)) {
+                                                const transformed = transformSearchResults(data.items);
+                                                useChatStore.getState().appendDeepResearchResults(transformed);
+                                            }
+                                            break;
+                                        case 'done':
+                                            finalizeMessage();
+                                            useChatStore.setState({ streamingTools: [] }); // Clear tools on done
+                                            if (!streamSettled) {
+                                                streamSettled = true;
+                                                trackChatStreamSucceeded(streamContext, {
+                                                    duration_ms: performance.now() - streamStartedAt,
+                                                    output_chars: receivedChars,
+                                                    received_chunks: receivedChunks,
+                                                });
+                                            }
+                                            clearInactivityTimer();
+                                            if (!attemptController.signal.aborted) attemptController.abort();
+                                            break;
+                                        case 'error':
+                                            console.error('Stream error:', data.error);
+                                            resetStreaming();
+                                            useChatStore.setState({ streamingTools: [] });
+                                            if (!streamSettled) {
+                                                streamSettled = true;
+                                                trackChatStreamFailed(streamContext, {
+                                                    duration_ms: performance.now() - streamStartedAt,
+                                                    error_kind: 'server_stream_error',
+                                                    received_chars: receivedChars,
+                                                    received_chunks: receivedChunks,
+                                                });
+                                            }
+                                            clearInactivityTimer();
+                                            if (!attemptController.signal.aborted) attemptController.abort();
+                                            break;
+                                        case 'ping':
+                                            // Keepalive only; timer already reset above.
+                                            break;
                                     }
+                                } catch (e) {
+                                    console.error('Error parsing SSE message', e);
                                 }
-                                break;
-                            case 'chosen_videos':
-                                if (Array.isArray(data.ids)) {
-                                    useChatStore.getState().setChosenVideoIds(data.ids);
+                            },
+                            onclose() {
+                                clearInactivityTimer();
+                                if (!streamSettled && !attemptController.signal.aborted) {
+                                    throw new Error('chat stream closed before terminal event');
                                 }
-                                if (Array.isArray(data.items)) {
-                                    const transformed = transformSearchResults(data.items);
-                                    useChatStore.getState().appendDeepResearchResults(transformed);
+                            },
+                            onerror(err) {
+                                clearInactivityTimer();
+                                if (!attemptController.signal.aborted) {
+                                    console.error('SSE Error', err);
                                 }
-                                break;
-                            case 'done':
-                                finalizeMessage();
-                                useChatStore.setState({ streamingTools: [] }); // Clear tools on done
-                                if (!streamSettled) {
-                                    streamSettled = true;
-                                    trackChatStreamSucceeded(streamContext, {
-                                        duration_ms: performance.now() - streamStartedAt,
-                                        output_chars: receivedChars,
-                                        received_chunks: receivedChunks,
-                                    });
-                                }
-                                break;
-                            case 'error':
-                                console.error('Stream error:', data.error);
-                                resetStreaming();
-                                useChatStore.setState({ streamingTools: [] });
-                                if (!streamSettled) {
-                                    streamSettled = true;
-                                    trackChatStreamFailed(streamContext, {
-                                        duration_ms: performance.now() - streamStartedAt,
-                                        error_kind: 'server_stream_error',
-                                        received_chars: receivedChars,
-                                        received_chunks: receivedChunks,
-                                    });
-                                }
-                                break;
+                                throw err;
+                            },
+                        });
+                    } catch (err: any) {
+                        if (streamSettled || controller.signal.aborted) {
+                            break;
                         }
-                    } catch (e) {
-                        console.error('Error parsing SSE message', e);
-                    }
-                },
-                onerror(err) {
-                    if (!controller.signal.aborted) {
-                        console.error('SSE Error', err);
-                        resetStreaming();
-                        if (!streamSettled) {
-                            streamSettled = true;
-                            trackChatStreamFailed(streamContext, {
-                                duration_ms: performance.now() - streamStartedAt,
-                                error_kind: 'sse_error',
-                                received_chars: receivedChars,
-                                received_chunks: receivedChunks,
-                            });
+                        if (err?.name === 'AbortError' && inactivityTimedOut) {
+                            // Silent reconnect with Last-Event-ID replay.
+                            await new Promise((resolve) => setTimeout(resolve, 200));
+                            continue;
                         }
+                        // Transient close/network error; reconnect with short backoff.
+                        await new Promise((resolve) => setTimeout(resolve, 1000));
+                    } finally {
+                        clearInactivityTimer();
+                        controller.signal.removeEventListener('abort', onOuterAbort);
                     }
-                },
-            });
+                }
+            })();
             if (!options?.detach) {
                 await streamPromise;
             }
@@ -652,6 +721,8 @@ export function useSendMessage() {
                     );
                 }
             }
+        } finally {
+            clearInactivityTimer();
         }
     }, [activeChatId, addMessage, startStreaming, appendDelta, setUserMessageId, finalizeMessage, resetStreaming, addCanvasSearchId, queryClient]);
 
