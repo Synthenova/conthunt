@@ -184,11 +184,15 @@ def _get_redis_store():
 
     settings = get_settings()
     # Keep limiter sockets bounded and below the app's main redis pool budget.
+    # throttled expects redis options via UPPERCASE keys.
     limiter_max_connections = max(2, min(10, int(settings.REDIS_MAX_CONNECTIONS // 2 or 2)))
     options = {
-        "max_connections": limiter_max_connections,
-        "socket_keepalive": True,
-        "health_check_interval": 30,
+        "REUSE_CONNECTION": True,
+        "CONNECTION_POOL_KWARGS": {
+            "max_connections": limiter_max_connections,
+            "socket_keepalive": True,
+            "health_check_interval": 30,
+        },
     }
     _REDIS_STORE = store.RedisStore(server=settings.REDIS_URL, options=options)
     return _REDIS_STORE
