@@ -376,19 +376,6 @@ async def search_worker(
                 }
                 for asset_info in assets_to_download
             ]
-            for payload in enqueue_payloads:
-                capture_event(
-                    distinct_id="system:media_download",
-                    event="media_download_dispatched",
-                    properties={
-                        "asset_id": payload["asset_id"],
-                        "platform": payload["platform"],
-                        "priority": False,
-                        "attempt_no": payload["attempt_no"],
-                        "dispatched_at": payload["dispatched_at"],
-                        "source": "search_worker",
-                    },
-                )
             logger.debug(
                 "Dispatching %s media download tasks to Cloud Tasks in batches of %s...",
                 len(enqueue_payloads),
@@ -655,19 +642,6 @@ async def load_more_worker(
                 }
                 for asset_info in assets_to_download
             ]
-            for payload in enqueue_payloads:
-                capture_event(
-                    distinct_id="system:media_download",
-                    event="media_download_dispatched",
-                    properties={
-                        "asset_id": payload["asset_id"],
-                        "platform": payload["platform"],
-                        "priority": False,
-                        "attempt_no": payload["attempt_no"],
-                        "dispatched_at": payload["dispatched_at"],
-                        "source": "load_more_worker",
-                    },
-                )
             logger.debug(
                 "Dispatching %s media download tasks for load_more in batches of %s...",
                 len(enqueue_payloads),
