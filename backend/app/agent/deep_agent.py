@@ -37,13 +37,24 @@ Deep research workflow:
    - The user's research question
    - The search names from `searcher`
    - Analysis target: up to 100 videos this turn
-3. After analyzer returns:
-   - Read `/analyzer_findings.md` to confirm report exists.
-4. If analyzer already produced the final user-facing report in this turn, return exactly:
-   `__NO_UI_OUTPUT__`
+3. Analyzer is analysis-only. It must return handoff metadata for orchestrator:
+   - `slug`
+   - processed/failed counts
+   - score distribution
+   - a clear instruction to read all pages from `read_research_results`
+4. You must read the analysis file fully yourself:
+   - Call `read_research_results(slug=..., index_range=[start,end], sort_by="order")` in pages.
+   - Continue until full coverage of all items in the file.
+   - Do not write the final report until full read is complete.
+5. You produce the final user-facing report directly in your assistant response.
+6. You choose videos and call `report_chosen_videos(chosen, criteria_slug)` yourself.
+   - Choose strong refs ordered by score descending.
+   - At most 50 chosen.
+   - If duplicates/unresolved are returned, do at most one replacement attempt.
+7. After chosen submission, include a short completion note in your final response.
 
 Failure handling:
-- If analyzer fails to produce report files, provide a concise user-facing failure message and next action.
+- If analyzer fails to produce usable slug output, provide a concise user-facing failure message and next action.
 
 Todo usage:
 - Deep Agents has built-in todo tools. Do NOT write a plan file.
@@ -114,7 +125,7 @@ RULES:
 """
 
     analyzer_prompt = f"""You are the Analyzer subagent for ContHunt Deep Research.
-Your job is to deeply research video content and produce the final user-facing report.
+Your job is to run analysis and return a precise handoff for the orchestrator.
 
 You are NOT a simple recommender. You are a researcher. Your primary source is video analysis.
 Your context is ephemeral across turns. Files are memory.
@@ -122,49 +133,27 @@ Your context is ephemeral across turns. Files are memory.
 TOOLS:
 1. `research_videos(searches, question, slug, top_per_search=30)`:
    - Runs/loads analyses and writes full results to `/{{slug}}.json`.
-2. `read_research_results(slug, index_range, min_score, sort_by)`:
-   - Reads scored results from the slug file in pages.
-3. `report_chosen_videos(chosen, criteria_slug)`:
-   - Persist chosen videos for frontend rendering.
-
-REQUIRED FILE MEMORY:
-- Read relevant `chosen-vids-*.json` files at turn start to identify already-chosen refs.
-- Use those refs to avoid choosing duplicates where possible.
 
 WORKFLOW:
 1. Understand the research question from orchestrator.
 2. Run `research_videos` for the provided search names with a specific question.
    - Target up to 100 analyzed videos in this turn.
-3. Mandatory heavy read before reporting:
-   - Read the current `/{{slug}}.json` results fully using paged `read_research_results` calls.
-   - Continue paging until all analyzed items for this slug are read.
-   - Do NOT write final report before full read is done.
-4. Produce final user-facing report in `/analyzer_findings.md`.
-   - This report is the main deep-research content shown to user.
-   - Include concrete refs like [search name:VN], key patterns, and recommendations.
-5. Call `report_chosen_videos(chosen, criteria_slug)` directly with refs from this analysis.
-   - Choose as many strong videos as possible (high-volume output is preferred).
-   - Order chosen entries by score/rating descending (best first).
-   - Select at most 50 videos.
-   - Include only genuinely relevant/high-quality videos; do not pad with weak picks.
-   - If many strong videos exist, include a broad set up to your available strong pool.
-6. Return a short operational summary to orchestrator:
-   - report file path
-   - chosen tool result summary
-   - processed count, failed count
-   - duplicate count noticed from prior chosen history if applicable
-
-DUPLICATE/LOOP POLICY:
-- Try to exclude previously chosen refs on first pass.
-- If chosen tool returns duplicates/unresolved refs, provide at most one replacement set.
-- After one replacement attempt, finalize and do not loop.
+3. Return HANDOFF ONLY. Do not write final user report. Do not choose videos.
+4. Your handoff must include:
+   - `slug`
+   - `file` (e.g. `/slug.json`)
+   - `total_processed`
+   - `total_failed`
+   - `score_distribution`
+   - `search_errors`
+   - explicit instruction: orchestrator must fully read this slug via paged `read_research_results` before reporting.
 
 RULES:
 - Focus on breadth across provided searches.
 - Keep question-specific reasoning; avoid generic analysis.
 - NEVER reference UUIDs.
 - Do NOT read `/searches_raw/` or `/analysis/` directly.
-- Use built-in todo only at major milestones (analysis started, heavy-read complete, report/chosen complete).
+- Use built-in todo only at major milestones (analysis started, analysis complete).
 - Do NOT call todo for every small step.
 """
 
@@ -204,14 +193,14 @@ RULES:
             "description": "Deep video research: analyzes videos across searches, scores relevance, produces rich findings.",
             "system_prompt": analyzer_prompt,
             "model": model,
-            "tools": [research_videos, read_research_results, report_chosen_videos],
+            "tools": [research_videos],
         },
     ]
 
     return create_deep_agent(
         model=model,
         system_prompt=orchestrator_prompt,
-        tools=[],
+        tools=[read_research_results, report_chosen_videos],
         subagents=subagents,
         backend=backend,
         checkpointer=checkpointer,

@@ -171,9 +171,27 @@ async def report_chosen_videos(
                 "criteria_slug": criteria_slug,
                 "chosen": normalized,
                 "chosen_video_ids": chosen_video_ids,
-                "items": items,
+                "counts": {
+                    "chosen_count": len(chosen_video_ids),
+                    "unresolved_count": len(unresolved_refs),
+                },
             },
         )
+
+        # Tiny dedupe index for agent memory (cheap to read).
+        for entry in normalized:
+            if not entry.get("media_asset_id"):
+                continue
+            await gcs_store.append_jsonl(
+                str(chat_id),
+                "state/chosen_refs.jsonl",
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ref": entry.get("ref"),
+                    "criteria_slug": criteria_slug,
+                    "score": int(entry.get("score") or 0),
+                },
+            )
 
     return {
         "criteria_slug": criteria_slug,
