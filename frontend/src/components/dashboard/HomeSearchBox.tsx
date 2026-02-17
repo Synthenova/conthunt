@@ -13,6 +13,7 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { trackDeepSearchToggled } from "@/lib/telemetry/tracking";
 
 interface HomeSearchBoxProps {
     value?: string;
@@ -151,7 +152,11 @@ export function HomeSearchBox({
                                 <TooltipTrigger asChild>
                                     <button
                                         type="button"
-                                        onClick={() => onDeepResearchChange?.(!deepResearchEnabled)}
+                                        onClick={() => {
+                                            const nextEnabled = !deepResearchEnabled;
+                                            trackDeepSearchToggled(nextEnabled);
+                                            onDeepResearchChange?.(nextEnabled);
+                                        }}
                                         className={cn(
                                             "text-[10px] uppercase font-bold tracking-wider border rounded-full px-3 py-1.5 transition-colors",
                                             deepResearchEnabled

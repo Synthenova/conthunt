@@ -8,6 +8,7 @@ from firebase_admin import auth as fb_auth
 from app.core import settings, logger
 from app.db import get_db_connection
 from sqlalchemy import text
+from app.integrations.posthog_client import capture_event, capture_event_with_error
 
 router = APIRouter(prefix="/webhooks/whop", tags=["webhooks"])
 
@@ -141,10 +142,42 @@ async def handle_webhook(req: Request):
 
         if event_type == "membership.activated":
             await process_membership_role(whop_user_id, product_id, "activate")
+            # Track subscription activation/renewal
+            capture_event(
+                distinct_id=str(whop_user_id),
+                event="subscription_renewed",
+                properties={
+                    "product_id": product_id,
+                    "event_type": event_type,
+                    "success": True,
+                    "source": "webhook_whop",
+                },
+            )
         elif event_type == "membership.deactivated":
-             await process_membership_role(whop_user_id, product_id, "deactivate")
+            await process_membership_role(whop_user_id, product_id, "deactivate")
+            # Track subscription cancellation
+            capture_event(
+                distinct_id=str(whop_user_id),
+                event="subscription_cancelled",
+                properties={
+                    "product_id": product_id,
+                    "event_type": event_type,
+                    "success": True,
+                    "source": "webhook_whop",
+                },
+            )
 
     except Exception as e:
         logger.error(f"Whop Webhook Processing Error: {e}")
+        capture_event_with_error(
+            distinct_id="system:webhook_whop",
+            event="payment_webhook_failed",
+            exception=e,
+            properties={
+                "event_type": event_type,
+                "success": False,
+                "source": "webhook_whop",
+            },
+        )
          
     return {"ok": True}

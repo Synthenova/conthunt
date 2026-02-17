@@ -39,7 +39,7 @@ from app.services.cloud_tasks import cloud_tasks
 from app.services.task_executor import CloudTaskExecutor
 from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.llm.global_rate_limiter import LlmRateLimited
-from app.integrations.posthog_client import capture_event
+from app.integrations.posthog_client import capture_event, capture_event_with_error, categorize_error
 
 router = APIRouter()
 settings = get_settings()
@@ -428,7 +428,18 @@ async def _handle_twelvelabs_index_single(payload: TwelveLabsTaskPayload, reques
     logger.info("Received TwelveLabs indexing task for %s", payload.media_asset_id)
     executor = CloudTaskExecutor(request)
 
+    start_time = time.time()
+
     async def _on_fail(e: Exception):
+        capture_event_with_error(
+            distinct_id="system:twelvelabs",
+            event="twelvelabs_index_failed",
+            exception=e,
+            properties={
+                "media_asset_id": str(payload.media_asset_id),
+                "duration_ms": int((time.time() - start_time) * 1000),
+            },
+        )
         async with get_db_connection() as conn:
             await update_twelvelabs_asset_status(
                 conn,
@@ -474,11 +485,22 @@ async def _handle_twelvelabs_index_single(payload: TwelveLabsTaskPayload, reques
         await _on_fail(Exception("Video not ready after 3 min timeout"))
         return {"status": "failed", "error": "Video not ready after timeout"}
 
-    return await executor.run(
+    result = await executor.run(
         handler=process_twelvelabs_indexing_by_media_asset,
         on_fail=_on_fail,
         media_asset_id=payload.media_asset_id,
     )
+    # Track successful completion
+    if result.get("status") == "ok":
+        capture_event(
+            distinct_id="system:twelvelabs",
+            event="twelvelabs_index_completed",
+            properties={
+                "media_asset_id": str(payload.media_asset_id),
+                "duration_ms": int((time.time() - start_time) * 1000),
+            },
+        )
+    return result
 
 
 @router.post("/twelvelabs/index")
@@ -583,9 +605,10 @@ async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) ->
                 if item.dispatched_at:
                     end_to_end_ms = max(0.0, (finished_at - float(item.dispatched_at)) * 1000.0)
                 if item.priority:
-                    capture_event(
+                    capture_event_with_error(
                         distinct_id="system:media_download",
                         event="media_download_finished",
+                        exception=exc,
                         properties={
                             "asset_id": str(item.asset_id),
                             "platform": item.platform,
@@ -693,11 +716,23 @@ async def _handle_raw_archive_single(payload: RawArchiveTaskPayload, request: Re
     logger.debug("Received raw archive task for search %s platform %s", payload.search_id, payload.platform)
     executor = CloudTaskExecutor(request)
 
+    start_time = time.time()
+
     async def _on_fail(e: Exception):
         logger.error("Raw archive permanently failed for search %s", payload.search_id)
+        capture_event_with_error(
+            distinct_id="system:raw_archive",
+            event="raw_archive_failed",
+            exception=e,
+            properties={
+                "search_id": str(payload.search_id),
+                "platform": payload.platform,
+                "duration_ms": int((time.time() - start_time) * 1000),
+            },
+        )
 
     if payload.raw_json is not None:
-        return await executor.run(
+        result = await executor.run(
             handler=upload_raw_json_gz,
             on_fail=_on_fail,
             platform=payload.platform,
@@ -705,10 +740,22 @@ async def _handle_raw_archive_single(payload: RawArchiveTaskPayload, request: Re
             raw_json=payload.raw_json,
             key_override=payload.gcs_key,
         )
+        # Track successful completion
+        if result.get("status") == "ok":
+            capture_event(
+                distinct_id="system:raw_archive",
+                event="raw_archive_completed",
+                properties={
+                    "search_id": str(payload.search_id),
+                    "platform": payload.platform,
+                    "duration_ms": int((time.time() - start_time) * 1000),
+                },
+            )
+        return result
 
     if payload.raw_json_compressed:
         compressed_bytes = base64.b64decode(payload.raw_json_compressed)
-        return await executor.run(
+        result = await executor.run(
             handler=upload_raw_compressed,
             on_fail=_on_fail,
             platform=payload.platform,
@@ -716,6 +763,18 @@ async def _handle_raw_archive_single(payload: RawArchiveTaskPayload, request: Re
             compressed_data=compressed_bytes,
             key_override=payload.gcs_key,
         )
+        # Track successful completion
+        if result.get("status") == "ok":
+            capture_event(
+                distinct_id="system:raw_archive",
+                event="raw_archive_completed",
+                properties={
+                    "search_id": str(payload.search_id),
+                    "platform": payload.platform,
+                    "duration_ms": int((time.time() - start_time) * 1000),
+                },
+            )
+        return result
 
     raise ValueError("raw archive payload missing both raw_json and raw_json_compressed")
 
@@ -742,7 +801,18 @@ async def _handle_board_insights_single(payload: BoardInsightsTaskPayload, reque
     logger.info("Received board insights task for board %s", payload.board_id)
     executor = CloudTaskExecutor(request)
 
+    start_time = time.time()
+
     async def _on_fail(e: Exception):
+        capture_event_with_error(
+            distinct_id=str(payload.user_id),
+            event="board_insights_failed",
+            exception=e,
+            properties={
+                "board_id": str(payload.board_id),
+                "duration_ms": int((time.time() - start_time) * 1000),
+            },
+        )
         async with get_db_connection() as conn:
             await set_rls_user(conn, payload.user_id)
             row = await get_board_insights(conn, payload.board_id)
@@ -762,13 +832,24 @@ async def _handle_board_insights_single(payload: BoardInsightsTaskPayload, reque
             await update_board_insights_status(conn, insights_id=row["id"], status="processing")
             await conn.commit()
 
-    return await executor.run(
+    result = await executor.run(
         handler=execute_board_insights,
         on_fail=_on_fail,
         board_id=payload.board_id,
         user_id=payload.user_id,
         user_role=payload.user_role,
     )
+    # Track successful completion
+    if result.get("status") == "ok":
+        capture_event(
+            distinct_id=str(payload.user_id),
+            event="board_insights_completed",
+            properties={
+                "board_id": str(payload.board_id),
+                "duration_ms": int((time.time() - start_time) * 1000),
+            },
+        )
+    return result
 
 
 @router.post("/boards/insights")

@@ -4,6 +4,7 @@ from firebase_admin import auth
 
 from app.db import get_or_create_user
 from app.db.session import get_db_connection
+from app.integrations.posthog_client import capture_event
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -38,11 +39,31 @@ async def sync_user(authorization: str = Header(default="")):
         # Create user in DB if needed and set claims
         async with get_db_connection() as conn:
             user_uuid, role, claims_set = await get_or_create_user(
-                conn, 
+                conn,
                 firebase_uid,
                 sync_claims=True  # This sets db_user_id and role on Firebase
             )
             await conn.commit()
+
+        # Track signup for new users (role="free" means new user creation)
+        if role == "free" and claims_set:
+            capture_event(
+                distinct_id=str(user_uuid),
+                event="user_signup",
+                properties={
+                    "role": role,
+                    "provider": "firebase",
+                },
+            )
+        # Track user login (both new and existing users)
+        capture_event(
+            distinct_id=str(user_uuid),
+            event="user_login",
+            properties={
+                "role": role,
+                "provider": "firebase",
+            },
+        )
         
         return {
             "success": True,

@@ -109,8 +109,12 @@ export function capturePostHog(event: string, properties?: Record<string, unknow
   initPostHog();
 
   const currentDistinctId = loadDistinctId();
+  const eventProperties = { ...(properties || {}) };
+  if (typeof eventProperties.source === "undefined") {
+    eventProperties.source = "web_app";
+  }
   postCapture(event, {
     distinct_id: currentDistinctId || "anonymous",
-    ...(properties || {}),
+    ...eventProperties,
   });
 }

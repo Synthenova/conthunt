@@ -12,14 +12,27 @@ This project uses a feature-agnostic telemetry contract. Chat is the first fully
 - `operation`: Action verb, for example `send_message`, `stream_response`, `checkout`.
 - `subject_type`: Domain object type, for example `chat_message`, `search_job`, `subscription`.
 - `subject_id`: Domain object identifier.
+- `source`: Emission source or UI surface, for example `web_app`, `ui_billing_return`, `backend_search_worker`, `webhook_dodo`.
 
 ## Optional Fields
 
 - `outcome`: `started`, `succeeded`, `failed`.
 - `duration_ms`
+- `success` (boolean for terminal/operation completion events)
 - `error_kind`
+- `error_category`
+- `error_type`
 - `http_status`
 - `metadata`: Structured, redacted payload.
+
+## Domain Keys (standardized when relevant)
+
+- `search_id`
+- `board_id`
+- `product_id`
+- `platform`
+- `plan`
+- `role`
 
 ## Header Contract
 
@@ -48,6 +61,18 @@ Canonical lifecycle events:
 - `action_failed`
 
 Feature semantic events are optional aliases. Chat currently emits both canonical and semantic events.
+
+Terminal semantic events should include:
+
+- `success`
+- `duration_ms`
+- `source`
+
+Failure terminal semantic events should also include:
+
+- `error_category`
+- `error_type`
+- `http_status` (when available)
 
 ## Chat Mapping
 

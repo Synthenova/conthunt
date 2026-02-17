@@ -19,7 +19,7 @@ from app.core import get_settings, logger
 from app.core.redis_client import get_app_redis
 from app.core.telemetry import trace_span
 from app.db import get_db_connection, set_rls_user, queries
-from app.integrations.posthog_client import capture_event
+from app.integrations.posthog_client import capture_event, capture_event_with_error
 
 from app.platforms import (
     PLATFORM_ADAPTERS,
@@ -31,6 +31,10 @@ from app.storage import upload_raw_json_gz
 from app.media import download_assets_batch
 from app.schemas import SearchRequest, LoadMoreRequest
 from app.services.cloud_tasks import cloud_tasks
+from app.services.telemetry_payloads import (
+    build_platform_result_props,
+    build_search_completed_props,
+)
 from app.services.cdn_signer import bulk_sign_gcs_uris, should_sign_asset
 from app.realtime.stream_hub import stream_id_gt
 
@@ -182,6 +186,7 @@ async def search_worker(
             "queue_duration_ms": queue_duration_ms,
             "platform_count": len(inputs),
             "platforms": list(inputs.keys()),
+            "source": "backend_search_worker",
         }
     )
     
@@ -211,7 +216,18 @@ async def search_worker(
             for coro in asyncio.as_completed(tasks):
                 result: PlatformCallResult = await coro
                 collected_results.append(result)
-                
+
+                # Per-platform telemetry
+                capture_event(
+                    distinct_id=str(user_uuid),
+                    event="platform_search_completed",
+                    properties=build_platform_result_props(
+                        search_id=search_id,
+                        result=result,
+                        source="backend_search_worker",
+                    ),
+                )
+
                 # Transform and push to Redis
                 event_data = transform_result_to_stream_item(result)
                 await r.xadd(
@@ -220,7 +236,7 @@ async def search_worker(
                     maxlen=stream_maxlen,
                     approximate=True,
                 )
-        
+
         # ========== DB WORK (happens after frontend is done) ==========
         assets_to_download = []
         raw_uris_by_platform: dict[str, str] = {}
@@ -358,6 +374,24 @@ async def search_worker(
             approximate=True,
         )
         await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
+
+        total_results = sum(
+            len(result.parsed.items) if result.success and result.parsed else 0
+            for result in collected_results
+        )
+        capture_event(
+            distinct_id=str(user_uuid),
+            event="search_completed",
+            properties=build_search_completed_props(
+                search_id=search_id,
+                queue_duration_ms=queue_duration_ms,
+                start_time_s=start_time,
+                platform_count=len(inputs),
+                result_count_total=total_results,
+                success=True,
+                source="backend_search_worker",
+            ),
+        )
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         # GCS uploads handled via Cloud Tasks above
@@ -417,18 +451,20 @@ async def search_worker(
             await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
             
             # Telemetry: Search Failed
-            total_duration_ms = int((time.time() - start_time) * 1000)
-            capture_event(
+            capture_event_with_error(
                 distinct_id=str(user_uuid),
                 event="search_completed",
-                properties={
-                    "search_id": str(search_id),
-                    "duration_ms": total_duration_ms,
-                    "total_duration_ms": total_duration_ms + queue_duration_ms,
-                    "queue_duration_ms": queue_duration_ms,
-                    "success": False,
-                    "error": str(e),
-                }
+                exception=e,
+                properties=build_search_completed_props(
+                    search_id=search_id,
+                    queue_duration_ms=queue_duration_ms,
+                    start_time_s=start_time,
+                    platform_count=len(inputs),
+                    result_count_total=0,
+                    success=False,
+                    source="backend_search_worker",
+                    error=str(e),
+                ),
             )
         except Exception:
             pass
@@ -487,7 +523,18 @@ async def load_more_worker(
             for coro in asyncio.as_completed(tasks):
                 result: PlatformCallResult = await coro
                 collected_results.append(result)
-                
+
+                # Per-platform telemetry for load_more
+                capture_event(
+                    distinct_id=str(user_uuid),
+                    event="platform_load_more_completed",
+                    properties=build_platform_result_props(
+                        search_id=search_id,
+                        result=result,
+                        source="backend_load_more_worker",
+                    ),
+                )
+
                 # Transform and push to Redis
                 event_data = transform_result_to_stream_item(result)
                 await r.xadd(
@@ -496,7 +543,7 @@ async def load_more_worker(
                     maxlen=stream_maxlen,
                     approximate=True,
                 )
-        
+
         # ========== DB WORK ==========
         assets_to_download = []
         raw_uris_by_platform: dict[str, str] = {}

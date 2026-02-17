@@ -138,7 +138,14 @@ def emit_payment_webhook_received(
     return capture_event(
         distinct_id=_distinct_id(ctx, user_id),
         event="payment_webhook_received",
-        properties=redact({**_base_props(ctx), "event_type": event_type}),
+        properties=redact(
+            {
+                **_base_props(ctx),
+                "event_type": event_type,
+                "success": True,
+                "source": "webhook_dodo",
+            }
+        ),
     )
 
 
@@ -162,6 +169,8 @@ def emit_payment_confirmed(
             {
                 **_base_props(ctx),
                 "product_id": product_id,
+                "success": True,
+                "source": "webhook_dodo",
             }
         ),
     )

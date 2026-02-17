@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ClientFilteredResults } from "@/components/search/ClientFilteredResults";
 import { SelectionBar } from "@/components/boards/SelectionBar";
 import { Button } from "@/components/ui/button";
@@ -13,14 +13,22 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FlatMediaItem } from "@/lib/transformers";
 import { useSearchStream } from "@/hooks/useSearchStream";
+import { useUser } from "@/hooks/useUser";
+import {
+    trackSearchNoResults,
+    trackSearchResultsPageViewed,
+    trackUserFirstSearch,
+} from "@/lib/telemetry/tracking";
 
 export default function SearchDetailPage() {
     const params = useParams();
     const id = params.id as string;
+    const { profile } = useUser();
 
     const { search, results, platformCalls, isLoading, isStreaming, error } = useSearchStream(id);
     const [flatResults, setFlatResults] = useState<FlatMediaItem[]>([]);
     const [allFlatResults, setAllFlatResults] = useState<FlatMediaItem[]>([]);
+    const noResultsTrackedRef = useRef(false);
 
     const itemsById = useMemo(() => {
         const map: Record<string, FlatMediaItem> = {};
@@ -31,6 +39,37 @@ export default function SearchDetailPage() {
         }
         return map;
     }, [allFlatResults]);
+
+    useEffect(() => {
+        noResultsTrackedRef.current = false;
+    }, [id]);
+
+    useEffect(() => {
+        if (!id) return;
+        trackSearchResultsPageViewed(id);
+    }, [id]);
+
+    useEffect(() => {
+        if (!id || isLoading || isStreaming || error) return;
+        if (results.length !== 0) return;
+        if (noResultsTrackedRef.current) return;
+        trackSearchNoResults(id);
+        noResultsTrackedRef.current = true;
+    }, [id, isLoading, isStreaming, error, results.length]);
+
+    useEffect(() => {
+        if (!profile?.id || !id || isLoading || isStreaming || error) return;
+        const firstSearchKey = `ph:first_search:${profile.id}`;
+        try {
+            if (window.localStorage.getItem(firstSearchKey)) {
+                return;
+            }
+            trackUserFirstSearch(profile.id);
+            window.localStorage.setItem(firstSearchKey, "1");
+        } catch {
+            // Fail open if storage is unavailable.
+        }
+    }, [profile?.id, id, isLoading, isStreaming, error]);
 
 
     if (isLoading) {

@@ -5,6 +5,7 @@ from sqlalchemy import text
 
 from app.core import logger
 from app.db.session import get_db_connection
+from app.integrations.posthog_client import capture_event_with_error
 from app.services import dodo_client, billing_service
 from app.services.telemetry_events import emit_payment_confirmed, emit_payment_webhook_received
 
@@ -114,6 +115,17 @@ async def handle_dodo_webhook(request: Request):
         
     except Exception as e:
         logger.error(f"Error processing webhook {webhook_id}: {e}")
+        capture_event_with_error(
+            distinct_id="system:webhook_dodo",
+            event="payment_webhook_failed",
+            exception=e,
+            properties={
+                "event_type": event_type,
+                "subscription_id": subscription_id,
+                "success": False,
+                "source": "webhook_dodo",
+            },
+        )
         # Still return 200 to prevent retries for application errors
         return {"status": "error", "message": str(e)}
 

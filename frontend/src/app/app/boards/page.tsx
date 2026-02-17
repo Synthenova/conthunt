@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useBoards } from "@/hooks/useBoards";
 import { BoardGlassCard } from "@/components/ui/board-glass-card";
@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
     AlertDialog,
-    AlertDialogAction,
     AlertDialogCancel,
     AlertDialogContent,
     AlertDialogDescription,
@@ -36,18 +35,35 @@ import { BoardCardSkeleton } from "@/components/ui/board-skeletons";
 import { StaggerContainer, StaggerItem, FadeIn, AnimatePresence } from "@/components/ui/animations";
 import { formatDistanceToNow } from "date-fns";
 import { useTutorialAutoStart } from "@/hooks/useTutorialAutoStart";
+import {
+    trackBoardCreated,
+    trackBoardViewed,
+    trackBoardDeleted,
+    trackUserFirstBoardCreated,
+} from "@/lib/telemetry/tracking";
+import { useUser } from "@/hooks/useUser";
 
 export default function BoardsPage() {
     const router = useRouter();
+    const { profile } = useUser();
     const { boards, isLoadingBoards, createBoard, isCreatingBoard, deleteBoard, isDeletingBoard } = useBoards();
     const [searchQuery, setSearchQuery] = useState("");
     const [newBoardName, setNewBoardName] = useState("");
     const [isDialogOpen, setIsDialogOpen] = useState(false);
-    const [boardToDelete, setBoardToDelete] = useState<{ id: string, name: string } | null>(null);
+    const [boardToDelete, setBoardToDelete] = useState<{ id: string, name: string, item_count: number } | null>(null);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+    const hasTrackedBoardsView = useRef(false);
 
     // Auto-start boards tutorial on first visit
     useTutorialAutoStart({ flowId: "boards_tour" });
+
+    // Track boards page view on first load
+    useEffect(() => {
+        if (!hasTrackedBoardsView.current && !isLoadingBoards) {
+            trackBoardViewed("boards_list", boards.length);
+            hasTrackedBoardsView.current = true;
+        }
+    }, [boards.length, isLoadingBoards]);
 
     // Filter boards by search query
     const filteredBoards = boards.filter(board =>
@@ -58,7 +74,19 @@ export default function BoardsPage() {
         if (!newBoardName.trim()) return;
 
         try {
-            await createBoard({ name: newBoardName.trim() });
+            const newBoard = await createBoard({ name: newBoardName.trim() });
+            trackBoardCreated(newBoard.id);
+            if (profile?.id) {
+                const firstBoardKey = `ph:first_board:${profile.id}`;
+                try {
+                    if (!window.localStorage.getItem(firstBoardKey)) {
+                        trackUserFirstBoardCreated(profile.id);
+                        window.localStorage.setItem(firstBoardKey, "1");
+                    }
+                } catch {
+                    // Fail open.
+                }
+            }
             setNewBoardName("");
             setIsDialogOpen(false);
         } catch (error) {
@@ -70,6 +98,7 @@ export default function BoardsPage() {
         if (!boardToDelete) return;
         try {
             await deleteBoard(boardToDelete.id);
+            trackBoardDeleted(boardToDelete.id, boardToDelete.item_count || 0);
             setBoardToDelete(null);
         } catch (error) {
             console.error("Failed to delete board:", error);
@@ -239,7 +268,11 @@ export default function BoardsPage() {
                                                         <DropdownMenuItem
                                                             onClick={(event) => {
                                                                 event.stopPropagation();
-                                                                setBoardToDelete({ id: board.id, name: board.name });
+                                                                setBoardToDelete({
+                                                                    id: board.id,
+                                                                    name: board.name,
+                                                                    item_count: board.item_count || 0,
+                                                                });
                                                                 setOpenMenuId(null);
                                                             }}
                                                             className="text-red-400 focus:text-red-400 focus:bg-red-400/10 cursor-pointer"
@@ -278,7 +311,7 @@ export default function BoardsPage() {
                     <AlertDialogHeader>
                         <AlertDialogTitle className="text-white">Delete Board</AlertDialogTitle>
                         <AlertDialogDescription className="text-gray-400">
-                            Are you sure you want to delete <span className="text-white font-medium">"{boardToDelete?.name}"</span>? This action cannot be undone.
+                            Are you sure you want to delete <span className="text-white font-medium">&quot;{boardToDelete?.name}&quot;</span>? This action cannot be undone.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

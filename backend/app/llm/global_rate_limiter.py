@@ -10,6 +10,7 @@ from typing import Any, Iterable
 from app.core import get_settings, logger
 from app.llm.context import get_llm_route
 from app.llm.model_policy import canonicalize_model_key, resolve_model_limits
+from app.integrations.posthog_client import capture_event
 
 
 class LlmRateLimited(ValueError):
@@ -258,6 +259,15 @@ def _get_limiters(*, rpm: int, tpm: int, rpd: int, tpm_burst: int) -> tuple[Any,
         return existing
     built = _build_limiters(rpm=key[0], tpm=key[1], rpd=key[2], tpm_burst=key[3])
     if built is None:
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": "*",
+                "kind": "misconfigured",
+                "route": get_llm_route(),
+            },
+        )
         raise LlmRateLimited(
             kind="misconfigured_throttled_missing",
             model_key="*",
@@ -322,6 +332,17 @@ async def enforce_model_global_limits(
     # 0) Ensure call can ever pass the token limiter.
     est_tokens = estimate_tokens(messages, completion_tokens_hint=completion_tokens_hint)
     if est_tokens > int(limits.tpm_burst):
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": model_key,
+                "kind": "tpm_call_too_large",
+                "route": route,
+                "est_tokens": est_tokens,
+                "tpm_burst": limits.tpm_burst,
+            },
+        )
         raise LlmRateLimited(
             kind="tpm_call_too_large",
             model_key=model_key,
@@ -342,6 +363,16 @@ async def enforce_model_global_limits(
     if r is not None and getattr(r, "limited", False):
         state = getattr(r, "state", None)
         retry_after = getattr(state, "retry_after", None) if state is not None else None
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": model_key,
+                "kind": "rpd",
+                "route": route,
+                "retry_after_s": retry_after,
+            },
+        )
         raise LlmRateLimited(kind="rpd", model_key=model_key, route=route, retry_after_s=retry_after)
 
     # 2) Global start pacer: smooth system-wide thundering herd per model.
@@ -353,6 +384,16 @@ async def enforce_model_global_limits(
     if r is not None and getattr(r, "limited", False):
         state = getattr(r, "state", None)
         retry_after = getattr(state, "retry_after", None) if state is not None else None
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": model_key,
+                "kind": "rpm",
+                "route": route,
+                "retry_after_s": retry_after,
+            },
+        )
         raise LlmRateLimited(kind="rpm", model_key=model_key, route=route, retry_after_s=retry_after)
 
     # Avoid same-ms wakeups for many waiting tasks.
@@ -367,5 +408,15 @@ async def enforce_model_global_limits(
     if r is not None and getattr(r, "limited", False):
         state = getattr(r, "state", None)
         retry_after = getattr(state, "retry_after", None) if state is not None else None
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": model_key,
+                "kind": "tpm",
+                "route": route,
+                "retry_after_s": retry_after,
+            },
+        )
         raise LlmRateLimited(kind="tpm", model_key=model_key, route=route, retry_after_s=retry_after)
     _record_limiter_infra_success()

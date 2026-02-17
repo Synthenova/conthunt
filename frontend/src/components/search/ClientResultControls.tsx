@@ -10,6 +10,7 @@ import {
     DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
 import { ArrowUpDown, Calendar, Filter } from "lucide-react";
+import { trackPlatformFilterToggled } from "@/lib/telemetry/tracking";
 
 export type ClientSortOption = "default" | "views" | "likes" | "shares" | "comments" | "newest";
 export type ClientDateFilter =
@@ -136,6 +137,7 @@ export function ClientResultControls({
                                 key={p}
                                 checked={selectedPlatforms.includes(p)}
                                 onCheckedChange={(checked) => {
+                                    trackPlatformFilterToggled(p, Boolean(checked));
                                     if (checked) {
                                         onPlatformsChange([...selectedPlatforms, p]);
                                     } else {

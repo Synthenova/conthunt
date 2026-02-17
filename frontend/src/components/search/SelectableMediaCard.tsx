@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRef, memo } from "react";
+import { trackSearchResultClicked } from "@/lib/telemetry/tracking";
 
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 import { ExternalLink } from "lucide-react";
@@ -13,6 +14,8 @@ import { ExternalLink } from "lucide-react";
 interface SelectableMediaCardProps {
     item: any;
     platform: string;
+    searchId?: string;
+    totalResults?: number;
     onOpen?: (item: any, resumeTime: number) => void;
     // We use a ref to avoid re-rendering every card when new items are appended
     itemsByIdRef?: React.MutableRefObject<Record<string, any>>;
@@ -21,7 +24,15 @@ interface SelectableMediaCardProps {
 
 const MEDIA_DRAG_TYPE = 'application/x-conthunt-media';
 
-export const SelectableMediaCard = memo(function SelectableMediaCard({ item, platform, onOpen, itemsByIdRef, onError }: SelectableMediaCardProps) {
+export const SelectableMediaCard = memo(function SelectableMediaCard({
+    item,
+    platform,
+    searchId,
+    totalResults,
+    onOpen,
+    itemsByIdRef,
+    onError,
+}: SelectableMediaCardProps) {
     const { selectedItems, toggleItemSelection } = useSearchStore();
     const isSelected = selectedItems.includes(item.id);
     const selectionMode = selectedItems.length > 0;
@@ -141,6 +152,12 @@ export const SelectableMediaCard = memo(function SelectableMediaCard({ item, pla
             draggable
             onDragStart={handleDragStart}
             onClick={() => {
+                trackSearchResultClicked(
+                    String(searchId || item.search_id || "unknown_search"),
+                    platform,
+                    typeof item.rank === "number" ? item.rank : 0,
+                    totalResults || 0
+                );
                 if (!onOpen) return;
                 const hoverStart = hoverStartRef.current;
                 let resumeTime = 0;

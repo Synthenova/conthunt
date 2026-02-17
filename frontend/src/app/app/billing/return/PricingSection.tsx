@@ -5,6 +5,7 @@ import { Check, Loader2 } from "lucide-react";
 import "./pricing.css";
 import { useBilling } from "./hooks/useBilling";
 import { capturePostHog } from "@/lib/telemetry/posthog";
+import { trackPricingPageViewed } from "@/lib/telemetry/tracking";
 import { PreviewModal } from "./components/PreviewModal";
 import { CancelConfirmModal } from "./components/CancelConfirmModal";
 import { Product } from "./types";
@@ -42,6 +43,11 @@ export default function PricingSection() {
     const [returnLoading, setReturnLoading] = useState(false);
     const searchParams = useSearchParams();
     const router = useRouter();
+
+    // Track pricing page view
+    useEffect(() => {
+        trackPricingPageViewed();
+    }, []);
 
     useEffect(() => {
         const subscriptionId = searchParams?.get("subscription_id");
@@ -130,6 +136,7 @@ export default function PricingSection() {
             product_id: targetProduct.product_id,
             plan_name: targetProduct.name,
             role: targetProduct.metadata.app_role,
+            source: "ui_billing_return",
         });
 
         const currentProductId = subscription?.product_id;
