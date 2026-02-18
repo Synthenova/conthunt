@@ -13,6 +13,7 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { trackDeepSearchToggled } from "@/lib/telemetry/tracking";
 
 interface HomeSearchBoxProps {
     value?: string;
@@ -149,16 +150,29 @@ export function HomeSearchBox({
                         <div className="flex items-center gap-2">
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <div className="text-[10px] uppercase font-bold tracking-wider border rounded-full px-3 py-1.5 transition-colors cursor-not-allowed text-zinc-600 border-white/5 hover:text-zinc-600">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const nextEnabled = !deepResearchEnabled;
+                                            trackDeepSearchToggled(nextEnabled);
+                                            onDeepResearchChange?.(nextEnabled);
+                                        }}
+                                        className={cn(
+                                            "text-[10px] uppercase font-bold tracking-wider border rounded-full px-3 py-1.5 transition-colors",
+                                            deepResearchEnabled
+                                                ? "text-white border-white/30 bg-white/10"
+                                                : "text-zinc-700 border-white/5 hover:text-white/80"
+                                        )}
+                                    >
                                         Deep Search
-                                    </div>
+                                    </button>
                                 </TooltipTrigger>
                                 <TooltipContent
                                     side="bottom"
                                     showArrow={false}
                                     className="bg-black/90 backdrop-blur-md border border-white/10 text-white shadow-2xl px-4 py-2 text-xs font-medium tracking-wide mt-2"
                                 >
-                                    Coming soon
+                                    Toggle deep search
                                 </TooltipContent>
                             </Tooltip>
                         </div>

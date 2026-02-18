@@ -19,7 +19,9 @@ from app.core.telemetry import setup_telemetry
 from app.db import init_db, close_db
 from app.realtime.stream_hub import StreamFanoutHub
 from app.api import v1_router
+from app.middleware.telemetry_context import TelemetryContextMiddleware
 from app.agent.runtime import create_agent_graph
+from app.integrations.langfuse_client import flush_langfuse
 from app.db.db_semaphore import (
     DBSemaphore,
     SemaphoreConfig,
@@ -39,10 +41,12 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.debug("Starting Conthunt backend...")
     logger.info(
-        "Deep Research config: analysis_concurrency=%s, search_concurrency=%s, model=%s",
-        settings.DEEP_RESEARCH_ANALYSIS_CONCURRENCY,
-        settings.DEEP_RESEARCH_SEARCH_CONCURRENCY,
+        "Deep Research config: model=%s | task_enqueue: gemini_batch=%s media_batch=%s search_batch=%s max_attempts=%s",
         settings.DEEP_RESEARCH_MODEL,
+        settings.GEMINI_TASK_ENQUEUE_BATCH_SIZE,
+        settings.MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE,
+        settings.SEARCH_ENQUEUE_BATCH_SIZE,
+        settings.TASK_WORKER_MAX_ATTEMPTS,
     )
     try:
         await init_db()
@@ -52,17 +56,18 @@ async def lifespan(app: FastAPI):
         from redis.asyncio.connection import BlockingConnectionPool
         redis_pool = BlockingConnectionPool.from_url(
             settings.REDIS_URL,
-            max_connections=settings.REDIS_MAX_CONNECTIONS,
-            timeout=10.0,  # Wait up to 10s for a connection
+            max_connections=settings.REDIS_MAIN_MAX_CONNECTIONS,
+            timeout=settings.REDIS_MAIN_POOL_TIMEOUT_S,  # Wait for a free connection
             decode_responses=True,
             # Managed Redis/proxies can silently close idle sockets; health checks prevent
             # handing out dead connections from the pool.
             health_check_interval=30,
             socket_keepalive=True,
+            client_name="conthunt-main",
         )
         app.state.redis = redis.Redis(connection_pool=redis_pool)
         max_conn = getattr(app.state.redis.connection_pool, "max_connections", None)
-        logger.info("Redis client initialized (max_connections=%s)", max_conn)
+        logger.info("Redis main client initialized (max_connections=%s)", max_conn)
 
         # Initialize global DB semaphore (fail-open if anything goes wrong).
         if getattr(settings, "DB_SEMAPHORE_ENABLED", False):
@@ -99,13 +104,38 @@ async def lifespan(app: FastAPI):
         # semaphore and other short-lived commands.
         stream_pool = BlockingConnectionPool.from_url(
             settings.REDIS_URL,
-            max_connections=2,
-            timeout=10.0,
+            max_connections=settings.REDIS_STREAM_MAX_CONNECTIONS,
+            timeout=settings.REDIS_STREAM_POOL_TIMEOUT_S,
             decode_responses=True,
             health_check_interval=30,
             socket_keepalive=True,
+            client_name="conthunt-stream",
         )
         app.state.stream_redis = redis.Redis(connection_pool=stream_pool)
+
+        # Startup guardrail: projected client usage across instances.
+        per_instance_budget = (
+            int(settings.REDIS_MAIN_MAX_CONNECTIONS)
+            + int(settings.REDIS_STREAM_MAX_CONNECTIONS)
+            + int(settings.REDIS_LIMITER_MAX_CONNECTIONS)
+            + 1  # small overhead for ad-hoc/background control paths
+        )
+        projected_total = per_instance_budget * int(settings.APP_MAX_INSTANCES)
+        budget = max(1, int(settings.REDIS_MAX_CLIENTS_BUDGET))
+        usage_ratio = projected_total / budget
+        logger.info(
+            "Redis budget: per_instance=%s projected_total=%s (instances=%s) budget=%s ratio=%.2f",
+            per_instance_budget,
+            projected_total,
+            settings.APP_MAX_INSTANCES,
+            budget,
+            usage_ratio,
+        )
+        if usage_ratio >= 0.8:
+            logger.warning(
+                "Redis projected client usage is high (%.0f%% of budget). Consider lowering pool caps or increasing Redis max clients.",
+                usage_ratio * 100.0,
+            )
 
         app.state.stream_hub = StreamFanoutHub(app.state.stream_redis, logger)
         await app.state.stream_hub.start()
@@ -143,6 +173,10 @@ async def lifespan(app: FastAPI):
         logger.debug("Deep agent checkpointer closed")
     await close_db()
     logger.debug("Database connections closed")
+    try:
+        flush_langfuse(reason="app_shutdown")
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -153,6 +187,8 @@ app = FastAPI(
 )
 
 setup_telemetry(app)
+
+app.add_middleware(TelemetryContextMiddleware)
 
 
 @app.exception_handler(LlmRateLimited)

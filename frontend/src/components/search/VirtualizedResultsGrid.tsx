@@ -315,6 +315,8 @@ export function VirtualizedResultsGrid({
                                         <SelectableMediaCard
                                             item={item}
                                             platform={item.platform || "unknown"}
+                                            searchId={item.search_id}
+                                            totalResults={results.length}
                                             itemsByIdRef={itemsByIdRef}
                                             onOpen={handleOpen}
                                             onError={onMediaError}

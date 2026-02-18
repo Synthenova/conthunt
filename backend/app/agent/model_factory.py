@@ -1,16 +1,17 @@
 """Model initialization factory for chat models."""
-import os
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any, Iterable, Tuple
 from functools import wraps
+import httpx
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
-from app.core import get_settings
-from app.llm.global_rate_limiter import enforce_model_global_limits
+from app.core import get_settings, logger
+from app.llm.global_rate_limiter import LlmRateLimited, enforce_model_global_limits
+from app.llm.model_policy import canonicalize_model_key, get_model_fallback_chain
 
 DEFAULT_MODEL_NAME = "openrouter/google/gemini-3-flash-preview"
-SUPPORTED_PROVIDERS = {"openrouter", "google"}
+SUPPORTED_PROVIDERS = {"openrouter", "google", "google-vertex", "google-api"}
 
 # Model options - keep in sync with frontend/src/components/chat/chat-input/constants.ts
 MODEL_OPTIONS = [
@@ -42,30 +43,88 @@ def _parse_model_name(model_name: str | None) -> Tuple[str, str]:
     return provider, remainder
 
 
-def init_chat_model(model_name: str | None, temperature: float = 0.5):
+def _canonical_provider(provider: str) -> str:
+    if provider == "google":
+        return "google-vertex"
+    return provider
+
+
+def _model_key_from_name(model_name: str | None) -> str:
     provider, resolved_name = _parse_model_name(model_name)
+    return canonicalize_model_key(f"{_canonical_provider(provider)}/{resolved_name}")
+
+
+def _create_google_api_model(*, resolved_name: str, temperature: float):
     settings = get_settings()
-    model_key = f"{provider}/{resolved_name}"
+    kwargs = {
+        "model": resolved_name,
+        "temperature": temperature,
+        "max_retries": 1,
+    }
+    if settings.GOOGLE_API_KEY:
+        kwargs["google_api_key"] = settings.GOOGLE_API_KEY
+    try:
+        return ChatGoogleGenerativeAI(**kwargs)
+    except TypeError:
+        kwargs.pop("google_api_key", None)
+        if settings.GOOGLE_API_KEY:
+            kwargs["api_key"] = settings.GOOGLE_API_KEY
+        return ChatGoogleGenerativeAI(**kwargs)
 
-    if provider == "openrouter":        
-        llm = ChatOpenAI(
-            model=resolved_name,
-            temperature=temperature,
-            openai_api_base=settings.OPENAI_BASE_URL,
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=1            
-        )
-        return _attach_global_llm_limits(llm, model_key=model_key)
 
-    llm = ChatGoogleGenerativeAI(
-        model=resolved_name,
+def _create_base_model_from_key(
+    model_key: str,
+    temperature: float,
+    llm_init_kwargs: dict[str, Any] | None = None,
+):
+    settings = get_settings()
+    provider, resolved_name = _parse_model_name(model_key)
+    provider = _canonical_provider(provider)
+    llm_init_kwargs = dict(llm_init_kwargs or {})
+
+    if provider == "openrouter":
+        base_kwargs: dict[str, Any] = {
+            "model": resolved_name,
+            "temperature": temperature,
+            "base_url": settings.OPENAI_BASE_URL,
+            "api_key": settings.OPENAI_API_KEY,
+            "max_retries": 0,
+        }
+        base_kwargs.update(llm_init_kwargs)
+        return ChatOpenAI(**base_kwargs)
+
+    if provider == "google-api":
+        return _create_google_api_model(resolved_name=resolved_name, temperature=temperature)
+
+    base_kwargs = {
+        "model": resolved_name,
+        "temperature": temperature,
+        "project": settings.GCP_PROJECT,
+        "vertexai": True,
+        "max_retries": 1,
+        "location": "global",
+    }
+    base_kwargs.update(llm_init_kwargs)
+    return ChatGoogleGenerativeAI(**base_kwargs)
+
+
+def init_chat_model(
+    model_name: str | None,
+    temperature: float = 0.5,
+    llm_init_kwargs: dict[str, Any] | None = None,
+):
+    model_key = _model_key_from_name(model_name)
+    llm = _create_base_model_from_key(
+        model_key,
         temperature=temperature,
-        project=settings.GCP_PROJECT,
-        vertexai=True,
-        max_retries=1,
-        location='global'        
+        llm_init_kwargs=llm_init_kwargs,
     )
-    return _attach_global_llm_limits(llm, model_key=model_key)
+    return _attach_global_llm_limits(
+        llm,
+        model_key=model_key,
+        temperature=temperature,
+        llm_init_kwargs=llm_init_kwargs,
+    )
 
 
 def _extract_completion_tokens_hint(kwargs: dict) -> int | None:
@@ -100,7 +159,75 @@ def _mark_wrapped(obj: Any) -> bool:
         return False
 
 
-def _attach_global_llm_limits(obj: Any, *, model_key: str):
+def _safe_setattr(obj: Any, name: str, value: Any) -> None:
+    try:
+        setattr(obj, name, value)
+    except Exception:
+        try:
+            object.__setattr__(obj, name, value)
+        except Exception:
+            pass
+
+
+def _is_internal_rate_limit(exc: Exception) -> bool:
+    if not isinstance(exc, LlmRateLimited):
+        return False
+    return exc.kind in {"rpd", "rpm", "tpm"}
+
+
+def _is_upstream_429(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            return int(exc.response.status_code) == 429
+        except Exception:
+            return False
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        try:
+            return int(status_code) == 429
+        except Exception:
+            pass
+    response = getattr(exc, "response", None)
+    if response is not None:
+        resp_code = getattr(response, "status_code", None)
+        if resp_code is not None:
+            try:
+                return int(resp_code) == 429
+            except Exception:
+                pass
+    return False
+
+
+def _should_switch_on_error(exc: Exception) -> bool:
+    return _is_internal_rate_limit(exc) or _is_upstream_429(exc)
+
+
+def _build_attempt_runnable(
+    *,
+    model_key: str,
+    temperature: float,
+    transforms: list[tuple[str, tuple[Any, ...], dict[str, Any]]],
+    llm_init_kwargs: dict[str, Any] | None = None,
+):
+    runnable = _create_base_model_from_key(
+        model_key,
+        temperature=temperature,
+        llm_init_kwargs=llm_init_kwargs,
+    )
+    for method_name, args, kwargs in transforms:
+        method = getattr(runnable, method_name)
+        runnable = method(*args, **kwargs)
+    return runnable
+
+
+def _attach_global_llm_limits(
+    obj: Any,
+    *,
+    model_key: str,
+    temperature: float,
+    transforms: list[tuple[str, tuple[Any, ...], dict[str, Any]]] | None = None,
+    llm_init_kwargs: dict[str, Any] | None = None,
+):
     """
     Attach per-model global rate limiting to the runnable/model instance.
 
@@ -109,6 +236,9 @@ def _attach_global_llm_limits(obj: Any, *, model_key: str):
     """
     if obj is None:
         return obj
+    model_key = canonicalize_model_key(model_key)
+    transforms = list(transforms or [])
+    llm_init_kwargs = dict(llm_init_kwargs or {})
 
     # Avoid double wrapping when possible.
     try:
@@ -118,6 +248,10 @@ def _attach_global_llm_limits(obj: Any, *, model_key: str):
         pass
 
     _mark_wrapped(obj)
+    _safe_setattr(obj, "__conthunt_model_key__", model_key)
+    _safe_setattr(obj, "__conthunt_model_temperature__", temperature)
+    _safe_setattr(obj, "__conthunt_model_transforms__", transforms)
+    _safe_setattr(obj, "__conthunt_model_init_kwargs__", llm_init_kwargs)
 
     # Wrap async invoke
     if hasattr(obj, "ainvoke"):
@@ -126,11 +260,42 @@ def _attach_global_llm_limits(obj: Any, *, model_key: str):
         @wraps(orig_ainvoke)
         async def _ainvoke_limited(input, *args, **kwargs):
             hint = _extract_completion_tokens_hint(kwargs)
-            await enforce_model_global_limits(model_key=model_key, messages=input, completion_tokens_hint=hint)
-            return await orig_ainvoke(input, *args, **kwargs)
+            chain = get_model_fallback_chain(model_key)
+            last_rate_limit_exc: Exception | None = None
+            for idx, attempt_key in enumerate(chain):
+                try:
+                    await enforce_model_global_limits(
+                        model_key=attempt_key,
+                        messages=input,
+                        completion_tokens_hint=hint,
+                    )
+                    if idx == 0:
+                        return await orig_ainvoke(input, *args, **kwargs)
+                    fallback_obj = _build_attempt_runnable(
+                        model_key=attempt_key,
+                        temperature=temperature,
+                        transforms=transforms,
+                        llm_init_kwargs=llm_init_kwargs,
+                    )
+                    return await fallback_obj.ainvoke(input, *args, **kwargs)
+                except Exception as exc:
+                    if _should_switch_on_error(exc):
+                        last_rate_limit_exc = exc
+                        logger.warning(
+                            "[llm_fallback] switching model attempt=%s/%s from=%s to_next reason=%s",
+                            idx + 1,
+                            len(chain),
+                            attempt_key,
+                            type(exc).__name__,
+                        )
+                        continue
+                    raise
+            if last_rate_limit_exc is not None:
+                raise last_rate_limit_exc
+            raise RuntimeError(f"LLM fallback chain exhausted without result for model={model_key}")
 
         try:
-            setattr(obj, "ainvoke", _ainvoke_limited)
+            _safe_setattr(obj, "ainvoke", _ainvoke_limited)
         except Exception:
             pass
 
@@ -141,12 +306,46 @@ def _attach_global_llm_limits(obj: Any, *, model_key: str):
         @wraps(orig_astream)
         async def _astream_limited(input, *args, **kwargs):
             hint = _extract_completion_tokens_hint(kwargs)
-            await enforce_model_global_limits(model_key=model_key, messages=input, completion_tokens_hint=hint)
-            async for chunk in orig_astream(input, *args, **kwargs):
-                yield chunk
+            chain = get_model_fallback_chain(model_key)
+            last_rate_limit_exc: Exception | None = None
+            for idx, attempt_key in enumerate(chain):
+                try:
+                    await enforce_model_global_limits(
+                        model_key=attempt_key,
+                        messages=input,
+                        completion_tokens_hint=hint,
+                    )
+                    if idx == 0:
+                        async for chunk in orig_astream(input, *args, **kwargs):
+                            yield chunk
+                        return
+                    fallback_obj = _build_attempt_runnable(
+                        model_key=attempt_key,
+                        temperature=temperature,
+                        transforms=transforms,
+                        llm_init_kwargs=llm_init_kwargs,
+                    )
+                    async for chunk in fallback_obj.astream(input, *args, **kwargs):
+                        yield chunk
+                    return
+                except Exception as exc:
+                    if _should_switch_on_error(exc):
+                        last_rate_limit_exc = exc
+                        logger.warning(
+                            "[llm_fallback] switching stream attempt=%s/%s from=%s to_next reason=%s",
+                            idx + 1,
+                            len(chain),
+                            attempt_key,
+                            type(exc).__name__,
+                        )
+                        continue
+                    raise
+            if last_rate_limit_exc is not None:
+                raise last_rate_limit_exc
+            raise RuntimeError(f"LLM fallback stream chain exhausted without result for model={model_key}")
 
         try:
-            setattr(obj, "astream", _astream_limited)
+            _safe_setattr(obj, "astream", _astream_limited)
         except Exception:
             pass
 
@@ -157,12 +356,19 @@ def _attach_global_llm_limits(obj: Any, *, model_key: str):
         orig = getattr(obj, method_name)
 
         @wraps(orig)
-        def _wrapped(*args, __orig=orig, **kwargs):
+        def _wrapped(*args, __orig=orig, __method_name=method_name, **kwargs):
             res = __orig(*args, **kwargs)
-            return _attach_global_llm_limits(res, model_key=model_key)
+            next_transforms = [*transforms, (__method_name, args, dict(kwargs))]
+            return _attach_global_llm_limits(
+                res,
+                model_key=model_key,
+                temperature=temperature,
+                transforms=next_transforms,
+                llm_init_kwargs=llm_init_kwargs,
+            )
 
         try:
-            setattr(obj, method_name, _wrapped)
+            _safe_setattr(obj, method_name, _wrapped)
         except Exception:
             pass
 
@@ -171,6 +377,9 @@ def _attach_global_llm_limits(obj: Any, *, model_key: str):
 
 def get_model_provider(model_name: str | None) -> str:
     provider, _ = _parse_model_name(model_name)
+    provider = _canonical_provider(provider)
+    if provider in {"google-vertex", "google-api"}:
+        return "google"
     return provider
 
 

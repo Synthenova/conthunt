@@ -150,6 +150,74 @@ async def get_media_asset_by_id(
     }
 
 
+async def get_media_assets_by_ids(
+    conn: AsyncConnection,
+    media_asset_ids: list[UUID],
+) -> list[dict]:
+    """
+    Batch fetch media assets by ID.
+    """
+    if not media_asset_ids:
+        return []
+
+    result = await conn.execute(
+        text(
+            """
+            SELECT id, source_url, gcs_uri, status, asset_type, content_item_id
+            FROM media_assets
+            WHERE id = ANY(:media_asset_ids)
+            """
+        ),
+        {"media_asset_ids": media_asset_ids},
+    )
+    rows = result.fetchall()
+    return [
+        {
+            "id": row[0],
+            "source_url": row[1],
+            "gcs_uri": row[2],
+            "status": row[3],
+            "asset_type": row[4],
+            "content_item_id": row[5],
+            # Keep parity with single fetch shape.
+            "video_url": generate_signed_url(row[2]) if row[2] else row[1],
+        }
+        for row in rows
+    ]
+
+
+async def get_media_asset_download_info_by_ids(
+    conn: AsyncConnection,
+    media_asset_ids: list[UUID],
+) -> list[dict]:
+    """
+    Batch fetch platform/external_id needed for media download tasks.
+    """
+    if not media_asset_ids:
+        return []
+
+    result = await conn.execute(
+        text(
+            """
+            SELECT ma.id, ci.platform, ci.external_id
+            FROM media_assets ma
+            JOIN content_items ci ON ci.id = ma.content_item_id
+            WHERE ma.id = ANY(:media_asset_ids)
+            """
+        ),
+        {"media_asset_ids": media_asset_ids},
+    )
+    rows = result.fetchall()
+    return [
+        {
+            "media_asset_id": row[0],
+            "platform": row[1],
+            "external_id": row[2],
+        }
+        for row in rows
+    ]
+
+
 
 async def get_media_asset_with_content(
     conn: AsyncConnection,
@@ -373,4 +441,3 @@ async def get_search_result_items_for_media_asset_ids(
         )
 
     return out
-

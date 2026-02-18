@@ -10,6 +10,11 @@ import { cn } from "@/lib/utils";
 import { useSearchStore } from "@/lib/store";
 import { FaTiktok, FaInstagram, FaYoutube, FaPinterest, FaGlobe } from "react-icons/fa6";
 import { useYouTubePlayer } from "@/lib/youtube";
+import {
+    trackVideoMuteToggled,
+    trackVideoPlayStarted,
+    trackVideoTimelineScrubbed,
+} from "@/lib/telemetry/tracking";
 
 let activeHoverId: string | null = null;
 let activeStopPreview: (() => void) | null = null;
@@ -73,6 +78,7 @@ export function MediaCard({
     const videoUrl = item.video_url || item.media_url;
     const link = item.url || item.link || item.web_url;
     const platformLabel = formatPlatformLabel(platform);
+    const mediaId = String(item.id || item.external_id || "unknown_media");
     const hoverId = useMemo(
         () => String(item.id ?? videoUrl ?? link ?? fallbackHoverId),
         [item.id, videoUrl, link, fallbackHoverId]
@@ -192,6 +198,7 @@ export function MediaCard({
 
         setIsPlaying(true);
         onHoverStateChange?.(true);
+        trackVideoPlayStarted(mediaId, platform, durationSeconds);
 
         if (!isYouTube) {
             onHoverTimeChange?.(0);
@@ -203,7 +210,7 @@ export function MediaCard({
             youtube.play();
             startYouTubeTimeTracking();
         }
-    }, [hoverId, isYouTube, youtubeId, youtube, onHoverStateChange, onHoverTimeChange, startYouTubeTimeTracking, stopPreview, videoUrl]);
+    }, [durationSeconds, hoverId, isYouTube, mediaId, onHoverStateChange, onHoverTimeChange, platform, startYouTubeTimeTracking, stopPreview, videoUrl, youtube, youtubeId]);
 
     useEffect(() => {
         if (!isVisible && isPlaying) {
@@ -275,7 +282,10 @@ export function MediaCard({
         if (!durationSeconds || !timelineRef.current) return;
         const rect = timelineRef.current.getBoundingClientRect();
         const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+        const previousTime = currentTime;
         const newTime = ratio * durationSeconds;
+
+        trackVideoTimelineScrubbed(mediaId, platform, previousTime, newTime, durationSeconds);
 
         setCurrentTime(newTime);
         onHoverTimeChange?.(newTime);
@@ -290,7 +300,7 @@ export function MediaCard({
             youtube.seekTo(newTime);
             youtube.play();
         }
-    }, [durationSeconds, isYouTube, youtube, onHoverTimeChange]);
+    }, [currentTime, durationSeconds, isYouTube, mediaId, onHoverTimeChange, platform, youtube]);
 
     useEffect(() => {
         if (!isScrubbing) return;
@@ -420,6 +430,7 @@ export function MediaCard({
                                 className="h-8 w-8 rounded-full bg-black/40 hover:bg-black/60 text-white"
                                 onClick={(e) => {
                                     e.stopPropagation();
+                                    trackVideoMuteToggled(mediaId, platform, !mediaMuted);
                                     setMediaMuted(!mediaMuted);
                                 }}
                             >

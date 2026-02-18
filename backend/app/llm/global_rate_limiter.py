@@ -3,10 +3,14 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+import time
+from collections import defaultdict
 from typing import Any, Iterable
 
 from app.core import get_settings, logger
 from app.llm.context import get_llm_route
+from app.llm.model_policy import canonicalize_model_key, resolve_model_limits
+from app.integrations.posthog_client import capture_event
 
 
 class LlmRateLimited(ValueError):
@@ -44,7 +48,7 @@ class LlmRateLimited(ValueError):
 def _is_background_route(route: str | None) -> bool:
     if not route:
         return False
-    return route.startswith(("analysis.", "insights.", "tasks."))
+    return route.startswith(("analysis.", "insights.", "tasks.", "deep_research.", "deep.research."))
 
 
 def _safe_setattr(obj: Any, name: str, value: Any) -> None:
@@ -123,6 +127,11 @@ def estimate_tokens(messages: Any, *, completion_tokens_hint: int | None = None)
 
 
 _THROTTLED_AVAILABLE: bool | None = None
+_REDIS_STORE: Any | None = None
+_LIMITER_COOLDOWN_UNTIL: float = 0.0
+_LIMITER_INFRA_ERRORS: int = 0
+_LIMITER_INFRA_LAST_LOG_AT: dict[str, float] = {}
+_LIMITER_INFRA_SUPPRESSED: dict[str, int] = defaultdict(int)
 
 
 def _ensure_throttled_loaded() -> bool:
@@ -139,7 +148,7 @@ def _ensure_throttled_loaded() -> bool:
     return True
 
 
-def _build_limiters():
+def _build_limiters(*, rpm: int, tpm: int, rpd: int, tpm_burst: int):
     """
     Lazy construction so importing this module doesn't hard-require `throttled`
     before you freeze/install it.
@@ -147,46 +156,126 @@ def _build_limiters():
     if not _ensure_throttled_loaded():
         return None
 
-    from throttled.asyncio import RateLimiterType, Throttled, rate_limiter, store
+    from throttled.asyncio import RateLimiterType, Throttled, rate_limiter
 
-    settings = get_settings()
-    redis_store = store.RedisStore(server=settings.REDIS_URL, options={})
+    redis_store = _get_redis_store()
 
     start = Throttled(
         using=RateLimiterType.GCRA.value,
-        quota=rate_limiter.per_min(settings.LLM_MODEL_GLOBAL_RPM, burst=1),
+        quota=rate_limiter.per_min(rpm, burst=1),
         store=redis_store,
     )
     tokens = Throttled(
         using=RateLimiterType.GCRA.value,
-        quota=rate_limiter.per_min(settings.LLM_MODEL_GLOBAL_TPM, burst=settings.LLM_MODEL_GLOBAL_TPM_BURST),
+        quota=rate_limiter.per_min(tpm, burst=tpm_burst),
         store=redis_store,
     )
     daily = Throttled(
         using=RateLimiterType.FIXED_WINDOW.value,
-        quota=rate_limiter.per_day(settings.LLM_MODEL_GLOBAL_RPD),
+        quota=rate_limiter.per_day(rpd),
         store=redis_store,
     )
     return start, tokens, daily
 
 
-_LIMITERS: tuple[Any, Any, Any] | None = None
+def _get_redis_store():
+    """
+    Build a single shared throttled RedisStore per process.
+    This avoids creating multiple independent redis pools from the limiter path.
+    """
+    global _REDIS_STORE
+    if _REDIS_STORE is not None:
+        return _REDIS_STORE
+
+    from throttled.asyncio import store
+
+    settings = get_settings()
+    # Dedicated limiter pool: small, bounded, blocking, and independent from main/stream pools.
+    limiter_max_connections = max(1, int(settings.REDIS_LIMITER_MAX_CONNECTIONS))
+    limiter_pool_timeout = max(0.1, float(settings.REDIS_LIMITER_POOL_TIMEOUT_S))
+    options = {
+        "REUSE_CONNECTION": True,
+        "CONNECTION_POOL_CLASS": "redis.asyncio.BlockingConnectionPool",
+        "CONNECTION_POOL_KWARGS": {
+            "max_connections": limiter_max_connections,
+            "timeout": limiter_pool_timeout,
+            "socket_keepalive": True,
+            "health_check_interval": 30,
+            "client_name": "conthunt-llm-limiter",
+        },
+    }
+    _REDIS_STORE = store.RedisStore(server=settings.REDIS_URL, options=options)
+    return _REDIS_STORE
 
 
-def _get_limiters() -> tuple[Any, Any, Any]:
-    global _LIMITERS
-    if _LIMITERS is not None:
-        return _LIMITERS
-    built = _build_limiters()
+def _in_cooldown() -> bool:
+    return time.monotonic() < _LIMITER_COOLDOWN_UNTIL
+
+
+def _record_limiter_infra_error(stage: str, exc: Exception) -> None:
+    global _LIMITER_INFRA_ERRORS, _LIMITER_COOLDOWN_UNTIL
+    settings = get_settings()
+    _LIMITER_INFRA_ERRORS += 1
+    now = time.monotonic()
+
+    # Activate short fail-open cooldown if we see a burst of infra errors.
+    if _LIMITER_INFRA_ERRORS >= int(settings.LLM_LIMITER_INFRA_ERROR_BURST_THRESHOLD):
+        _LIMITER_COOLDOWN_UNTIL = now + float(settings.LLM_LIMITER_INFRA_COOLDOWN_S)
+        _LIMITER_INFRA_ERRORS = 0
+        logger.warning(
+            "[llm_rl] limiter infra cooldown activated for %.2fs after repeated errors (stage=%s)",
+            float(settings.LLM_LIMITER_INFRA_COOLDOWN_S),
+            stage,
+        )
+
+    last_at = _LIMITER_INFRA_LAST_LOG_AT.get(stage, 0.0)
+    sample_every = max(1, int(settings.LLM_LIMITER_INFRA_LOG_SAMPLE_EVERY))
+    min_interval = max(0.0, float(settings.LLM_LIMITER_INFRA_LOG_INTERVAL_S))
+    suppressed = _LIMITER_INFRA_SUPPRESSED[stage] + 1
+    should_log = (now - last_at) >= min_interval or suppressed >= sample_every
+
+    if should_log:
+        if suppressed > 1:
+            logger.warning("[llm_rl] stage=%s suppressed_errors=%s", stage, suppressed - 1)
+        logger.warning("[llm_rl] %s limiter error (fail-open): %s", stage, exc, exc_info=True)
+        _LIMITER_INFRA_SUPPRESSED[stage] = 0
+        _LIMITER_INFRA_LAST_LOG_AT[stage] = now
+    else:
+        _LIMITER_INFRA_SUPPRESSED[stage] = suppressed
+
+
+def _record_limiter_infra_success() -> None:
+    global _LIMITER_INFRA_ERRORS
+    _LIMITER_INFRA_ERRORS = 0
+
+
+_LIMITERS_BY_QUOTA: dict[tuple[int, int, int, int], tuple[Any, Any, Any]] = {}
+
+
+def _get_limiters(*, rpm: int, tpm: int, rpd: int, tpm_burst: int) -> tuple[Any, Any, Any]:
+    key = (int(rpm), int(tpm), int(rpd), int(tpm_burst))
+    existing = _LIMITERS_BY_QUOTA.get(key)
+    if existing is not None:
+        return existing
+    built = _build_limiters(rpm=key[0], tpm=key[1], rpd=key[2], tpm_burst=key[3])
     if built is None:
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": "*",
+                "kind": "misconfigured",
+                "route": get_llm_route(),
+            },
+        )
         raise LlmRateLimited(
             kind="misconfigured_throttled_missing",
             model_key="*",
             route=get_llm_route(),
             retry_after_s=None,
         )
-    _LIMITERS = built
-    return _LIMITERS
+    _LIMITERS_BY_QUOTA[key] = built
+    return built
 
 
 async def enforce_model_global_limits(
@@ -204,6 +293,11 @@ async def enforce_model_global_limits(
     4) TPM reservation with wait-and-retry
     """
     settings = get_settings()
+    if _in_cooldown():
+        return
+
+    model_key = canonicalize_model_key(model_key)
+    limits = resolve_model_limits(model_key, settings)
     route = get_llm_route()
     is_bg = _is_background_route(route)
     start_timeout = (
@@ -218,12 +312,17 @@ async def enforce_model_global_limits(
     )
 
     try:
-        start_limiter, token_limiter, daily_limiter = _get_limiters()
+        start_limiter, token_limiter, daily_limiter = _get_limiters(
+            rpm=limits.rpm,
+            tpm=limits.tpm,
+            rpd=limits.rpd,
+            tpm_burst=limits.tpm_burst,
+        )
     except LlmRateLimited:
         raise
     except Exception as exc:
         # Fail-open only for limiter infrastructure issues.
-        logger.warning("[llm_rl] limiter init failed (fail-open): %s", exc, exc_info=True)
+        _record_limiter_infra_error("init", exc)
         return
 
     k_rpd = f"rl:llm:global:model:{model_key}:rpd"
@@ -232,7 +331,18 @@ async def enforce_model_global_limits(
 
     # 0) Ensure call can ever pass the token limiter.
     est_tokens = estimate_tokens(messages, completion_tokens_hint=completion_tokens_hint)
-    if est_tokens > int(settings.LLM_MODEL_GLOBAL_TPM_BURST):
+    if est_tokens > int(limits.tpm_burst):
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": model_key,
+                "kind": "tpm_call_too_large",
+                "route": route,
+                "est_tokens": est_tokens,
+                "tpm_burst": limits.tpm_burst,
+            },
+        )
         raise LlmRateLimited(
             kind="tpm_call_too_large",
             model_key=model_key,
@@ -242,27 +352,48 @@ async def enforce_model_global_limits(
 
     # 1) Daily cap: fail-fast.
     try:
-        r = await daily_limiter.limit(k_rpd, cost=1, timeout=0)
+        # throttled expects non-blocking timeout as -1 (not 0).
+        r = await daily_limiter.limit(k_rpd, cost=1, timeout=-1)
     except TypeError:
         # Some versions use positional args; keep compatibility.
         r = await daily_limiter.limit(k_rpd, cost=1)
     except Exception as exc:
-        logger.warning("[llm_rl] daily limiter error (fail-open): %s", exc, exc_info=True)
+        _record_limiter_infra_error("daily", exc)
         r = None
     if r is not None and getattr(r, "limited", False):
         state = getattr(r, "state", None)
         retry_after = getattr(state, "retry_after", None) if state is not None else None
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": model_key,
+                "kind": "rpd",
+                "route": route,
+                "retry_after_s": retry_after,
+            },
+        )
         raise LlmRateLimited(kind="rpd", model_key=model_key, route=route, retry_after_s=retry_after)
 
     # 2) Global start pacer: smooth system-wide thundering herd per model.
     try:
         r = await start_limiter.limit(k_start, cost=1, timeout=start_timeout)
     except Exception as exc:
-        logger.warning("[llm_rl] start limiter error (fail-open): %s", exc, exc_info=True)
+        _record_limiter_infra_error("start", exc)
         r = None
     if r is not None and getattr(r, "limited", False):
         state = getattr(r, "state", None)
         retry_after = getattr(state, "retry_after", None) if state is not None else None
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": model_key,
+                "kind": "rpm",
+                "route": route,
+                "retry_after_s": retry_after,
+            },
+        )
         raise LlmRateLimited(kind="rpm", model_key=model_key, route=route, retry_after_s=retry_after)
 
     # Avoid same-ms wakeups for many waiting tasks.
@@ -272,9 +403,20 @@ async def enforce_model_global_limits(
     try:
         r = await token_limiter.limit(k_tpm, cost=est_tokens, timeout=token_timeout)
     except Exception as exc:
-        logger.warning("[llm_rl] token limiter error (fail-open): %s", exc, exc_info=True)
+        _record_limiter_infra_error("token", exc)
         r = None
     if r is not None and getattr(r, "limited", False):
         state = getattr(r, "state", None)
         retry_after = getattr(state, "retry_after", None) if state is not None else None
+        capture_event(
+            distinct_id="system:rate_limit",
+            event="llm_rate_limited",
+            properties={
+                "model_key": model_key,
+                "kind": "tpm",
+                "route": route,
+                "retry_after_s": retry_after,
+            },
+        )
         raise LlmRateLimited(kind="tpm", model_key=model_key, route=route, retry_after_s=retry_after)
+    _record_limiter_infra_success()

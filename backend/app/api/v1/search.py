@@ -1,7 +1,5 @@
 """Search API endpoint - POST /v1/search with Redis streaming."""
 import asyncio
-import base64
-import gzip
 import time
 from datetime import datetime
 from typing import List
@@ -13,7 +11,6 @@ import httpx
 import json
 import redis.asyncio as redis
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
 from sse_starlette.sse import EventSourceResponse
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 
@@ -22,6 +19,7 @@ from app.core import get_settings, logger
 from app.core.redis_client import get_app_redis
 from app.core.telemetry import trace_span
 from app.db import get_db_connection, set_rls_user, queries
+from app.integrations.posthog_client import capture_event, capture_event_with_error
 
 from app.platforms import (
     PLATFORM_ADAPTERS,
@@ -33,6 +31,10 @@ from app.storage import upload_raw_json_gz
 from app.media import download_assets_batch
 from app.schemas import SearchRequest, LoadMoreRequest
 from app.services.cloud_tasks import cloud_tasks
+from app.services.telemetry_payloads import (
+    build_platform_result_props,
+    build_search_completed_props,
+)
 from app.services.cdn_signer import bulk_sign_gcs_uris, should_sign_asset
 from app.realtime.stream_hub import stream_id_gt
 
@@ -42,15 +44,6 @@ def _is_terminal_payload(payload_str: str | None) -> bool:
     if not payload_str:
         return False
     return ('"type": "done"' in payload_str) or ('"type": "error"' in payload_str)
-
-def _is_deadlock_error(err: Exception) -> bool:
-    if isinstance(err, DBAPIError):
-        orig = err.orig
-        if getattr(orig, "sqlstate", None) == "40P01":
-            return True
-    if getattr(err, "sqlstate", None) == "40P01":
-        return True
-    return "deadlock detected" in str(err).lower()
 
 
 @trace_span("search.call_platform")
@@ -165,6 +158,7 @@ async def search_worker(
     query: str,
     inputs: dict,
     redis_client: redis.Redis,
+    dispatched_at: float | None = None,
 ):
     """
     Background worker that:
@@ -177,6 +171,24 @@ async def search_worker(
     r = redis_client
     stream_key = f"search:{search_id}:stream"
     stream_maxlen = settings.REDIS_STREAM_MAXLEN_SEARCH
+    
+    start_time = time.time()
+    queue_duration_ms = 0
+    if dispatched_at:
+        queue_duration_ms = int((start_time - dispatched_at) * 1000)
+
+    # Telemetry: Search Started
+    capture_event(
+        distinct_id=str(user_uuid),
+        event="search_started",
+        properties={
+            "search_id": str(search_id),
+            "queue_duration_ms": queue_duration_ms,
+            "platform_count": len(inputs),
+            "platforms": list(inputs.keys()),
+            "source": "backend_search_worker",
+        }
+    )
     
     collected_results: List[PlatformCallResult] = []
     
@@ -204,7 +216,18 @@ async def search_worker(
             for coro in asyncio.as_completed(tasks):
                 result: PlatformCallResult = await coro
                 collected_results.append(result)
-                
+
+                # Per-platform telemetry
+                capture_event(
+                    distinct_id=str(user_uuid),
+                    event="platform_search_completed",
+                    properties=build_platform_result_props(
+                        search_id=search_id,
+                        result=result,
+                        source="backend_search_worker",
+                    ),
+                )
+
                 # Transform and push to Redis
                 event_data = transform_result_to_stream_item(result)
                 await r.xadd(
@@ -213,28 +236,33 @@ async def search_worker(
                     maxlen=stream_maxlen,
                     approximate=True,
                 )
-        
+
         # ========== DB WORK (happens after frontend is done) ==========
         assets_to_download = []
-        raw_archive_tasks = []
         raw_uris_by_platform: dict[str, str] = {}
 
         for result in collected_results:
             if result.success and result.parsed:
                 now = datetime.utcnow()
                 gcs_key = f"raw/{result.platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
-                raw_uris_by_platform[result.platform] = f"gs://{settings.GCS_BUCKET_RAW}/{gcs_key}"
-                raw_json_bytes = json.dumps(result.parsed.raw_response).encode("utf-8")
-                compressed = gzip.compress(raw_json_bytes)
-                compressed_b64 = base64.b64encode(compressed).decode("ascii")
-                raw_archive_tasks.append({
-                    "platform": result.platform,
-                    "search_id": str(search_id),
-                    "raw_json_compressed": compressed_b64,
-                    "gcs_key": gcs_key,
-                })
+                try:
+                    gcs_uri = await upload_raw_json_gz(
+                        platform=result.platform,
+                        search_id=search_id,
+                        raw_json=result.parsed.raw_response,
+                        key_override=gcs_key,
+                    )
+                    if gcs_uri:
+                        raw_uris_by_platform[result.platform] = gcs_uri
+                except Exception as archive_err:
+                    logger.warning("Failed to archive raw response for %s: %s", result.platform, archive_err)
+                finally:
+                    # Raw payload can be large; release it before DB batching.
+                    result.parsed.raw_response = {}
         
-        max_attempts = 3
+        # Cloud Tasks + CloudTaskExecutor already handle retry policy.
+        # Keep in-handler DB attempts to 1 to avoid retry multiplication.
+        max_attempts = 1
         for attempt in range(max_attempts):
             assets_to_download = []
             try:
@@ -334,32 +362,8 @@ async def search_worker(
                     await conn.commit()
                     logger.info(f"Saved search {search_id} with {rank} results (batch mode)")
                 break
-            except Exception as e:
-                if _is_deadlock_error(e) and attempt < max_attempts - 1:
-                    logger.warning(
-                        "Deadlock detected for search %s, retrying (%s/%s)",
-                        search_id,
-                        attempt + 1,
-                        max_attempts,
-                    )
-                    await asyncio.sleep(0.2 * (attempt + 1))
-                    continue
+            except Exception:
                 raise
-
-        if raw_archive_tasks:
-            for payload in raw_archive_tasks:
-                try:
-                    await cloud_tasks.create_http_task(
-                        queue_name=settings.QUEUE_RAW_ARCHIVE,
-                        relative_uri="/v1/tasks/raw/archive",
-                        payload=payload,
-                    )
-                except Exception as task_err:
-                    logger.warning(
-                        "Failed to enqueue raw archive task for %s: %s",
-                        payload.get("platform"),
-                        task_err,
-                    )
 
         # ========== FINISH STREAMING ==========
         # Push done event - frontend stops loading here
@@ -370,22 +374,52 @@ async def search_worker(
             approximate=True,
         )
         await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
+
+        total_results = sum(
+            len(result.parsed.items) if result.success and result.parsed else 0
+            for result in collected_results
+        )
+        capture_event(
+            distinct_id=str(user_uuid),
+            event="search_completed",
+            properties=build_search_completed_props(
+                search_id=search_id,
+                queue_duration_ms=queue_duration_ms,
+                start_time_s=start_time,
+                platform_count=len(inputs),
+                result_count_total=total_results,
+                success=True,
+                source="backend_search_worker",
+            ),
+        )
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         # GCS uploads handled via Cloud Tasks above
         
-        # Media downloads: Fan-out via Cloud Tasks
+        # Media downloads: enqueue in batches to reduce DB claim/finalize query pressure.
         if assets_to_download:
-            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks to Cloud Tasks...")
-            for asset_info in assets_to_download:
+            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            dispatched_at = time.time()
+            enqueue_payloads = [
+                {
+                    "asset_id": str(asset_info["id"]),
+                    "platform": asset_info["platform"],
+                    "external_id": asset_info["external_id"],
+                    "attempt_no": int(asset_info.get("attempt_no", 0) or 0),
+                    "dispatched_at": dispatched_at,
+                }
+                for asset_info in assets_to_download
+            ]
+            logger.debug(
+                "Dispatching %s media download tasks to Cloud Tasks in batches of %s...",
+                len(enqueue_payloads),
+                batch_size,
+            )
+            for idx in range(0, len(enqueue_payloads), batch_size):
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                     relative_uri="/v1/tasks/media/download",
-                    payload={
-                        "asset_id": str(asset_info["id"]),
-                        "platform": asset_info["platform"],
-                        "external_id": asset_info["external_id"]
-                    }
+                    payload=enqueue_payloads[idx: idx + batch_size],
                 )
         
     except Exception as e:
@@ -415,6 +449,23 @@ async def search_worker(
                 approximate=True,
             )
             await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
+            
+            # Telemetry: Search Failed
+            capture_event_with_error(
+                distinct_id=str(user_uuid),
+                event="search_completed",
+                exception=e,
+                properties=build_search_completed_props(
+                    search_id=search_id,
+                    queue_duration_ms=queue_duration_ms,
+                    start_time_s=start_time,
+                    platform_count=len(inputs),
+                    result_count_total=0,
+                    success=False,
+                    source="backend_search_worker",
+                    error=str(e),
+                ),
+            )
         except Exception:
             pass
 
@@ -472,7 +523,18 @@ async def load_more_worker(
             for coro in asyncio.as_completed(tasks):
                 result: PlatformCallResult = await coro
                 collected_results.append(result)
-                
+
+                # Per-platform telemetry for load_more
+                capture_event(
+                    distinct_id=str(user_uuid),
+                    event="platform_load_more_completed",
+                    properties=build_platform_result_props(
+                        search_id=search_id,
+                        result=result,
+                        source="backend_load_more_worker",
+                    ),
+                )
+
                 # Transform and push to Redis
                 event_data = transform_result_to_stream_item(result)
                 await r.xadd(
@@ -481,28 +543,32 @@ async def load_more_worker(
                     maxlen=stream_maxlen,
                     approximate=True,
                 )
-        
+
         # ========== DB WORK ==========
         assets_to_download = []
-        raw_archive_tasks = []
         raw_uris_by_platform: dict[str, str] = {}
 
         for result in collected_results:
             if result.success and result.parsed:
                 now = datetime.utcnow()
                 gcs_key = f"raw/{result.platform}/{now.year}/{now.month:02d}/{now.day:02d}/{search_id}.json.gz"
-                raw_uris_by_platform[result.platform] = f"gs://{settings.GCS_BUCKET_RAW}/{gcs_key}"
-                raw_json_bytes = json.dumps(result.parsed.raw_response).encode("utf-8")
-                compressed = gzip.compress(raw_json_bytes)
-                compressed_b64 = base64.b64encode(compressed).decode("ascii")
-                raw_archive_tasks.append({
-                    "platform": result.platform,
-                    "search_id": str(search_id),
-                    "raw_json_compressed": compressed_b64,
-                    "gcs_key": gcs_key,
-                })
+                try:
+                    gcs_uri = await upload_raw_json_gz(
+                        platform=result.platform,
+                        search_id=search_id,
+                        raw_json=result.parsed.raw_response,
+                        key_override=gcs_key,
+                    )
+                    if gcs_uri:
+                        raw_uris_by_platform[result.platform] = gcs_uri
+                except Exception as archive_err:
+                    logger.warning("Failed to archive raw response for %s: %s", result.platform, archive_err)
+                finally:
+                    result.parsed.raw_response = {}
 
-        max_attempts = 3
+        # Cloud Tasks + CloudTaskExecutor already handle retry policy.
+        # Keep in-handler DB attempts to 1 to avoid retry multiplication.
+        max_attempts = 1
         for attempt in range(max_attempts):
             assets_to_download = []
             try:
@@ -597,32 +663,8 @@ async def load_more_worker(
                     await conn.commit()
                     logger.info(f"Load more for search {search_id}: added {len(items_with_rank)} results")
                 break
-            except Exception as e:
-                if _is_deadlock_error(e) and attempt < max_attempts - 1:
-                    logger.warning(
-                        "Deadlock detected for load more %s, retrying (%s/%s)",
-                        search_id,
-                        attempt + 1,
-                        max_attempts,
-                    )
-                    await asyncio.sleep(0.2 * (attempt + 1))
-                    continue
+            except Exception:
                 raise
-
-        if raw_archive_tasks:
-            for payload in raw_archive_tasks:
-                try:
-                    await cloud_tasks.create_http_task(
-                        queue_name=settings.QUEUE_RAW_ARCHIVE,
-                        relative_uri="/v1/tasks/raw/archive",
-                        payload=payload,
-                    )
-                except Exception as task_err:
-                    logger.warning(
-                        "Failed to enqueue raw archive task for %s: %s",
-                        payload.get("platform"),
-                        task_err,
-                    )
 
         # ========== FINISH STREAMING ==========
         await r.xadd(
@@ -635,16 +677,28 @@ async def load_more_worker(
         
         # ========== FIRE-AND-FORGET BACKGROUND TASKS ==========
         if assets_to_download:
-            logger.debug(f"Dispatching {len(assets_to_download)} media download tasks for load_more...")
-            for asset_info in assets_to_download:
+            batch_size = max(1, int(getattr(settings, "MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE", 50)))
+            dispatched_at = time.time()
+            enqueue_payloads = [
+                {
+                    "asset_id": str(asset_info["id"]),
+                    "platform": asset_info["platform"],
+                    "external_id": asset_info["external_id"],
+                    "attempt_no": int(asset_info.get("attempt_no", 0) or 0),
+                    "dispatched_at": dispatched_at,
+                }
+                for asset_info in assets_to_download
+            ]
+            logger.debug(
+                "Dispatching %s media download tasks for load_more in batches of %s...",
+                len(enqueue_payloads),
+                batch_size,
+            )
+            for idx in range(0, len(enqueue_payloads), batch_size):
                 await cloud_tasks.create_http_task(
                     queue_name=settings.QUEUE_MEDIA_DOWNLOAD,
                     relative_uri="/v1/tasks/media/download",
-                    payload={
-                        "asset_id": str(asset_info["id"]),
-                        "platform": asset_info["platform"],
-                        "external_id": asset_info["external_id"]
-                    }
+                    payload=enqueue_payloads[idx: idx + batch_size],
                 )
         
     except Exception as e:
@@ -738,8 +792,6 @@ async def create_search(
             mode="live",
             status="running",
         )
-        from app.db.queries import streaks as streak_queries
-        await streak_queries.record_activity(conn, user_uuid, "search", timezone=timezone)
         # analytics outbox removed
         await conn.commit()
 
@@ -752,7 +804,9 @@ async def create_search(
             "search_id": str(search_id),
             "user_uuid": str(user_uuid),
             "query": request.query,
+            "query": request.query,
             "inputs": request.inputs,
+            "dispatched_at": time.time(),
         },
     )
     

@@ -285,7 +285,7 @@ async def get_trending_niches(
 
     try:
         # Init model with Google Search
-        llm = init_chat_model("google/gemini-3-pro-preview")
+        llm = init_chat_model("google/gemini-3-flash-preview")
         llm = llm.bind_tools([{"google_search": {}}])
         structured_llm = llm.with_structured_output(TrendingNichesResponse)
         

@@ -9,7 +9,10 @@ from app.core.settings import get_settings
 
 import firebase_admin
 from firebase_admin import auth, credentials
-from fastapi import Cookie, Header, HTTPException
+from fastapi import Cookie, Header, HTTPException, Request
+from opentelemetry import trace
+
+from app.core.telemetry_context import update_request_telemetry
 
 _app = None
 
@@ -50,6 +53,7 @@ init_firebase()
 
 
 async def get_current_user(
+    request: Request,
     authorization: str = Header(default=""),
     session: str | None = Cookie(default=None),
 ) -> AuthUser:
@@ -84,12 +88,21 @@ async def get_current_user(
                 detail="Session expired. Please log out and log back in."
             )
 
-        return AuthUser(
+        auth_user = AuthUser(
             uid=decoded.get("uid"),
             db_user_id=UUID(db_user_id_str),
             email=decoded.get("email"),
             role=decoded.get("role", "free"),
         )
+
+        user_id = str(auth_user["db_user_id"])
+        update_request_telemetry(request, user_id=user_id)
+
+        span = trace.get_current_span()
+        if span is not None:
+            span.set_attribute("enduser.id", user_id)
+
+        return auth_user
     except HTTPException:
         raise
     except Exception:

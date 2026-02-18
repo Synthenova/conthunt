@@ -2,6 +2,7 @@
 
 import { auth } from "@/lib/firebaseClient";
 import { signOut } from "firebase/auth";
+import { toTelemetryHeaders, type TelemetryHeaderContext } from "@/lib/telemetry/context";
 
 /**
  * Shared API configuration for frontend.
@@ -60,7 +61,7 @@ export async function forceLogout() {
  */
 export async function authFetch(
     url: string,
-    options: RequestInit = {}
+    options: (RequestInit & { telemetry?: TelemetryHeaderContext }) = {}
 ): Promise<Response> {
     // If no currentUser, just throw - caller should wait for auth to init
     if (!auth?.currentUser) {
@@ -70,13 +71,17 @@ export async function authFetch(
     // Get cached token
     const token = await auth.currentUser.getIdToken();
 
+    const { telemetry, ...requestOptions } = options;
+    const telemetryHeaders = toTelemetryHeaders(telemetry);
+
     const headers = {
-        ...options.headers,
+        ...requestOptions.headers,
+        ...telemetryHeaders,
         "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
     };
 
-    const response = await fetch(url, { ...options, headers });
+    const response = await fetch(url, { ...requestOptions, headers });
 
     // Handle 401: Session expired - force full logout (backend explicitly rejected)
     if (response.status === 401) {
@@ -93,13 +98,14 @@ export async function authFetch(
         const freshToken = await auth.currentUser.getIdToken(true);
 
         const retryHeaders = {
-            ...options.headers,
+            ...requestOptions.headers,
+            ...telemetryHeaders,
             "Authorization": `Bearer ${freshToken}`,
             "Content-Type": "application/json",
         };
 
         // Retry the request with fresh token
-        const retryResponse = await fetch(url, { ...options, headers: retryHeaders });
+        const retryResponse = await fetch(url, { ...requestOptions, headers: retryHeaders });
         console.log("[authFetch] Retry complete, status:", retryResponse.status);
         return retryResponse;
     }

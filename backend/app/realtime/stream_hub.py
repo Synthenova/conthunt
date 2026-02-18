@@ -24,6 +24,8 @@ class StreamFanoutHub:
         self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
+        self._read_failures: int = 0
+        self._read_recoveries: int = 0
 
     async def start(self) -> None:
         if self._task:
@@ -62,6 +64,7 @@ class StreamFanoutHub:
                 self._last_ids.pop(stream_key, None)
 
     async def _reader_loop(self) -> None:
+        backoff_s = 0.5
         while not self._stop_event.is_set():
             async with self._lock:
                 if not self._subscribers:
@@ -79,12 +82,29 @@ class StreamFanoutHub:
             try:
                 results = await self._client.xread(streams, count=100, block=10000)
             except Exception as exc:
-                self._logger.warning("Stream hub read failed: %s", exc)
+                self._read_failures += 1
+                self._logger.warning(
+                    "Stream hub read failed: %s (failures=%s backoff=%.2fs)",
+                    exc,
+                    self._read_failures,
+                    backoff_s,
+                )
                 try:
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=backoff_s)
                 except asyncio.TimeoutError:
                     pass
+                backoff_s = min(backoff_s * 2.0, 5.0)
                 continue
+
+            if self._read_failures > 0:
+                self._read_recoveries += 1
+                self._logger.info(
+                    "Stream hub read recovered (recoveries=%s previous_failures=%s)",
+                    self._read_recoveries,
+                    self._read_failures,
+                )
+                self._read_failures = 0
+            backoff_s = 0.5
 
             if not results:
                 continue

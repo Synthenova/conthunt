@@ -182,15 +182,8 @@ async def record_activity(
             },
         )
     else:
-        await conn.execute(
-            text("""
-            UPDATE user_streaks
-            SET last_action_at = NOW(),
-                updated_at = NOW()
-            WHERE user_id = :user_id AND streak_type_id = :streak_type_id
-            """),
-            {"user_id": user_id, "streak_type_id": streak_type_id},
-        )
+        # Same-day duplicate activity: no-op to avoid unnecessary write churn.
+        pass
 
     return await _get_user_streak_by_type_id(conn, user_id, streak_type_id)
 

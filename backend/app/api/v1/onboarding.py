@@ -17,6 +17,7 @@ from app.schemas.onboarding import (
     CompleteStepRequest,
     SkipFlowRequest,
 )
+from app.integrations.posthog_client import capture_event
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -135,7 +136,7 @@ async def start_flow_endpoint(
 ):
     """
     Start or restart a tutorial flow.
-    
+
     - If flow not started: starts at step 1
     - If replay=true: resets to step 1, increments restart_count
     - If in-progress without replay: returns current state
@@ -143,15 +144,28 @@ async def start_flow_endpoint(
     flow = get_flow(request.flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail=f"Flow '{request.flow_id}' not found")
-    
+
     user_id = user["db_user_id"]
-    
+
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_id)
         result = await onboarding_queries.start_flow(
             conn, user_id, request.flow_id, request.replay
         )
-    
+
+    # Track onboarding flow start only after DB start succeeds
+    capture_event(
+        distinct_id=str(user_id),
+        event="onboarding_flow_started",
+        properties={
+            "flow_id": request.flow_id,
+            "flow_name": flow.name,
+            "replay": request.replay,
+            "status": result["status"],
+            "current_step": result["current_step"],
+        },
+    )
+
     return ProgressStatus(
         flow_id=result["flow_id"],
         status=result["status"],
@@ -182,7 +196,32 @@ async def complete_step_endpoint(
         result = await onboarding_queries.complete_step(
             conn, user_id, request.flow_id, flow.total_steps
         )
-    
+
+        # Track onboarding step completion
+        capture_event(
+            distinct_id=str(user_id),
+            event="onboarding_step_completed",
+            properties={
+                "flow_id": request.flow_id,
+                "flow_name": flow.name,
+                "step": result["current_step"],
+                "total_steps": flow.total_steps,
+                "status": result["status"],
+            },
+        )
+
+        # Track onboarding flow completion when finished
+        if result["status"] == "completed":
+            capture_event(
+                distinct_id=str(user_id),
+                event="onboarding_flow_completed",
+                properties={
+                    "flow_id": request.flow_id,
+                    "flow_name": flow.name,
+                    "total_steps": flow.total_steps,
+                },
+            )
+
     return ProgressStatus(
         flow_id=result["flow_id"],
         status=result["status"],
@@ -211,7 +250,19 @@ async def skip_flow_endpoint(
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_id)
         result = await onboarding_queries.skip_flow(conn, user_id, request.flow_id)
-    
+
+        # Track onboarding skip
+        capture_event(
+            distinct_id=str(user_id),
+            event="onboarding_flow_skipped",
+            properties={
+                "flow_id": request.flow_id,
+                "flow_name": flow.name,
+                "current_step": result["current_step"],
+                "total_steps": flow.total_steps,
+            },
+        )
+
     return ProgressStatus(
         flow_id=result["flow_id"],
         status=result["status"],

@@ -16,10 +16,20 @@ class CloudTasksService:
     def __init__(self):
         self.settings = get_settings()
         self.client = tasks_v2.CloudTasksClient()
-        # Local-dev safety valve: when we run tasks via asyncio.create_task(), those
-        # tasks execute in-process and can fan out without any Cloud Tasks dispatch cap.
-        # Bound local media downloads regardless of priority/semaphore bypass.
-        self._local_media_download_sem = asyncio.Semaphore(2)
+        self._local_media_download_normal_sem: asyncio.Semaphore | None = None
+        self._local_media_download_priority_sem: asyncio.Semaphore | None = None
+
+    def _get_local_media_download_semaphore(self, queue_name: str) -> asyncio.Semaphore | None:
+        """Local-only queue concurrency caps for media download tasks."""
+        if queue_name == self.settings.QUEUE_MEDIA_DOWNLOAD:
+            if self._local_media_download_normal_sem is None:
+                self._local_media_download_normal_sem = asyncio.Semaphore(1)
+            return self._local_media_download_normal_sem
+        if queue_name == self.settings.QUEUE_MEDIA_DOWNLOAD_PRIORITY:
+            if self._local_media_download_priority_sem is None:
+                self._local_media_download_priority_sem = asyncio.Semaphore(10)
+            return self._local_media_download_priority_sem
+        return None
 
     def get_parent(self, queue_name: str) -> str:
         return self.client.queue_path(
@@ -33,7 +43,7 @@ class CloudTasksService:
         self,
         queue_name: str,
         relative_uri: str,
-        payload: dict | None = None,
+        payload: dict | list[dict] | None = None,
         schedule_seconds: int | None = None,
         dispatch_deadline_seconds: int | None = None,
     ) -> str:
@@ -42,14 +52,26 @@ class CloudTasksService:
         """
         if not self.settings.API_BASE_URL or "localhost" in self.settings.API_BASE_URL:            
             import asyncio
-            async def _run():
-                # Local task execution
-                # Ensure DB slots are charged against the "tasks" semaphore key, not the
-                # originating API request context.
-                with db_kind_override("tasks"):
-                    await self._run_local_task(relative_uri, payload)
+            local_media_sem = None
+            if relative_uri == "/v1/tasks/media/download":
+                local_media_sem = self._get_local_media_download_semaphore(queue_name)
 
-            asyncio.create_task(_run())
+            async def _run_single(local_payload):
+                with db_kind_override("tasks"):
+                    if local_media_sem is not None:
+                        async with local_media_sem:
+                            await self._run_local_task(relative_uri, local_payload)
+                    else:
+                        await self._run_local_task(relative_uri, local_payload)
+
+            # Local-only queue control for media downloads:
+            # - normal queue: 1 concurrent item
+            # - priority queue: 10 concurrent items
+            if relative_uri == "/v1/tasks/media/download" and isinstance(payload, list):
+                for item in payload:
+                    asyncio.create_task(_run_single(item))
+            else:
+                asyncio.create_task(_run_single(payload))
             return "local-task-id"
 
         url = f"{self.settings.API_BASE_URL}{relative_uri}"
@@ -88,65 +110,38 @@ class CloudTasksService:
             raise e
 
     @trace_span("cloud_tasks.run_local_task")
-    async def _run_local_task(self, uri: str, payload: dict | None):
+    async def _run_local_task(self, uri: str, payload: dict | list[dict] | None):
         """
         Execute task logic locally (mirroring app/api/v1/tasks.py).
         All tasks have proper error handling to mark DB status as failed.
         """
         from uuid import UUID
         
-        if not payload:
+        if payload is None:
             payload = {}
-             
+
         if uri == "/v1/tasks/gemini/analyze":
-            from app.api.v1.analysis import _execute_gemini_analysis
-            from app.db.queries.analysis import update_analysis_status
-            from app.db.queries.content import get_media_asset_by_id
-            import asyncio
-            
-            analysis_id = UUID(payload["analysis_id"])
-            media_asset_id = UUID(payload["media_asset_id"])
-            try:
-                # Mark as processing on pickup
-                async with get_db_connection() as conn:
-                    await update_analysis_status(conn, analysis_id, status="processing")
-                    await conn.commit()
-                
-                # Check if YouTube (no wait needed)
-                async with get_db_connection() as conn:
-                    asset = await get_media_asset_by_id(conn, media_asset_id)
-                source_url = asset.get("source_url", "") if asset else ""
-                is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
-                
-                # Wait for video to be ready (max 3 min) - non-YouTube only
-                if not is_youtube:
-                    for attempt in range(12):
-                        async with get_db_connection() as conn:
-                            asset = await get_media_asset_by_id(conn, media_asset_id)
-                        status = asset.get("status", "") if asset else ""
-                        if status in ("stored", "downloaded"):
-                            break
-                        if status == "failed":
-                            raise Exception("Video download failed")
-                        logger.debug(f"[LOCAL] Video not ready (status={status}), waiting... {attempt+1}/12")
-                        await asyncio.sleep(10)
-                    else:
-                        raise Exception("Video not ready after 2 min timeout")
-                
-                await _execute_gemini_analysis(
-                    analysis_id=analysis_id,
-                    media_asset_id=media_asset_id,
-                    video_uri=payload["video_uri"],
-                    chat_id=payload.get("chat_id"),
-                    user_id=payload.get("user_id"),
-                )
-            except Exception as e:
-                logger.error(f"[LOCAL] Gemini analysis failed: {e}", exc_info=True)
-                async with get_db_connection() as conn:
-                    await update_analysis_status(conn, analysis_id, status="failed", error=str(e))
-                    await conn.commit()
-                
-        elif uri == "/v1/tasks/twelvelabs/index":
+            from app.api.v1.tasks import AnalysisTaskPayload, _handle_gemini_analysis_batch
+
+            payloads = payload if isinstance(payload, list) else [payload]
+            parsed = [AnalysisTaskPayload.model_validate(item or {}) for item in payloads]
+            await _handle_gemini_analysis_batch(parsed)
+            return
+
+        if uri == "/v1/tasks/media/download":
+            from app.api.v1.tasks import MediaDownloadTaskPayload, _handle_media_download_batch
+
+            payloads = payload if isinstance(payload, list) else [payload]
+            parsed = [MediaDownloadTaskPayload.model_validate(item or {}) for item in payloads]
+            await _handle_media_download_batch(parsed)
+            return
+
+        if isinstance(payload, list):
+            for item in payload:
+                await self._run_local_task(uri, item)
+            return
+             
+        if uri == "/v1/tasks/twelvelabs/index":
             from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
             from app.db.queries import update_twelvelabs_asset_status
             from app.db.queries.content import get_media_asset_by_id
@@ -186,49 +181,28 @@ class CloudTasksService:
                     )
                     await conn.commit()
                 
-        elif uri == "/v1/tasks/media/download":
-            from app.media.downloader import download_asset_with_claim, update_asset_failed
-            import httpx
-
-            asset_id = UUID(payload["asset_id"])
-            is_priority = payload.get("priority", False)
-            async with httpx.AsyncClient(timeout=self.settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
-                try:
-                    if is_priority:
-                        # Priority downloads should bypass local-dev caps (mirrors Cloud Tasks dispatch control).
-                        await download_asset_with_claim(
-                            http_client=client,
-                            asset_id=asset_id,
-                            platform=payload["platform"],
-                            external_id=payload["external_id"],
-                            skip_semaphore=True,
-                        )
-                    else:
-                        async with self._local_media_download_sem:
-                            await download_asset_with_claim(
-                                http_client=client,
-                                asset_id=asset_id,
-                                platform=payload["platform"],
-                                external_id=payload["external_id"],
-                                skip_semaphore=False,
-                            )
-                except Exception as e:
-                    logger.error(f"[LOCAL] Media download failed: {e}", exc_info=True)
-                    async with get_db_connection() as conn:
-                        await update_asset_failed(conn, asset_id, str(e))
-        
         elif uri == "/v1/tasks/raw/archive":
-            from app.storage.raw_archive import upload_raw_compressed
+            from app.storage.raw_archive import upload_raw_compressed, upload_raw_json_gz
             import base64
             
             try:
-                compressed_bytes = base64.b64decode(payload["raw_json_compressed"])
-                await upload_raw_compressed(
-                    platform=payload["platform"],
-                    search_id=UUID(payload["search_id"]),
-                    compressed_data=compressed_bytes,
-                    key_override=payload.get("gcs_key"),
-                )
+                if payload.get("raw_json") is not None:
+                    await upload_raw_json_gz(
+                        platform=payload["platform"],
+                        search_id=UUID(payload["search_id"]),
+                        raw_json=payload["raw_json"],
+                        key_override=payload.get("gcs_key"),
+                    )
+                elif payload.get("raw_json_compressed"):
+                    compressed_bytes = base64.b64decode(payload["raw_json_compressed"])
+                    await upload_raw_compressed(
+                        platform=payload["platform"],
+                        search_id=UUID(payload["search_id"]),
+                        compressed_data=compressed_bytes,
+                        key_override=payload.get("gcs_key"),
+                    )
+                else:
+                    raise ValueError("raw archive payload missing both raw_json and raw_json_compressed")
             except Exception as e:
                 logger.error(f"[LOCAL] Raw archive failed: {e}", exc_info=True)
                 # No DB row for raw archive - just log
@@ -308,6 +282,7 @@ class CloudTasksService:
             from app.api.v1.chats import stream_generator_to_redis
             from app.agent.runtime import create_agent_graph
             from app.core.redis_client import get_redis_from_state
+            from app.core.telemetry_context import merge_telemetry, telemetry_from_mapping
 
             chat_id = UUID(payload["chat_id"])
             try:
@@ -315,6 +290,14 @@ class CloudTasksService:
                 try:
                     from app.main import app as main_app
                     redis_client = get_redis_from_state(main_app.state)
+                    telemetry_ctx = merge_telemetry(
+                        telemetry_from_mapping(payload),
+                        feature=payload.get("feature") or "chat",
+                        operation=payload.get("operation") or "stream_response",
+                        subject_type=payload.get("subject_type") or "chat_message",
+                        subject_id=payload.get("subject_id") or payload.get("message_client_id"),
+                        message_client_id=payload.get("message_client_id"),
+                    )
                     await stream_generator_to_redis(
                         graph=graph,
                         chat_id=str(chat_id),
@@ -326,6 +309,7 @@ class CloudTasksService:
                         filters=payload.get("filters") or {},
                         user_id=payload.get("user_id"),
                         redis_client=redis_client,
+                        telemetry=telemetry_ctx,
                     )
                 finally:
                     try:

@@ -2,6 +2,7 @@
 import json
 from uuid import UUID, uuid4
 from datetime import datetime
+from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -87,16 +88,24 @@ async def claim_or_create_analysis(
         Tuple of (analysis_id, status, created_at, was_created)
     """
     analysis_id = uuid4()
-    # We use a dummy UPDATE to ensure we get the row back on conflict
     result = await conn.execute(
         text("""
-            INSERT INTO video_analyses (
-                id, media_asset_id, prompt, status, analysis_result
+            WITH inserted AS (
+                INSERT INTO video_analyses (
+                    id, media_asset_id, prompt, status, analysis_result
+                )
+                VALUES (:id, :media_asset_id, :prompt, 'queued', :analysis_result)
+                ON CONFLICT (media_asset_id) DO NOTHING
+                RETURNING id, status, created_at, TRUE AS was_inserted
             )
-            VALUES (:id, :media_asset_id, :prompt, 'queued', :analysis_result)
-            ON CONFLICT (media_asset_id) DO UPDATE
-            SET media_asset_id = EXCLUDED.media_asset_id
-            RETURNING id, status, created_at, (xmax = 0) AS was_inserted
+            SELECT id, status, created_at, was_inserted
+            FROM inserted
+            UNION ALL
+            SELECT va.id, va.status, va.created_at, FALSE AS was_inserted
+            FROM video_analyses va
+            WHERE va.media_asset_id = :media_asset_id
+              AND NOT EXISTS (SELECT 1 FROM inserted)
+            LIMIT 1
         """),
         {
             "id": analysis_id,
@@ -106,7 +115,232 @@ async def claim_or_create_analysis(
         }
     )
     row = result.fetchone()
+    if not row:
+        raise RuntimeError("claim_or_create_analysis: failed to fetch analysis row")
     return (row[0], row[1], row[2], row[3])
+
+
+async def claim_or_create_analyses_batch(
+    conn: AsyncConnection,
+    media_asset_ids: list[UUID],
+    prompt: str,
+) -> dict[UUID, dict[str, Any]]:
+    """
+    Batch variant of claim_or_create_analysis.
+
+    Returns:
+        {media_asset_id: {"analysis_id": UUID, "status": str, "created_at": datetime, "was_created": bool}}
+    """
+    if not media_asset_ids:
+        return {}
+
+    # Deduplicate while preserving stable order
+    deduped_ids = list(dict.fromkeys(media_asset_ids))
+    payload = [
+        {
+            "id": str(uuid4()),
+            "media_asset_id": str(media_asset_id),
+            "prompt": prompt,
+            "analysis_result": "{}",
+        }
+        for media_asset_id in deduped_ids
+    ]
+
+    inserted_result = await conn.execute(
+        text(
+            """
+            INSERT INTO video_analyses (
+                id, media_asset_id, prompt, status, analysis_result
+            )
+            SELECT
+                x.id, x.media_asset_id, x.prompt, 'queued', x.analysis_result::jsonb
+            FROM jsonb_to_recordset(CAST(:payload AS jsonb)) AS x(
+                id uuid, media_asset_id uuid, prompt text, analysis_result text
+            )
+            ON CONFLICT (media_asset_id) DO NOTHING
+            RETURNING media_asset_id
+            """
+        ),
+        {"payload": json.dumps(payload)},
+    )
+    inserted_media_asset_ids = {row[0] for row in inserted_result.fetchall()}
+
+    rows_result = await conn.execute(
+        text(
+            """
+            SELECT id, media_asset_id, status, created_at
+            FROM video_analyses
+            WHERE media_asset_id = ANY(:media_asset_ids)
+            """
+        ),
+        {"media_asset_ids": deduped_ids},
+    )
+
+    out: dict[UUID, dict[str, Any]] = {}
+    for row in rows_result.fetchall():
+        media_asset_id = row[1]
+        out[media_asset_id] = {
+            "analysis_id": row[0],
+            "status": row[2],
+            "created_at": row[3],
+            "was_created": media_asset_id in inserted_media_asset_ids,
+        }
+    return out
+
+
+async def rescue_stale_or_failed_analyses_batch(
+    conn: AsyncConnection,
+    analyses: list[dict[str, Any]],
+    stale_after_seconds: int = 600,
+) -> set[UUID]:
+    """
+    Reset stale/failed analyses to queued in one update.
+    """
+    if not analyses:
+        return set()
+
+    now_utc = datetime.utcnow()
+    to_rescue: list[UUID] = []
+    for row in analyses:
+        status = row.get("status")
+        created_at = row.get("created_at")
+        should_rescue = status == "failed"
+
+        if not should_rescue and status in ("queued", "processing") and created_at:
+            cmp_now = datetime.utcnow()
+            try:
+                if created_at.tzinfo is not None:
+                    cmp_now = datetime.now(created_at.tzinfo)
+            except Exception:
+                cmp_now = now_utc
+            if (cmp_now - created_at).total_seconds() > stale_after_seconds:
+                should_rescue = True
+
+        if should_rescue and row.get("analysis_id"):
+            to_rescue.append(row["analysis_id"])
+
+    if not to_rescue:
+        return set()
+
+    await conn.execute(
+        text(
+            """
+            UPDATE video_analyses
+            SET status = 'queued',
+                created_at = :now_utc,
+                error = NULL
+            WHERE id = ANY(:analysis_ids)
+            """
+        ),
+        {"analysis_ids": to_rescue, "now_utc": now_utc},
+    )
+    return set(to_rescue)
+
+
+async def update_analysis_status_processing_batch(
+    conn: AsyncConnection,
+    analysis_ids: list[UUID],
+) -> None:
+    if not analysis_ids:
+        return
+    await conn.execute(
+        text(
+            """
+            UPDATE video_analyses
+            SET status = 'processing'
+            WHERE id = ANY(:analysis_ids)
+            """
+        ),
+        {"analysis_ids": analysis_ids},
+    )
+
+
+async def update_analysis_status_completed_batch(
+    conn: AsyncConnection,
+    completed_rows: list[dict[str, Any]],
+) -> None:
+    """
+    completed_rows format:
+      [{"analysis_id": UUID, "analysis": str}, ...]
+    """
+    if not completed_rows:
+        return
+
+    payload = [
+        {
+            "analysis_id": str(row["analysis_id"]),
+            "analysis_result": json.dumps({"analysis": row["analysis"]}),
+        }
+        for row in completed_rows
+    ]
+    await conn.execute(
+        text(
+            """
+            UPDATE video_analyses va
+            SET status = 'completed',
+                analysis_result = x.analysis_result::jsonb,
+                error = NULL
+            FROM jsonb_to_recordset(CAST(:payload AS jsonb)) AS x(
+                analysis_id uuid, analysis_result text
+            )
+            WHERE va.id = x.analysis_id
+            """
+        ),
+        {"payload": json.dumps(payload)},
+    )
+
+
+async def update_analysis_status_failed_batch(
+    conn: AsyncConnection,
+    failed_rows: list[dict[str, Any]],
+) -> None:
+    """
+    failed_rows format:
+      [{"analysis_id": UUID, "error": str}, ...]
+    """
+    if not failed_rows:
+        return
+
+    payload = [
+        {
+            "analysis_id": str(row["analysis_id"]),
+            "error": (str(row.get("error") or "Analysis failed"))[:1000],
+        }
+        for row in failed_rows
+    ]
+    await conn.execute(
+        text(
+            """
+            UPDATE video_analyses va
+            SET status = 'failed',
+                error = x.error
+            FROM jsonb_to_recordset(CAST(:payload AS jsonb)) AS x(
+                analysis_id uuid, error text
+            )
+            WHERE va.id = x.analysis_id
+            """
+        ),
+        {"payload": json.dumps(payload)},
+    )
+
+
+async def update_analysis_status_queued_batch(
+    conn: AsyncConnection,
+    analysis_ids: list[UUID],
+) -> None:
+    if not analysis_ids:
+        return
+    await conn.execute(
+        text(
+            """
+            UPDATE video_analyses
+            SET status = 'queued',
+                error = NULL
+            WHERE id = ANY(:analysis_ids)
+            """
+        ),
+        {"analysis_ids": analysis_ids},
+    )
 
 
 

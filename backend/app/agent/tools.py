@@ -171,9 +171,27 @@ async def report_chosen_videos(
                 "criteria_slug": criteria_slug,
                 "chosen": normalized,
                 "chosen_video_ids": chosen_video_ids,
-                "items": items,
+                "counts": {
+                    "chosen_count": len(chosen_video_ids),
+                    "unresolved_count": len(unresolved_refs),
+                },
             },
         )
+
+        # Tiny dedupe index for agent memory (cheap to read).
+        for entry in normalized:
+            if not entry.get("media_asset_id"):
+                continue
+            await gcs_store.append_jsonl(
+                str(chat_id),
+                "state/chosen_refs.jsonl",
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ref": entry.get("ref"),
+                    "criteria_slug": criteria_slug,
+                    "score": int(entry.get("score") or 0),
+                },
+            )
 
     return {
         "criteria_slug": criteria_slug,
@@ -766,10 +784,11 @@ Allowed values:
                 return {"error": f"Failed to start search for '{keyword}': {str(e)}"}
             return None
 
-        # Execute parallel searches (cap at 5 total)
+        # Execute parallel searches (cap configurable)
         tasks = []
+        max_searches = max(1, int(getattr(settings, "SEARCH_ENQUEUE_BATCH_SIZE", 5)))
         # sort_order: -1, -2, -3...
-        for idx, q in enumerate(queries[:5]):
+        for idx, q in enumerate(queries[:max_searches]):
             tasks.append(_execute_single_search(q, -(idx + 1)))
         
         results = await asyncio.gather(*tasks)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -17,10 +18,7 @@ from langchain_core.tools import tool
 from app.agent.deep_research import cache, gcs_store
 from app.agent.deep_research.justification import answer_and_score
 from app.agent.deep_research.progress import read_progress
-from app.core import get_settings
 from app.core.logging import logger
-
-settings = get_settings()
 
 
 def _now_iso() -> str:
@@ -36,6 +34,47 @@ def _safe_int(val: Any) -> int:
 
 def _get_chat_id(config: RunnableConfig) -> str | None:
     return (config.get("configurable") or {}).get("chat_id")
+
+
+async def _preflight_counts(
+    chat_id: str,
+    search_names: list[str],
+    top_per_search: int,
+) -> tuple[int, int, int, list[str]]:
+    """Return (projected_total, uncapped_total, suggested_top_per_search, errors)."""
+    progress = await read_progress(chat_id)
+
+    query_to_num: dict[str, int] = {}
+    for s in progress.get("searches_v2", []):
+        query_to_num[s.get("query", "")] = int(s["number"])
+
+    counts: list[int] = []
+    errors: list[str] = []
+
+    for name in search_names:
+        search_number = query_to_num.get(name)
+        if search_number is None:
+            errors.append(f"Search not found: '{name}'")
+            continue
+
+        slim = await gcs_store.read_json(chat_id, f"searches/search_{search_number}.json")
+        if not isinstance(slim, dict):
+            counts.append(0)
+            continue
+
+        item_count = slim.get("item_count")
+        if item_count is None:
+            items = slim.get("items") if isinstance(slim.get("items"), list) else []
+            item_count = len(items)
+        counts.append(_safe_int(item_count))
+
+    projected_total = sum(min(c, top_per_search) for c in counts)
+    uncapped_total = sum(counts)
+
+    nonempty = sum(1 for c in counts if c > 0)
+    suggested_top = max(1, math.ceil(100 / max(1, nonempty)))
+
+    return projected_total, uncapped_total, suggested_top, errors
 
 
 async def _load_videos_for_searches(
@@ -67,22 +106,16 @@ async def _load_videos_for_searches(
             errors.append(f"Search not found: '{name}'")
             continue
 
-        # Try ranked file first, fallback to regular
-        ranked = await gcs_store.read_json(
-            chat_id, f"searches/search_{search_number}_ranked.json"
+        slim = await gcs_store.read_json(
+            chat_id, f"searches/search_{search_number}.json"
         )
-        if isinstance(ranked, dict) and ranked.get("ranked_items"):
-            items = ranked["ranked_items"]
-            logger.info("[DEEP_RESEARCH] search '%s' (N=%d): loaded %d items from _ranked.json", name, search_number, len(items))
-        elif isinstance(ranked, dict) and ranked.get("items"):
-            items = ranked["items"]
-            logger.info("[DEEP_RESEARCH] search '%s' (N=%d): loaded %d items from _ranked.json (items key)", name, search_number, len(items))
-        else:
-            slim = await gcs_store.read_json(
-                chat_id, f"searches/search_{search_number}.json"
-            )
-            items = (slim or {}).get("items", []) if isinstance(slim, dict) else []
-            logger.info("[DEEP_RESEARCH] search '%s' (N=%d): fallback to search.json, loaded %d items", name, search_number, len(items))
+        items = (slim or {}).get("items", []) if isinstance(slim, dict) else []
+        logger.info(
+            "[DEEP_RESEARCH] search '%s' (N=%d): loaded %d items from search.json",
+            name,
+            search_number,
+            len(items),
+        )
 
         # Load raw file for media_asset_id resolution
         raw = await gcs_store.read_json(
@@ -114,10 +147,10 @@ async def _load_videos_for_searches(
                 "video_id": vid,
                 "media_asset_id": media_asset_id,
                 "title": it.get("title") or raw_item.get("title") or "",
-                "platform": it.get("platform") or raw_item.get("platform") or "",
-                "creator": it.get("creator") or raw_item.get("creator_handle") or "",
-                "views": _safe_int(it.get("views") or metrics.get("view_count")),
-                "likes": _safe_int(it.get("likes") or metrics.get("like_count")),
+                "platform": raw_item.get("platform") or "",
+                "creator": raw_item.get("creator_handle") or "",
+                "views": _safe_int(metrics.get("view_count")),
+                "likes": _safe_int(metrics.get("like_count")),
                 "caption": it.get("caption") or raw_item.get("caption") or "",
                 "hashtags": it.get("hashtags") or raw_item.get("hashtags") or [],
             })
@@ -178,6 +211,37 @@ async def research_videos(
 
     slug = slug.strip()
 
+    projected_total, uncapped_total, suggested_top, preflight_errors = await _preflight_counts(
+        chat_id=chat_id,
+        search_names=searches,
+        top_per_search=top_per_search,
+    )
+
+    # Enforced failure case 1: projected set is too large.
+    if projected_total > 120:
+        return {
+            "error": "Too many candidates for current top_per_search",
+            "status": "too_many_candidates",
+            "projected_total": projected_total,
+            "uncapped_total": uncapped_total,
+            "target_window": {"min": 80, "max": 120},
+            "suggested_top_per_search": suggested_top,
+            "search_errors": preflight_errors,
+        }
+
+    # Enforced failure case 2: projected set is too small ONLY because top_per_search is too low.
+    # If market supply itself is low (uncapped_total < 80), this is a pass case and analysis proceeds.
+    if projected_total < 80 and uncapped_total >= 80:
+        return {
+            "error": "Too few candidates due to current top_per_search",
+            "status": "too_few_due_to_top_per_search",
+            "projected_total": projected_total,
+            "uncapped_total": uncapped_total,
+            "target_window": {"min": 80, "max": 120},
+            "suggested_top_per_search": suggested_top,
+            "search_errors": preflight_errors,
+        }
+
     # Load and merge videos from all searches
     logger.info("[DEEP_RESEARCH] research_videos START slug=%s searches=%s top_per_search=%d", slug, searches, top_per_search)
     merged, load_errors = await _load_videos_for_searches(
@@ -191,70 +255,63 @@ async def research_videos(
             "search_errors": load_errors,
         }
 
-    concurrency = int(getattr(settings, "DEEP_RESEARCH_ANALYSIS_CONCURRENCY", 50))
-    sem = asyncio.Semaphore(concurrency)
+    analysis_by_asset, analysis_errors = await cache.ensure_analyses_batch(
+        chat_id,
+        [str(video["media_asset_id"]) for video in merged],
+        config,
+    )
+
     results: list[dict] = [None] * len(merged)  # type: ignore[list-item]
     failed_count = 0
 
     async def _process_one(idx: int, video: dict) -> None:
         nonlocal failed_count
-        async with sem:
-            try:
-                logger.info("[DEEP_RESEARCH] processing %d/%d ref=%s media_asset=%s", idx + 1, len(merged), video["ref"], video["media_asset_id"])
-                # Ensure analysis exists (runs on-the-fly if absent)
-                analysis_str = await cache.ensure_analysis(
-                    chat_id, video["media_asset_id"], config
-                )
-                logger.info("[DEEP_RESEARCH] analysis ready for ref=%s (len=%d)", video["ref"], len(analysis_str))
+        try:
+            logger.info("[DEEP_RESEARCH] processing %d/%d ref=%s media_asset=%s", idx + 1, len(merged), video["ref"], video["media_asset_id"])
+            media_asset_id = str(video["media_asset_id"])
+            analysis_str = analysis_by_asset.get(media_asset_id)
+            if not analysis_str:
+                raise RuntimeError(analysis_errors.get(media_asset_id) or "video analysis missing")
+            logger.info("[DEEP_RESEARCH] analysis ready for ref=%s (len=%d)", video["ref"], len(analysis_str))
 
-                # Build compact metadata string for the LLM
-                meta = (
-                    f"Platform: {video['platform']} | Creator: {video['creator']} | "
-                    f"Views: {video['views']:,} | Likes: {video['likes']:,}\n"
-                    f"Caption: {video['caption'][:200]}\n"
-                    f"Hashtags: {', '.join(video['hashtags'][:10])}"
-                )
+            # Build compact metadata string for the LLM
+            meta = (
+                f"Platform: {video['platform']} | Creator: {video['creator']} | "
+                f"Views: {video['views']:,} | Likes: {video['likes']:,}\n"
+                f"Caption: {video['caption'][:200]}\n"
+                f"Hashtags: {', '.join(video['hashtags'][:10])}"
+            )
 
-                # LLM: answer question + score
-                result = await answer_and_score(
-                    question=question,
-                    title=video["title"],
-                    analysis_str=analysis_str,
-                    video_meta=meta,
-                    config=config,
-                )
+            # LLM: answer question + score
+            result = await answer_and_score(
+                question=question,
+                title=video["title"],
+                analysis_str=analysis_str,
+                video_meta=meta,
+                config=config,
+            )
 
-                results[idx] = {
-                    "ref": video["ref"],
-                    "search_query": video["search_query"],
-                    "video_id": video["video_id"],
-                    "media_asset_id": video["media_asset_id"],
-                    "title": video["title"],
-                    "platform": video["platform"],
-                    "creator": video["creator"],
-                    "views": video["views"],
-                    "likes": video["likes"],
-                    "score": result.score,
-                    "answer": result.answer,
-                }
-            except Exception as e:
-                logger.warning(
-                    "research_videos: failed on %s: %s", video["ref"], str(e)
-                )
-                failed_count += 1
-                results[idx] = {
-                    "ref": video["ref"],
-                    "search_query": video["search_query"],
-                    "video_id": video["video_id"],
-                    "media_asset_id": video["media_asset_id"],
-                    "title": video["title"],
-                    "platform": video["platform"],
-                    "creator": video["creator"],
-                    "views": video["views"],
-                    "likes": video["likes"],
-                    "score": 0,
-                    "answer": f"[FAILED] {str(e)[:200]}",
-                }
+            results[idx] = {
+                "ref": video["ref"],
+                "title": video["title"],
+                "platform": video["platform"],
+                "creator": video["creator"],
+                "score": result.score,
+                "answer": result.answer,
+            }
+        except Exception as e:
+            logger.warning(
+                "research_videos: failed on %s: %s", video["ref"], str(e)
+            )
+            failed_count += 1
+            results[idx] = {
+                "ref": video["ref"],
+                "title": video["title"],
+                "platform": video["platform"],
+                "creator": video["creator"],
+                "score": 0,
+                "answer": f"[FAILED] {str(e)[:200]}",
+            }
 
     await asyncio.gather(*[_process_one(i, v) for i, v in enumerate(merged)])
 
@@ -354,8 +411,6 @@ async def read_research_results(
             "title": it.get("title", ""),
             "platform": it.get("platform", ""),
             "creator": it.get("creator", ""),
-            "views": it.get("views", 0),
-            "likes": it.get("likes", 0),
             "score": it.get("score", 0),
             "answer": it.get("answer", ""),
         })

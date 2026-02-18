@@ -4,6 +4,8 @@ import { BACKEND_URL } from '@/lib/api';
 // Types for what the UI expects (Flat)
 export interface FlatMediaItem {
     id: string;
+    search_id?: string;
+    rank?: number;
     platform: string;
     title: string;
     thumbnail_url: string;
@@ -66,6 +68,8 @@ export function transformToMediaItem(backendResult: any): FlatMediaItem {
 
     return {
         id: content.id || backendResult.id || 'unknown',
+        search_id: backendResult.search_id ? String(backendResult.search_id) : undefined,
+        rank: typeof backendResult.rank === "number" ? backendResult.rank : undefined,
         platform: content.platform || 'unknown',
 
         // Title fallback chain

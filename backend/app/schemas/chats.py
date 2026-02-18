@@ -51,6 +51,7 @@ class CreateChatRequest(BaseModel):
 class SendMessageRequest(BaseModel):
     message: str
     client_id: Optional[str] = None
+    attempt_no: Optional[int] = 1
     tags: Optional[List[ChatTag]] = None
     model: Optional[str] = None
     image_urls: Optional[List[str]] = None

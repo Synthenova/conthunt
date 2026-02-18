@@ -55,8 +55,15 @@ export async function POST(req: Request) {
         cookieStore.set("csrfToken", "", { path: "/", maxAge: 0 });
 
         return NextResponse.json({ status: "ok" });
-    } catch (error) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
         console.error("Session login error:", error);
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+        return NextResponse.json(
+            {
+                error: "Internal Server Error",
+                ...(process.env.NODE_ENV !== "production" ? { details: message } : {}),
+            },
+            { status: 500 },
+        );
     }
 }

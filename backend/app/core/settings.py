@@ -1,5 +1,6 @@
 """Application settings loaded from environment variables."""
 import os
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -37,7 +38,7 @@ class Settings(BaseSettings):
     GCP_PROJECT: str = "conthunt-dev"
     GCP_REGION: str = "us-central1"
     GOOGLE_APPLICATION_CREDENTIALS_FB: str = ""
-    # GOOGLE_API_KEY: str
+    GOOGLE_API_KEY: str = ""
     
     # Cloud Tasks
     CLOUD_TASKS_SA_EMAIL: str = "tasks-invoker@conthunt-dev.iam.gserviceaccount.com"
@@ -53,11 +54,17 @@ class Settings(BaseSettings):
     QUEUE_SEARCH_WORKER: str = "search-worker-queue"
     QUEUE_CHAT_STREAM: str = "chat-stream-queue"
 
+    # Task enqueue batching (outside worker)
+    GEMINI_TASK_ENQUEUE_BATCH_SIZE: int = 100
+    MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE: int = 50
+    SEARCH_ENQUEUE_BATCH_SIZE: int = 5
+
+    # Task worker retry policy
+    TASK_WORKER_MAX_ATTEMPTS: int = 5
+
     # Deep research tuning
-    DEEP_RESEARCH_ANALYSIS_CONCURRENCY: int = 100
-    DEEP_RESEARCH_SEARCH_CONCURRENCY: int = 10
     DEEP_RESEARCH_MODEL: str = "openrouter/google/gemini-3-flash-preview"
-    LANGGRAPH_RECURSION_LIMIT: int = 100
+    LANGGRAPH_RECURSION_LIMIT: int = 200
     # If true, stream all LangGraph events to Redis during deep research (very noisy; expensive).
     DEEP_RESEARCH_STREAM_DEBUG_EVENTS: bool = False
     # Deep research analysis waiting behavior (agent tool).
@@ -100,7 +107,17 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
-    REDIS_MAX_CONNECTIONS: int = 15  # 15 × 2 instances = 30 (free tier limit)
+    REDIS_MAX_CONNECTIONS: int = 40  # legacy/shared cap; prefer per-role caps below
+    # Per-role Redis pool budgets
+    REDIS_MAIN_MAX_CONNECTIONS: int = 24
+    REDIS_STREAM_MAX_CONNECTIONS: int = 10
+    REDIS_LIMITER_MAX_CONNECTIONS: int = 6
+    REDIS_MAIN_POOL_TIMEOUT_S: float = 20.0
+    REDIS_STREAM_POOL_TIMEOUT_S: float = 20.0
+    REDIS_LIMITER_POOL_TIMEOUT_S: float = 15.0
+    # Capacity guardrail logs
+    REDIS_MAX_CLIENTS_BUDGET: int = 250
+    APP_MAX_INSTANCES: int = 5
 
     # Redis Streams (SSE replay buffer)
     # These are for "live-ish" updates only; DB remains the durable source of truth.
@@ -109,6 +126,7 @@ class Settings(BaseSettings):
     REDIS_STREAM_MAXLEN_CHAT: int = 10_000
     REDIS_STREAM_MAXLEN_SEARCH: int = 5_000
     REDIS_STREAM_MAXLEN_SEARCH_MORE: int = 5_000
+    CHAT_STREAM_WRITER_HEARTBEAT_S: float = 10.0
 
     # Openrouter
     OPENAI_BASE_URL: str = "https://openrouter.ai/api/v1"
@@ -127,6 +145,11 @@ class Settings(BaseSettings):
     LLM_LIMIT_TIMEOUT_TOKENS_INTERACTIVE_S: float = 5.0
     LLM_LIMIT_TIMEOUT_START_BACKGROUND_S: float = 30.0
     LLM_LIMIT_TIMEOUT_TOKENS_BACKGROUND_S: float = 30.0
+    # Limiter infrastructure guardrails (Redis outages/saturation).
+    LLM_LIMITER_INFRA_COOLDOWN_S: float = 2.0
+    LLM_LIMITER_INFRA_ERROR_BURST_THRESHOLD: int = 5
+    LLM_LIMITER_INFRA_LOG_SAMPLE_EVERY: int = 50
+    LLM_LIMITER_INFRA_LOG_INTERVAL_S: float = 30.0
 
     # Token estimation (fallback when callers don't provide max tokens).
     LLM_EST_COMPLETION_TOKENS_DEFAULT: int = 1024
@@ -134,6 +157,18 @@ class Settings(BaseSettings):
     # OpenTelemetry
     OTEL_SERVICE_NAME: str = ""
     OTEL_RESOURCE_ATTRIBUTES: str = ""
+
+    # Telemetry integrations
+    TELEMETRY_POSTHOG_ENABLED: bool = True
+    POSTHOG_PROJECT_API_KEY: str = ""
+    POSTHOG_HOST: str = "https://app.posthog.com"
+    TELEMETRY_LANGFUSE_ENABLED: bool = True
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_HOST: str = Field(
+        default="https://cloud.langfuse.com",
+        validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+    )
 
     # Dodo Payments
     DODO_API_KEY: str = ""
