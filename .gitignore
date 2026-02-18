@@ -84,6 +84,7 @@ agent/.langgraph_api
 .claude
 
 backend/conthunt-dev-firebase-adminsdk-fbsvc-70fe27e306.json
+backend/fb-sa.json
 backend/.langgraph_api
 *.log
 docs/
