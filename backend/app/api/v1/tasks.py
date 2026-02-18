@@ -146,6 +146,7 @@ class BoardInsightsTaskPayload(BaseModel):
     board_id: UUID
     user_id: UUID
     user_role: str
+    dispatched_at: float | None = None
 
 
 class SearchTaskPayload(BaseModel):
@@ -180,6 +181,7 @@ class ChatStreamTaskPayload(BaseModel):
     subject_type: str | None = None
     subject_id: str | None = None
     message_client_id: str | None = None
+    dispatched_at: float | None = None
 
 
 async def _handle_gemini_analysis_single(payload: AnalysisTaskPayload, request: Request) -> dict[str, Any]:
@@ -802,15 +804,22 @@ async def _handle_board_insights_single(payload: BoardInsightsTaskPayload, reque
     executor = CloudTaskExecutor(request)
 
     start_time = time.time()
+    queue_duration_ms = 0
+    if payload.dispatched_at:
+        queue_duration_ms = int((start_time - payload.dispatched_at) * 1000)
 
     async def _on_fail(e: Exception):
+        duration_ms = int((time.time() - start_time) * 1000)
         capture_event_with_error(
             distinct_id=str(payload.user_id),
             event="board_insights_failed",
             exception=e,
             properties={
                 "board_id": str(payload.board_id),
-                "duration_ms": int((time.time() - start_time) * 1000),
+                "duration_ms": duration_ms,
+                "queue_duration_ms": queue_duration_ms,
+                "total_duration_ms": duration_ms + queue_duration_ms,
+                "success": False,
             },
         )
         async with get_db_connection() as conn:
@@ -841,12 +850,16 @@ async def _handle_board_insights_single(payload: BoardInsightsTaskPayload, reque
     )
     # Track successful completion
     if result.get("status") == "ok":
+        duration_ms = int((time.time() - start_time) * 1000)
         capture_event(
             distinct_id=str(payload.user_id),
             event="board_insights_completed",
             properties={
                 "board_id": str(payload.board_id),
-                "duration_ms": int((time.time() - start_time) * 1000),
+                "duration_ms": duration_ms,
+                "queue_duration_ms": queue_duration_ms,
+                "total_duration_ms": duration_ms + queue_duration_ms,
+                "success": True,
             },
         )
     return result
@@ -987,6 +1000,7 @@ async def _handle_chat_stream_single(payload: ChatStreamTaskPayload, request: Re
                 user_id=str(payload.user_id) if payload.user_id else None,
                 redis_client=redis_client,
                 telemetry=telemetry_ctx,
+                dispatched_at=payload.dispatched_at,
             )
         finally:
             try:

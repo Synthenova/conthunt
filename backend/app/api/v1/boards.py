@@ -261,6 +261,7 @@ async def refresh_board_insights(
             "board_id": str(board_id),
             "user_id": str(user_uuid),
             "user_role": user.get("role"),
+            "dispatched_at": time.time(),
         },
     )
 

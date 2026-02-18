@@ -263,6 +263,7 @@ async def stream_generator_to_redis(
     filters: dict | None = None,
     user_id: str | None = None,
     telemetry: TelemetryContext | None = None,
+    dispatched_at: float | None = None,
 ):
     """
     Background task:
@@ -282,7 +283,11 @@ async def stream_generator_to_redis(
         telemetry_ctx.subject_id = telemetry_ctx.message_client_id
 
     stream_started_at = time.perf_counter()
-    logger.info("Starting background stream for chat=%s filters=%s", chat_id, filters)
+    queue_duration_ms = 0
+    if dispatched_at:        
+        queue_duration_ms = max(0, int((time.time() - dispatched_at) * 1000))
+
+    logger.info("Starting background stream for chat=%s filters=%s queue_duration_ms=%s", chat_id, filters, queue_duration_ms)
 
     r = redis_client
     stream_key = f"chat:{chat_id}:stream"
@@ -315,8 +320,16 @@ async def stream_generator_to_redis(
                 # Best-effort heartbeat only.
                 pass
 
+            pass
+
     with bind_telemetry(telemetry_ctx):
-        emit_action_started(telemetry_ctx, metadata={"chat_id": chat_id})
+        emit_action_started(
+            telemetry_ctx,
+            metadata={
+                "chat_id": chat_id,
+                "queue_duration_ms": queue_duration_ms,
+            },
+        )
         logger.info(
             "stream_start chat_id=%s action_id=%s attempt_no=%s subject_id=%s",
             chat_id,
@@ -1036,6 +1049,7 @@ async def send_message(
             "subject_type": telemetry_ctx.subject_type or "chat_message",
             "subject_id": telemetry_ctx.subject_id or message_client_id,
             "message_client_id": message_client_id,
+            "dispatched_at": time.time(),
         },
         # Deep research runs can take 10+ minutes; Cloud Tasks default deadlines can be too short.
         # Keep this <= Cloud Tasks maximum (commonly 30 minutes for HTTP targets).
