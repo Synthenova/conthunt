@@ -401,7 +401,7 @@ async def get_video_analysis(
                 user_role=user_role,
                 media_asset_id=media_asset_uuid,
                 context_source="agent_tool",
-                record_streak=not deep_research_enabled,
+                record_streak=True,
                 chat_id=chat_id,
             )
             logger.info(f"[DEEP_TOOL] trigger_paid_analysis DONE status={result.status} id={result.id}")
