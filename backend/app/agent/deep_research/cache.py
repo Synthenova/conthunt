@@ -152,7 +152,7 @@ async def ensure_analyses_batch(
         media_asset_ids=[UUID(mid) for mid in valid_missing_ids],
         background_tasks=None,
         context_source="deep_research_batch",
-        record_streak=False,
+        record_streak=True,
         chat_id=chat_id,
     )
     response_by_asset = batch_result.get("responses", {}) if isinstance(batch_result, dict) else {}

@@ -185,7 +185,9 @@ async def record_activity(
         # Same-day duplicate activity: no-op to avoid unnecessary write churn.
         pass
 
-    return await _get_user_streak_by_type_id(conn, user_id, streak_type_id)
+    streak = await _get_user_streak_by_type_id(conn, user_id, streak_type_id)
+    streak["inserted_today"] = inserted
+    return streak
 
 
 async def get_today_status(

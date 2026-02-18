@@ -88,7 +88,7 @@ class Settings(BaseSettings):
 
     # Media download behavior
     MEDIA_DOWNLOAD_ENABLED: bool = True
-    MEDIA_MAX_CONCURRENCY: int = 4
+    MEDIA_MAX_CONCURRENCY: int = 25
     MEDIA_HTTP_TIMEOUT_S: int = 60
     MEDIA_OPTIMIZE_IMAGES: bool = True
     MEDIA_IMAGE_FORMAT: str = "webp"  # webp or jpeg

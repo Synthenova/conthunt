@@ -30,6 +30,7 @@ from app.db.session import get_db_connection
 from app.media.downloader import (
     claim_assets_for_download_batch,
     download_claimed_asset,
+    get_download_semaphore,
     reset_assets_pending_batch,
     update_assets_failed_batch,
     update_assets_stored_batch,
@@ -553,90 +554,92 @@ async def _handle_media_download_batch(items: list[MediaDownloadTaskPayload]) ->
     failed_rows: list[dict[str, Any]] = []
     retry_asset_ids: list[UUID] = []
     retry_payloads: list[dict[str, Any]] = []
+    download_semaphore = get_download_semaphore()
 
     async with httpx.AsyncClient(timeout=settings.MEDIA_HTTP_TIMEOUT_S, follow_redirects=True) as client:
         async def _process_claimed(item: MediaDownloadTaskPayload, claimed_asset: dict[str, Any]) -> None:
-            started_at = time.time()
-            dispatch_to_start_ms = None
-            if item.dispatched_at:
-                dispatch_to_start_ms = max(0.0, (started_at - float(item.dispatched_at)) * 1000.0)
-            if item.priority:
-                capture_event(
-                    distinct_id="system:media_download",
-                    event="media_download_started",
-                    properties={
-                        "asset_id": str(item.asset_id),
-                        "platform": item.platform,
-                        "priority": True,
-                        "attempt_no": int(item.attempt_no or 0),
-                        "dispatch_to_start_ms": dispatch_to_start_ms,
-                    },
-                )
-            try:
-                stored = await download_claimed_asset(
-                    http_client=client,
-                    asset=claimed_asset,
-                    platform=item.platform,
-                    external_id=item.external_id,
-                )
-                stored_rows.append(stored)
-                finished_at = time.time()
-                download_ms = max(0.0, (finished_at - started_at) * 1000.0)
-                end_to_end_ms = None
+            async with download_semaphore:
+                started_at = time.time()
+                dispatch_to_start_ms = None
                 if item.dispatched_at:
-                    end_to_end_ms = max(0.0, (finished_at - float(item.dispatched_at)) * 1000.0)
+                    dispatch_to_start_ms = max(0.0, (started_at - float(item.dispatched_at)) * 1000.0)
                 if item.priority:
                     capture_event(
                         distinct_id="system:media_download",
-                        event="media_download_finished",
+                        event="media_download_started",
                         properties={
                             "asset_id": str(item.asset_id),
                             "platform": item.platform,
                             "priority": True,
                             "attempt_no": int(item.attempt_no or 0),
-                            "success": True,
-                            "download_ms": download_ms,
-                            "end_to_end_ms": end_to_end_ms,
-                            "bytes": stored.get("size_bytes"),
+                            "dispatch_to_start_ms": dispatch_to_start_ms,
                         },
                     )
-            except Exception as exc:
-                finished_at = time.time()
-                download_ms = max(0.0, (finished_at - started_at) * 1000.0)
-                end_to_end_ms = None
-                if item.dispatched_at:
-                    end_to_end_ms = max(0.0, (finished_at - float(item.dispatched_at)) * 1000.0)
-                if item.priority:
-                    capture_event_with_error(
-                        distinct_id="system:media_download",
-                        event="media_download_finished",
-                        exception=exc,
-                        properties={
-                            "asset_id": str(item.asset_id),
-                            "platform": item.platform,
-                            "priority": True,
-                            "attempt_no": int(item.attempt_no or 0),
-                            "success": False,
-                            "download_ms": download_ms,
-                            "end_to_end_ms": end_to_end_ms,
-                            "error": str(exc)[:200],
-                        },
+                try:
+                    stored = await download_claimed_asset(
+                        http_client=client,
+                        asset=claimed_asset,
+                        platform=item.platform,
+                        external_id=item.external_id,
                     )
-                attempt_no = int(item.attempt_no or 0)
-                if _is_retryable_exception(exc) and (attempt_no + 1) < int(getattr(settings, "TASK_WORKER_MAX_ATTEMPTS", 5)):
-                    retry_asset_ids.append(item.asset_id)
-                    retry_payloads.append(
-                        {
-                            "asset_id": str(item.asset_id),
-                            "platform": item.platform,
-                            "external_id": item.external_id,
-                            "priority": item.priority,
-                            "attempt_no": attempt_no + 1,
-                            "dispatched_at": time.time(),
-                        }
-                    )
-                else:
-                    failed_rows.append({"asset_id": item.asset_id, "error": str(exc)})
+                    stored_rows.append(stored)
+                    finished_at = time.time()
+                    download_ms = max(0.0, (finished_at - started_at) * 1000.0)
+                    end_to_end_ms = None
+                    if item.dispatched_at:
+                        end_to_end_ms = max(0.0, (finished_at - float(item.dispatched_at)) * 1000.0)
+                    if item.priority:
+                        capture_event(
+                            distinct_id="system:media_download",
+                            event="media_download_finished",
+                            properties={
+                                "asset_id": str(item.asset_id),
+                                "platform": item.platform,
+                                "priority": True,
+                                "attempt_no": int(item.attempt_no or 0),
+                                "success": True,
+                                "download_ms": download_ms,
+                                "end_to_end_ms": end_to_end_ms,
+                                "bytes": stored.get("size_bytes"),
+                            },
+                        )
+                except Exception as exc:
+                    finished_at = time.time()
+                    download_ms = max(0.0, (finished_at - started_at) * 1000.0)
+                    end_to_end_ms = None
+                    if item.dispatched_at:
+                        end_to_end_ms = max(0.0, (finished_at - float(item.dispatched_at)) * 1000.0)
+                    if item.priority:
+                        capture_event_with_error(
+                            distinct_id="system:media_download",
+                            event="media_download_finished",
+                            exception=exc,
+                            properties={
+                                "asset_id": str(item.asset_id),
+                                "platform": item.platform,
+                                "priority": True,
+                                "attempt_no": int(item.attempt_no or 0),
+                                "success": False,
+                                "download_ms": download_ms,
+                                "end_to_end_ms": end_to_end_ms,
+                                "error": str(exc)[:200],
+                            },
+                        )
+                    attempt_no = int(item.attempt_no or 0)
+                    if _is_retryable_exception(exc) and (attempt_no + 1) < int(getattr(settings, "TASK_WORKER_MAX_ATTEMPTS", 5)):
+                        retry_asset_ids.append(item.asset_id)
+                        retry_payloads.append(
+                            {
+                                "asset_id": str(item.asset_id),
+                                "platform": item.platform,
+                                "external_id": item.external_id,
+                                "priority": item.priority,
+                                "attempt_no": attempt_no + 1,
+                                "dispatched_at": time.time(),
+                            }
+                        )
+                    else:
+                        failed_rows.append({"asset_id": item.asset_id, "error": str(exc)})
 
         await asyncio.gather(
             *[

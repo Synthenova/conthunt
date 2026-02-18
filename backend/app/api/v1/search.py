@@ -36,6 +36,7 @@ from app.services.telemetry_payloads import (
     build_search_completed_props,
 )
 from app.services.cdn_signer import bulk_sign_gcs_uris, should_sign_asset
+from app.services.streak_tracker import record_streak_activity_once_per_day
 from app.realtime.stream_hub import stream_id_gt
 
 router = APIRouter()
@@ -792,6 +793,13 @@ async def create_search(
             mode="live",
             status="running",
         )
+        await record_streak_activity_once_per_day(
+            conn,
+            user_id=user_uuid,
+            streak_type="search",
+            timezone=timezone,
+            source="search.create",
+        )
         # analytics outbox removed
         await conn.commit()
 
@@ -1040,12 +1048,11 @@ async def load_more(
         from sqlalchemy import text
         
         result = await conn.execute(
-            text("SELECT current_period_start, timezone FROM users WHERE id = :id"),
+            text("SELECT current_period_start FROM users WHERE id = :id"),
             {"id": user_uuid}
         )
         row = result.fetchone()
         period_start = row[0] if row else None
-        timezone = row[1] if row and row[1] else "UTC"
 
         credit_result = await credit_tracker.check(
             user_id=user_uuid,
@@ -1058,8 +1065,6 @@ async def load_more(
         )
         if not credit_result["allowed"]:
             raise HTTPException(status_code=402, detail="Credit limit exceeded")
-        from app.db.queries import streaks as streak_queries
-        await streak_queries.record_activity(conn, user_uuid, "search", timezone=timezone)
         # analytics outbox removed
         await conn.commit()
     

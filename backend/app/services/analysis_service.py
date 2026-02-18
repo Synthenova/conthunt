@@ -10,6 +10,7 @@ from app.db.session import get_db_connection
 from app.db.queries.analysis import has_user_accessed_analysis, record_user_analysis_access
 from app.db import set_rls_user
 from app.services.credit_tracker import credit_tracker
+from app.services.streak_tracker import record_streak_activity_once_per_day
 
 
 class AnalysisService:
@@ -78,8 +79,13 @@ class AnalysisService:
                 logger.info(f"Free re-access: user={user_id} already analyzed asset={media_asset_id}")
 
             if record_streak:
-                from app.db.queries import streaks as streak_queries
-                await streak_queries.record_activity(conn, user_id, "analysis", timezone=timezone)
+                await record_streak_activity_once_per_day(
+                    conn,
+                    user_id=user_id,
+                    streak_type="analysis",
+                    timezone=timezone,
+                    source=context_source,
+                )
             await conn.commit()
         
         # Trigger unified analysis flow (handles priority downloads, race conditions, etc.)
@@ -106,8 +112,6 @@ class AnalysisService:
         Batch variant of trigger_paid_analysis preserving credit/access semantics.
         """
         from app.api.v1.analysis import run_gemini_analysis_batch
-        from app.db.queries import streaks as streak_queries
-
         deduped_ids = list(dict.fromkeys(media_asset_ids))
         if not deduped_ids:
             return {"accepted_media_asset_ids": [], "responses": {}}
@@ -163,7 +167,13 @@ class AnalysisService:
 
             # Record one streak activity per batch request, not per asset.
             if record_streak and accepted_ids:
-                await streak_queries.record_activity(conn, user_id, "analysis", timezone=timezone)
+                await record_streak_activity_once_per_day(
+                    conn,
+                    user_id=user_id,
+                    streak_type="analysis",
+                    timezone=timezone,
+                    source=context_source,
+                )
 
             await conn.commit()
 
