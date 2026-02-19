@@ -17,6 +17,7 @@ from langgraph.prebuilt import InjectedState
 
 from app.core import get_settings, logger
 from app.agent.model_factory import init_chat_model, init_chat_model_rated
+from app.integrations.posthog_client import capture_event_with_error
 from app.llm.context import set_llm_context
 from datetime import datetime, timezone
 
@@ -45,6 +46,15 @@ async def _get_headers(config: RunnableConfig) -> Dict[str, str]:
 
 def _get_user_id(config: RunnableConfig) -> str | None:
     return (config.get("configurable", {}) or {}).get("user_id")
+
+
+def _is_http_429(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            return int(exc.response.status_code) == 429
+        except Exception:
+            return False
+    return False
 
 
 @tool
@@ -700,6 +710,15 @@ Allowed values:
            with set_llm_context(user_id=_get_user_id(config), route="search.plan"):
                response = await structured_llm.ainvoke([system_msg, HumanMessage(content=combined_content)])
         except Exception as llm_err:
+             capture_event_with_error(
+                 distinct_id=_get_user_id(config) or "system:search_plan",
+                 event="search_plan_failed",
+                 exception=llm_err,
+                 properties={
+                     "route": "search.plan",
+                     "is_429": _is_http_429(llm_err),
+                 },
+             )
              return {"error": f"Failed to generate search keywords: {str(llm_err)}"}
 
         if not response or not response.queries:
