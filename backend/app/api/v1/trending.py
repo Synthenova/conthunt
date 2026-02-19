@@ -10,11 +10,21 @@ from app.auth import get_current_user
 import redis.asyncio as redis
 
 from app.agent.model_factory import init_chat_model
+from app.integrations.posthog_client import capture_event_with_error
 from app.llm.context import set_llm_context
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 router = APIRouter()
+
+
+def _is_http_429(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            return int(exc.response.status_code) == 429
+        except Exception:
+            return False
+    return False
 
 
 async def get_redis_client(request: Request) -> redis.Redis:
@@ -310,5 +320,14 @@ async def get_trending_niches(
 
     except Exception as e:
         logger.error(f"Trending niches generation failed: {e}")
+        capture_event_with_error(
+            distinct_id="system:trending",
+            event="trending_niches_failed",
+            exception=e,
+            properties={
+                "route": "trending.niches",
+                "is_429": _is_http_429(e),
+            },
+        )
         # Return fallback or empty if it fails and no cache
         return []

@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     QUEUE_CHAT_STREAM: str = "chat-stream-queue"
 
     # Task enqueue batching (outside worker)
-    GEMINI_TASK_ENQUEUE_BATCH_SIZE: int = 100
+    GEMINI_TASK_ENQUEUE_BATCH_SIZE: int = 50
     MEDIA_DOWNLOAD_ENQUEUE_BATCH_SIZE: int = 50
     SEARCH_ENQUEUE_BATCH_SIZE: int = 5
 

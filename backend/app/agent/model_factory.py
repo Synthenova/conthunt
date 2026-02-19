@@ -7,6 +7,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
 from app.core import get_settings, logger
+from app.integrations.posthog_client import capture_event_with_error
+from app.llm.context import get_llm_route, get_llm_user_id
 from app.llm.global_rate_limiter import LlmRateLimited, enforce_model_global_limits
 from app.llm.model_policy import canonicalize_model_key, get_model_fallback_chain
 
@@ -202,6 +204,51 @@ def _should_switch_on_error(exc: Exception) -> bool:
     return _is_internal_rate_limit(exc) or _is_upstream_429(exc)
 
 
+def _extract_status_code(exc: Exception) -> int | None:
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        try:
+            return int(status_code)
+        except Exception:
+            pass
+    response = getattr(exc, "response", None)
+    if response is not None:
+        resp_code = getattr(response, "status_code", None)
+        if resp_code is not None:
+            try:
+                return int(resp_code)
+            except Exception:
+                pass
+    return None
+
+
+def _capture_llm_exception_event(
+    *,
+    exc: Exception,
+    model_key: str,
+    attempt: int,
+    max_attempts: int,
+    mode: str,
+    event: str,
+    switch_eligible: bool,
+) -> None:
+    capture_event_with_error(
+        distinct_id=get_llm_user_id() or "system:llm_fallback",
+        event=event,
+        exception=exc,
+        properties={
+            "model_key": model_key,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "mode": mode,
+            "status_code": _extract_status_code(exc),
+            "is_internal_rate_limit": _is_internal_rate_limit(exc),
+            "switch_eligible": switch_eligible,
+            "route": get_llm_route(),
+        },
+    )
+
+
 def _build_attempt_runnable(
     *,
     model_key: str,
@@ -280,6 +327,15 @@ def _attach_global_llm_limits(
                     return await fallback_obj.ainvoke(input, *args, **kwargs)
                 except Exception as exc:
                     if _should_switch_on_error(exc):
+                        _capture_llm_exception_event(
+                            exc=exc,
+                            model_key=attempt_key,
+                            attempt=idx + 1,
+                            max_attempts=len(chain),
+                            mode="ainvoke",
+                            event="llm_fallback_triggered",
+                            switch_eligible=True,
+                        )
                         last_rate_limit_exc = exc
                         logger.warning(
                             "[llm_fallback] switching model attempt=%s/%s from=%s to_next reason=%s",
@@ -329,7 +385,17 @@ def _attach_global_llm_limits(
                         yield chunk
                     return
                 except Exception as exc:
-                    if _should_switch_on_error(exc):
+                    should_switch = _should_switch_on_error(exc)
+                    _capture_llm_exception_event(
+                        exc=exc,
+                        model_key=attempt_key,
+                        attempt=idx + 1,
+                        max_attempts=len(chain),
+                        mode="astream",
+                        event="llm_stream_exception",
+                        switch_eligible=should_switch,
+                    )
+                    if should_switch:
                         last_rate_limit_exc = exc
                         logger.warning(
                             "[llm_fallback] switching stream attempt=%s/%s from=%s to_next reason=%s",
