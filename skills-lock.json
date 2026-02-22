@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "langgraph-docs": {
+      "source": "langchain-ai/deepagents",
+      "sourceType": "github",
+      "computedHash": "00bb7db4700630b80a3526c430059ee03a0dade284756b114f2e36f99bf87776"
+    }
+  }
+}
