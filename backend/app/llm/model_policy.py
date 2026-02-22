@@ -33,6 +33,12 @@ MODEL_LIMIT_OVERRIDES: dict[str, dict[str, int]] = {
         "rpd": 400_000,
         "tpm_burst": 1_600_000,
     },
+    "openrouter/x-ai/grok-4.1-fast:online": {
+        "rpm": 16_000,
+        "tpm": 16_000_000,
+        "rpd": 400_000,
+        "tpm_burst": 1_600_000,
+    },
     "google-vertex/gemini-3-flash-preview": {
         "rpm": 1000,
         "tpm": 1_000_000,

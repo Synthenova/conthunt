@@ -126,15 +126,14 @@ async def web_search(
         return {"error": "query is required"}
 
     today_utc = datetime.now(timezone.utc).date().isoformat()
-    model = init_chat_model("google/gemini-3-flash-preview", temperature=0.2)
-    grounded_model = model.bind_tools([{"google_search": {}}])
+    model = init_chat_model("openrouter/x-ai/grok-4.1-fast:online", temperature=0.2)
 
-    response = await grounded_model.ainvoke(
+    response = await model.ainvoke(
         [
             SystemMessage(
                 content=(
                     f"Current UTC date: {today_utc}. "
-                    "Use google_search grounding to gather current web signals. "
+                    "Use online web access to gather current web signals. "
                     "Return concise findings relevant to the query."
                 )
             ),

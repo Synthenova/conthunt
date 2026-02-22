@@ -636,9 +636,8 @@ async def search(
         configurable = config.get("configurable", {}) if config else {}
         chat_id = configurable.get("chat_id")
         
-        # 1. Initialize Gemini 3 Pro for intent detection
-        llm = init_chat_model("google/gemini-3-flash-preview")
-        llm = llm.bind_tools([{"google_search": {}}])
+        # 1. Initialize search-planning model
+        llm = init_chat_model("openrouter/x-ai/grok-4.1-fast:online")
         structured_llm = llm.with_structured_output(SearchPlan)
 
         # 2. Extract messages for context

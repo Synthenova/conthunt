@@ -21,7 +21,7 @@ def build_deep_agent(checkpointer=None, model_name: str | None = None):
     settings = get_settings()
     today_utc = datetime.now(timezone.utc).date().isoformat()
     model = init_chat_model(model_name or settings.DEEP_RESEARCH_MODEL, temperature=0.5)
-    searcher_model = init_chat_model("google/gemini-3-flash-preview", temperature=0.2)
+    searcher_model = init_chat_model("openrouter/x-ai/grok-4.1-fast:online", temperature=0.2)
 
     orchestrator_prompt = f"""You are the Deep Research Orchestrator for ContHunt.
 You coordinate subagents to answer the user's research request about video content.
