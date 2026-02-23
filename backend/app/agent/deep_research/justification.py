@@ -62,7 +62,7 @@ async def answer_and_score(
     Returns:
         AnswerAndScoreOut with score (1-10) and answer (80-120 words).
     """
-    model = init_chat_model(settings.DEEP_RESEARCH_MODEL, temperature=0.2)
+    model = init_chat_model('google/gemini-2.5-flash-lite-preview-09-2025', temperature=0.2)
 
     try:
         structured = model.with_structured_output(AnswerAndScoreOut)
