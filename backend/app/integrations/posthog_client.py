@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core import get_settings, logger
+from app.core.telemetry_context import get_current_telemetry
 
 
 # Error categorization for better PostHog analytics
@@ -138,6 +139,9 @@ def capture_event(
 
         event_properties = dict(properties or {})
         event_properties.setdefault("source", "backend_api")
+        telemetry = get_current_telemetry()
+        if telemetry.email:
+            event_properties.setdefault("email", telemetry.email)
 
         if hasattr(client, "capture"):
             try:

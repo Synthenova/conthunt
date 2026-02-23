@@ -1041,6 +1041,7 @@ async def send_message(
             "auth_token": auth_token,
             "filters": effective_filters,
             "user_id": str(user_uuid),
+            "email": user.get("email"),
             "action_id": telemetry_ctx.action_id,
             "session_id": telemetry_ctx.session_id,
             "attempt_no": telemetry_ctx.attempt_no,

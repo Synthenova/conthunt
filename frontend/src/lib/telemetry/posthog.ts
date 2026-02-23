@@ -1,9 +1,11 @@
 "use client";
 
 const IDENTIFY_STORAGE_KEY = "ph_distinct_id";
+const EMAIL_STORAGE_KEY = "ph_email";
 
 let initialized = false;
 let distinctId: string | null = null;
+let email: string | null = null;
 
 function getConfig() {
   const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
@@ -35,6 +37,24 @@ function loadDistinctId(): string | null {
   return distinctId;
 }
 
+function loadEmail(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  if (email !== null) {
+    return email;
+  }
+
+  try {
+    email = window.localStorage.getItem(EMAIL_STORAGE_KEY);
+  } catch {
+    email = null;
+  }
+
+  return email;
+}
+
 function setDistinctId(value: string): void {
   distinctId = value;
   if (typeof window === "undefined") {
@@ -42,6 +62,42 @@ function setDistinctId(value: string): void {
   }
   try {
     window.localStorage.setItem(IDENTIFY_STORAGE_KEY, value);
+  } catch {
+    // Fail-open.
+  }
+}
+
+function setEmail(value: string): void {
+  email = value;
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(EMAIL_STORAGE_KEY, value);
+  } catch {
+    // Fail-open.
+  }
+}
+
+function clearEmail(): void {
+  email = null;
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(EMAIL_STORAGE_KEY);
+  } catch {
+    // Fail-open.
+  }
+}
+
+function clearDistinctId(): void {
+  distinctId = null;
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(IDENTIFY_STORAGE_KEY);
   } catch {
     // Fail-open.
   }
@@ -86,6 +142,7 @@ export function initPostHog(): void {
 
   initialized = true;
   loadDistinctId();
+  loadEmail();
 }
 
 export function identifyPostHog(
@@ -98,6 +155,12 @@ export function identifyPostHog(
 
   initPostHog();
   setDistinctId(userId);
+  const candidateEmail = props?.email;
+  if (typeof candidateEmail === "string" && candidateEmail) {
+    setEmail(candidateEmail);
+  } else {
+    clearEmail();
+  }
 
   postCapture("$identify", {
     distinct_id: userId,
@@ -109,12 +172,24 @@ export function capturePostHog(event: string, properties?: Record<string, unknow
   initPostHog();
 
   const currentDistinctId = loadDistinctId();
+  const currentEmail = loadEmail();
   const eventProperties = { ...(properties || {}) };
   if (typeof eventProperties.source === "undefined") {
     eventProperties.source = "web_app";
   }
-  postCapture(event, {
+  const baseProperties: Record<string, unknown> = {
     distinct_id: currentDistinctId || "anonymous",
+  };
+  if (currentEmail) {
+    baseProperties.email = currentEmail;
+  }
+  postCapture(event, {
+    ...baseProperties,
     ...eventProperties,
   });
+}
+
+export function clearPostHogIdentity(): void {
+  clearDistinctId();
+  clearEmail();
 }

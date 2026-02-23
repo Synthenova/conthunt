@@ -47,8 +47,9 @@ function TelemetryBootstrap() {
         identifyPostHog(profile.id, {
             plan: profile.role || "free",
             role: profile.role || "free",
+            email: profile.email || undefined,
         });
-    }, [profile?.id, profile?.role]);
+    }, [profile?.id, profile?.role, profile?.email]);
 
     return null;
 }

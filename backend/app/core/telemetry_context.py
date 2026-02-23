@@ -14,6 +14,7 @@ class TelemetryContext:
     session_id: str | None = None
     attempt_no: int | None = None
     user_id: str | None = None
+    email: str | None = None
     feature: str | None = None
     operation: str | None = None
     subject_type: str | None = None
@@ -80,6 +81,7 @@ def telemetry_from_mapping(data: Mapping[str, Any]) -> TelemetryContext:
         session_id=_clean_str(data.get("session_id")),
         attempt_no=parse_attempt_no(data.get("attempt_no")),
         user_id=_clean_str(data.get("user_id")),
+        email=_clean_str(data.get("email")),
         feature=feature,
         operation=_clean_str(data.get("operation")),
         subject_type=subject_type,

@@ -96,7 +96,11 @@ async def get_current_user(
         )
 
         user_id = str(auth_user["db_user_id"])
-        update_request_telemetry(request, user_id=user_id)
+        update_request_telemetry(
+            request,
+            user_id=user_id,
+            email=auth_user.get("email"),
+        )
 
         span = trace.get_current_span()
         if span is not None:

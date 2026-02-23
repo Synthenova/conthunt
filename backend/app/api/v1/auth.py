@@ -53,6 +53,7 @@ async def sync_user(authorization: str = Header(default="")):
                 properties={
                     "role": role,
                     "provider": "firebase",
+                    "email": decoded.get("email"),
                 },
             )
         # Track user login (both new and existing users)
@@ -62,6 +63,7 @@ async def sync_user(authorization: str = Header(default="")):
             properties={
                 "role": role,
                 "provider": "firebase",
+                "email": decoded.get("email"),
             },
         )
         
