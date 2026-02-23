@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from app.core import logger
 from app.db.session import get_db_connection
+from app.integrations.posthog_client import capture_event
 from app.services import dodo_client
 
 BILLING_ACTION_CHECKOUT = "checkout"
@@ -234,6 +235,18 @@ async def create_checkout(
         customer_email=email if not dodo_customer_id else None,
         metadata={"user_id": str(user_id)},
     )
+
+    # Track checkout session created for pricing funnel
+    capture_event(
+        distinct_id=str(user_id),
+        event="checkout_created",
+        properties={
+            "product_id": product_id,
+            "session_id": session.get("session_id"),
+            "source": "backend_billing",
+        },
+    )
+
     return session
 
 
