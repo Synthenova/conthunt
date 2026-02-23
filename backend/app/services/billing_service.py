@@ -248,58 +248,30 @@ async def get_user_subscription(user_id: UUID) -> Optional[dict]:
         db_role = role_row[0] if role_row and role_row[0] else "free"
 
         subscriptions: list[dict] = []
-        try:
-            result = await conn.execute(
-                text("""
-                SELECT
-                    subscription_id, customer_id, product_id, status,
-                    cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
-                FROM billing_subscriptions
-                WHERE user_id = :user_id
-                ORDER BY last_webhook_ts DESC
-                """),
-                {"user_id": user_id},
+        result = await conn.execute(
+            text("""
+            SELECT
+                subscription_id, customer_id, product_id, status,
+                cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
+            FROM billing_subscriptions
+            WHERE user_id = :user_id
+            ORDER BY last_webhook_ts DESC
+            """),
+            {"user_id": user_id},
+        )
+        for row in result.fetchall():
+            subscriptions.append(
+                {
+                    "subscription_id": row[0],
+                    "customer_id": row[1],
+                    "product_id": row[2],
+                    "status": row[3],
+                    "cancel_at_period_end": row[4],
+                    "current_period_start": row[5].isoformat() if row[5] else None,
+                    "current_period_end": row[6].isoformat() if row[6] else None,
+                    "last_webhook_ts": row[7].isoformat() if row[7] else None,
+                }
             )
-            for row in result.fetchall():
-                subscriptions.append(
-                    {
-                        "subscription_id": row[0],
-                        "customer_id": row[1],
-                        "product_id": row[2],
-                        "status": row[3],
-                        "cancel_at_period_end": row[4],
-                        "current_period_start": row[5].isoformat() if row[5] else None,
-                        "current_period_end": row[6].isoformat() if row[6] else None,
-                        "last_webhook_ts": row[7].isoformat() if row[7] else None,
-                    }
-                )
-        except Exception as e:
-            # Migration-safe fallback until billing_subscriptions table exists.
-            logger.warning(f"billing_subscriptions query failed, falling back to legacy table: {e}")
-            legacy_result = await conn.execute(
-                text("""
-                SELECT
-                    subscription_id, customer_id, product_id, status,
-                    cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
-                FROM user_subscriptions
-                WHERE user_id = :user_id
-                """),
-                {"user_id": user_id},
-            )
-            legacy_row = legacy_result.fetchone()
-            if legacy_row:
-                subscriptions.append(
-                    {
-                        "subscription_id": legacy_row[0],
-                        "customer_id": legacy_row[1],
-                        "product_id": legacy_row[2],
-                        "status": legacy_row[3],
-                        "cancel_at_period_end": legacy_row[4],
-                        "current_period_start": legacy_row[5].isoformat() if legacy_row[5] else None,
-                        "current_period_end": legacy_row[6].isoformat() if legacy_row[6] else None,
-                        "last_webhook_ts": legacy_row[7].isoformat() if legacy_row[7] else None,
-                    }
-                )
 
         subscription = _pick_winner_subscription(subscriptions)
         if not subscription:
@@ -587,42 +559,6 @@ async def apply_subscription_state(
             },
         )
 
-        # Legacy pointer table for compatibility with existing queries/tools.
-        await conn.execute(
-            text("""
-            INSERT INTO user_subscriptions
-                (user_id, subscription_id, customer_id, product_id, status,
-                 cancel_at_period_end, current_period_start, current_period_end,
-                 last_webhook_ts, updated_at)
-            VALUES
-                (:user_id, :subscription_id, :customer_id, :product_id, :status,
-                 :cancel_at_period_end, :current_period_start, :current_period_end,
-                 :webhook_ts, now())
-            ON CONFLICT (user_id) DO UPDATE SET
-                subscription_id = EXCLUDED.subscription_id,
-                customer_id = EXCLUDED.customer_id,
-                product_id = EXCLUDED.product_id,
-                status = EXCLUDED.status,
-                cancel_at_period_end = EXCLUDED.cancel_at_period_end,
-                current_period_start = EXCLUDED.current_period_start,
-                current_period_end = EXCLUDED.current_period_end,
-                last_webhook_ts = EXCLUDED.last_webhook_ts,
-                updated_at = now()
-            WHERE user_subscriptions.last_webhook_ts < EXCLUDED.last_webhook_ts
-            """),
-            {
-                "user_id": user_id,
-                "subscription_id": subscription_id,
-                "customer_id": customer_id,
-                "product_id": product_id,
-                "status": status,
-                "cancel_at_period_end": cancel_at_period_end,
-                "current_period_start": current_period_start,
-                "current_period_end": current_period_end,
-                "webhook_ts": webhook_ts,
-            },
-        )
-
         # Recompute winner from all subscriptions for this user.
         winner_result = await conn.execute(
             text("""
@@ -724,10 +660,10 @@ async def revert_to_free(user_id: UUID) -> None:
             {"user_id": user_id}
         )
         
-        # Update subscription status
+        # Update subscription statuses
         await conn.execute(
             text("""
-            UPDATE user_subscriptions
+            UPDATE billing_subscriptions
             SET status = 'expired', updated_at = now()
             WHERE user_id = :user_id
             """),
@@ -873,20 +809,9 @@ async def find_user_by_customer_id(customer_id: str) -> Optional[UUID]:
 async def find_user_by_subscription_id(subscription_id: str) -> Optional[UUID]:
     """Find user ID from subscription ID."""
     async with get_db_connection() as conn:
-        try:
-            result = await conn.execute(
-                text("SELECT user_id FROM billing_subscriptions WHERE subscription_id = :subscription_id"),
-                {"subscription_id": subscription_id},
-            )
-            row = result.fetchone()
-            if row:
-                return row[0]
-        except Exception as e:
-            logger.warning(f"billing_subscriptions lookup failed, falling back to legacy table: {e}")
-
-        legacy_result = await conn.execute(
-            text("SELECT user_id FROM user_subscriptions WHERE subscription_id = :subscription_id"),
+        result = await conn.execute(
+            text("SELECT user_id FROM billing_subscriptions WHERE subscription_id = :subscription_id"),
             {"subscription_id": subscription_id},
         )
-        legacy_row = legacy_result.fetchone()
-        return legacy_row[0] if legacy_row else None
+        row = result.fetchone()
+        return row[0] if row else None

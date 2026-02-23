@@ -175,7 +175,6 @@ class Settings(BaseSettings):
     DODO_WEBHOOK_SECRET: str = ""
     DODO_BRAND_ID: str = ""
     DODO_ENVIRONMENT: str = "test_mode"  # or "live_mode"
-    BILLING_ADMIN_TOKEN: str = "gommale"
 
     # SMTP Settings
     SMTP_HOST: str = "smtp.gmail.com"

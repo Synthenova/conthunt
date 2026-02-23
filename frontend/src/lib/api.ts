@@ -3,6 +3,7 @@
 import { auth } from "@/lib/firebaseClient";
 import { signOut } from "firebase/auth";
 import { toTelemetryHeaders, type TelemetryHeaderContext } from "@/lib/telemetry/context";
+import { clearPostHogIdentity } from "@/lib/telemetry/posthog";
 
 /**
  * Shared API configuration for frontend.
@@ -30,6 +31,7 @@ export const BACKEND_URL = getBackendUrl();
  */
 export async function forceLogout() {
     console.log("[forceLogout] Clearing all auth state...");
+    clearPostHogIdentity();
     try {
         // Clear server session cookie
         await fetch("/api/sessionLogout", { method: "POST" });

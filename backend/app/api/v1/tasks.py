@@ -174,6 +174,7 @@ class ChatStreamTaskPayload(BaseModel):
     auth_token: str | None = None
     filters: dict | None = None
     user_id: UUID | None = None
+    email: str | None = None
     action_id: str | None = None
     session_id: str | None = None
     attempt_no: int | None = None
@@ -966,6 +967,7 @@ async def _handle_chat_stream_single(payload: ChatStreamTaskPayload, request: Re
         subject_id=payload.subject_id or payload.message_client_id,
         message_client_id=payload.message_client_id,
         user_id=str(payload.user_id) if payload.user_id else telemetry_ctx.user_id,
+        email=payload.email or telemetry_ctx.email,
         task_retry_count=executor.retry_count,
     )
 
