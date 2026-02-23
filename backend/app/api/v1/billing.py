@@ -1,12 +1,8 @@
 """Billing API endpoints."""
-from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import text
 
 from app.auth import get_current_user, AuthUser
-from app.core import get_settings
-from app.db.session import get_db_connection
 from app.services import billing_service
 
 
@@ -19,15 +15,6 @@ class CheckoutRequest(BaseModel):
 
 class PlanChangeRequest(BaseModel):
     target_product_id: str
-
-
-def _assert_billing_admin_token(token: str | None) -> None:
-    settings = get_settings()
-    configured = settings.BILLING_ADMIN_TOKEN
-    if not configured:
-        raise HTTPException(status_code=503, detail="BILLING_ADMIN_TOKEN is not configured")
-    if not token or token != configured:
-        raise HTTPException(status_code=401, detail="Invalid billing admin token")
 
 
 @router.get("/products")
@@ -205,38 +192,3 @@ async def undo_cancel(user: AuthUser = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/admin/recompute-winners")
-async def recompute_billing_winners(
-    x_billing_admin_token: str | None = Header(default=None, alias="X-Billing-Admin-Token"),
-    user_id: UUID | None = Query(default=None),
-    limit: int = Query(default=500, ge=1, le=5000),
-):
-    """
-    Admin endpoint to recompute billing winner state from billing_subscriptions.
-    Use user_id for targeted recompute; omit user_id to process up to `limit` users.
-    """
-    _assert_billing_admin_token(x_billing_admin_token)
-
-    if user_id:
-        summary = await billing_service.recompute_user_billing_winner(user_id)
-        return {"processed": 1, "results": [summary]}
-
-    async with get_db_connection() as conn:
-        result = await conn.execute(
-            text("""
-            SELECT DISTINCT user_id
-            FROM billing_subscriptions
-            ORDER BY user_id
-            LIMIT :limit
-            """),
-            {"limit": limit},
-        )
-        user_ids = [row[0] for row in result.fetchall()]
-
-    summaries = []
-    for uid in user_ids:
-        summaries.append(await billing_service.recompute_user_billing_winner(uid))
-
-    return {"processed": len(summaries), "results": summaries}
