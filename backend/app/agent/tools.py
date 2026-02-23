@@ -637,7 +637,7 @@ async def search(
         chat_id = configurable.get("chat_id")
         
         # 1. Initialize search-planning model
-        llm = init_chat_model("openrouter/x-ai/grok-4.1-fast:online")
+        llm = init_chat_model("openrouter/google/gemini-3-flash-preview:online")
         structured_llm = llm.with_structured_output(SearchPlan)
 
         # 2. Extract messages for context
@@ -650,7 +650,7 @@ IMPORTANT OVERRIDE: Not every user message is “inspiration.” First decide if
 
 You are an expert search keyword generator specialized in discovering inspirational short-form videos across any niche or topic (e.g., marketing, fitness, cooking, fashion, tech, beauty, education, comedy, travel).
 Keyword must not have platform specific keywords (e.g., tiktok, youtube, instagram, etc.)
-Note: These keyword combinations will be used in a downstream LLM system (e.g., Gemini with grounding) that has direct web search access. Optimize them to perform strongly in web searches, surfacing native short-form video results effectively.
+Note: These keyword combinations will be used in a downstream LLM system that has direct web search access. Optimize them to perform strongly in web searches, surfacing native short-form video results effectively.
 
 A) DIRECT LOOKUP (return 1-2 queries only)
 Use DIRECT LOOKUP when the user input is mainly a named entity or specific target, with no “ideas/inspo/examples/hooks” wording.
@@ -671,8 +671,9 @@ Step-by-step thinking for INSPIRATION / DISCOVERY (do this internally before out
 5. Prioritize phrases that surface native, authentic videos via web search: Avoid anything that pulls articles, lists, or compilations (no "best", "top", "examples", "ideas list").
 6. Diversify across the request's key angles (e.g., humor, virality, tutorials, relatability) while staying tightly on-topic.
 
+C) Use web_search if needed to understand the topic better.
 
-If the user explicitly requests filters (date, sort), include them in `filters`.
+D) If the user explicitly requests filters (date, sort), include them in `filters`.
 Allowed values:
 - publish_time/date_posted: this-week, yesterday, this-month, last-3-months, last-6-months, all-time
 - sort_by: relevance, most-liked, date-posted
