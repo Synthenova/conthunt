@@ -199,7 +199,38 @@ export function useBilling(options: UseBillingOptions = {}) {
         }
     };
 
+    const handleReactivate = async () => {
+        setActionLoading("reactivate");
+        setError(null);
+
+        try {
+            const res = await authFetch(`${BACKEND_URL}/v1/billing/reactivate`, {
+                method: "POST",
+            });
+            if (!res.ok) {
+                const data = (await res.json()) as ErrorDetailResponse;
+                throw new Error(data.detail || "Failed to get reactivation link");
+            }
+            const data = await res.json();
+            if (data.payment_link) {
+                window.location.href = data.payment_link;
+            } else {
+                throw new Error("No payment link returned. Please contact support.");
+            }
+        } catch (err: unknown) {
+            setError(getErrorMessage(err));
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
     const handleUpgrade = async (productId: string, productName: string) => {
+        // If subscription is on_hold, redirect to reactivation instead
+        if (subscription?.status === "on_hold") {
+            await handleReactivate();
+            return;
+        }
+
         // If scheduled for cancellation, undo it first (behind the scenes)
         if (subscription?.cancel_at_period_end) {
             try {
@@ -249,6 +280,12 @@ export function useBilling(options: UseBillingOptions = {}) {
     };
 
     const handleDowngrade = async (productId: string, productName: string) => {
+        // If subscription is on_hold, redirect to reactivation instead
+        if (subscription?.status === "on_hold") {
+            await handleReactivate();
+            return;
+        }
+
         // If scheduled for cancellation, undo it first (behind the scenes)
         if (subscription?.cancel_at_period_end) {
             try {
@@ -365,6 +402,7 @@ export function useBilling(options: UseBillingOptions = {}) {
         handleCheckout,
         handleUpgrade,
         handleDowngrade,
+        handleReactivate,
         showCancelConfirm,
         closeCancelConfirm,
         confirmCancel,

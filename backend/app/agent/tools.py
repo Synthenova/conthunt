@@ -702,8 +702,7 @@ Allowed values:
             if content_str and content_str.strip():
                 history_parts.append(f"{prefix}{content_str.strip()}")
         
-        combined_content = "\n".join(history_parts)
-        logger.info(f"Combined content: {combined_content}")
+        combined_content = "\n".join(history_parts)        
         # Invoke the model
         try:
            # We pass the conversation history + system prompt

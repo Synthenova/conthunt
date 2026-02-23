@@ -22,10 +22,9 @@ FEATURE_CREDITS = {
 # Role to monthly credits mapping (matches Dodo product metadata)
 ROLE_CREDITS = {
     "free": 10000 if get_settings().APP_ENV == "local" else 60,
-    "creator": 1050,
-    "pro_research": 3300,
+    "creator": 10000 if get_settings().APP_ENV == "local" else 1050,
+    "pro_research": 10000 if get_settings().APP_ENV == "local" else 3300,
 }
-
 # Credit period duration (30 days regardless of billing cycle)
 CREDIT_PERIOD_DAYS = 30
 

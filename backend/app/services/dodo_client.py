@@ -233,3 +233,57 @@ async def get_subscription(subscription_id: str) -> dict:
     except Exception as e:
         logger.error(f"Failed to get subscription {subscription_id}: {e}")
         raise
+
+
+async def update_payment_method(subscription_id: str, return_url: str) -> dict:
+    """
+    Update payment method for a subscription.
+    For on_hold subscriptions, this automatically:
+    1. Creates a charge for remaining dues
+    2. Returns a payment_link for the customer to complete payment
+    3. Reactivates the subscription upon successful payment
+    """
+    client = get_dodo_client()
+    
+    try:
+        result = await client.subscriptions.update_payment_method(
+            subscription_id,
+            type="new",
+            return_url=return_url,
+        )
+        
+        payment_link = getattr(result, 'payment_link', None)
+        payment_id = getattr(result, 'payment_id', None)
+        
+        logger.info(f"Payment method update initiated for {subscription_id}: payment_id={payment_id}")
+        return {
+            "payment_link": payment_link,
+            "payment_id": payment_id,
+        }
+        
+    except Exception as e:
+        err_msg = str(e)
+        logger.error(f"Failed to update payment method for {subscription_id}: {err_msg}")
+        
+        # Fallback to customer portal if the latest payment isn't failed yet 
+        # (e.g., async payment method like UPI still processing)
+        if "422" in err_msg or "INVALID_REQUEST_PARAMETERS" in err_msg or "cannot recreate invoice" in err_msg:
+            logger.info(f"Falling back to customer portal for {subscription_id}")
+            try:
+                sub = await client.subscriptions.retrieve(subscription_id)
+                customer_id = sub.customer.customer_id
+                session = await client.customers.customer_portal.create(customer_id=customer_id)
+                
+                portal_link = getattr(session, 'link', None)
+                if not portal_link and isinstance(session, dict):
+                    portal_link = session.get('link')
+                    
+                if portal_link:
+                    return {
+                        "payment_link": portal_link,
+                        "payment_id": None,
+                    }
+            except Exception as inner_e:
+                logger.error(f"Customer portal fallback failed for {subscription_id}: {inner_e}")
+        
+        raise

@@ -28,6 +28,7 @@ export default function PricingSection() {
         handleCheckout,
         handleUpgrade,
         handleDowngrade,
+        handleReactivate,
         showCancelConfirm,
         closeCancelConfirm,
         confirmCancel,
@@ -41,6 +42,7 @@ export default function PricingSection() {
 
     const [isAnnual, setIsAnnual] = useState(false);
     const [returnLoading, setReturnLoading] = useState(false);
+    const isOnHold = subscription?.status === "on_hold";
     const searchParams = useSearchParams();
     const router = useRouter();
 
@@ -203,6 +205,18 @@ export default function PricingSection() {
 
         // Current plan (not scheduled for cancel)
         if (isCurrent) {
+            // If on_hold, show UPDATE PAYMENT button instead of disabled CURRENT PLAN
+            if (isOnHold) {
+                return (
+                    <button
+                        className="glass-button w-full py-3 text-[0.95rem] font-medium font-nav border-amber-500/20 text-amber-400"
+                        onClick={handleReactivate}
+                        disabled={!!actionLoading}
+                    >
+                        {actionLoading === "reactivate" ? <Loader2 className="animate-spin h-5 w-5" /> : "UPDATE PAYMENT"}
+                    </button>
+                );
+            }
             return (
                 <button className="glass-button w-full py-3 text-[0.95rem] font-medium font-nav border-green-500/20 text-green-500/50 cursor-not-allowed opacity-60 shadow-none hover:bg-transparent hover:shadow-none hover:text-green-500/50" disabled>
                     CURRENT PLAN
@@ -313,6 +327,21 @@ export default function PricingSection() {
                         {error && (
                             <div className="max-w-md mx-auto mb-8 p-3 bg-red-500/10 border border-red-500/20 text-red-500 rounded-lg text-sm">
                                 {error}
+                            </div>
+                        )}
+                        {isOnHold && (
+                            <div className="max-w-lg mx-auto mb-8 p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                                <p className="text-amber-400 text-sm font-medium mb-1">⚠️ Payment Issue</p>
+                                <p className="text-amber-300/80 text-sm">
+                                    Your last payment failed. Please update your payment method to continue using your plan.
+                                </p>
+                                <button
+                                    className="mt-3 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-400 text-sm font-medium rounded-lg transition-colors"
+                                    onClick={handleReactivate}
+                                    disabled={actionLoading === "reactivate"}
+                                >
+                                    {actionLoading === "reactivate" ? <Loader2 className="animate-spin h-4 w-4 inline" /> : "Update Payment Method"}
+                                </button>
                             </div>
                         )}
                     </div>

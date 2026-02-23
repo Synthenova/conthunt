@@ -126,6 +126,16 @@ async def request_upgrade(
     if not subscription:
         raise ValueError("No active subscription found")
     
+    # Guard: only allow plan changes on active subscriptions
+    sub_status = subscription.get("status")
+    if sub_status != "active":
+        if sub_status == "on_hold":
+            raise ValueError("Your subscription is on hold due to a failed payment. Please update your payment method first.")
+        elif sub_status == "failed":
+            raise ValueError("Your previous subscription attempt failed. Please start a new subscription.")
+        else:
+            raise ValueError(f"Cannot change plan: subscription is '{sub_status}'.")
+    
     # Verify target is actually an upgrade (higher credits)
     products = await dodo_client.get_products()
     current_product = next((p for p in products if p["product_id"] == subscription["product_id"]), None)
@@ -174,6 +184,16 @@ async def request_downgrade(
     subscription = await get_user_subscription(user_id)
     if not subscription:
         raise ValueError("No active subscription found")
+    
+    # Guard: only allow plan changes on active subscriptions
+    sub_status = subscription.get("status")
+    if sub_status != "active":
+        if sub_status == "on_hold":
+            raise ValueError("Your subscription is on hold due to a failed payment. Please update your payment method first.")
+        elif sub_status == "failed":
+            raise ValueError("Your previous subscription attempt failed. Please start a new subscription.")
+        else:
+            raise ValueError(f"Cannot change plan: subscription is '{sub_status}'.")
     
     # Verify target is actually a downgrade (lower credits)
     products = await dodo_client.get_products()
@@ -354,7 +374,7 @@ async def apply_subscription_state(
         
         # Determine if we should update role/periods
         # Only grant paid role for non-failed states.
-        allowed_role_statuses = {"active", "on_hold", "cancelled"}
+        allowed_role_statuses = {"active", "cancelled"}
         should_update_role = status in allowed_role_statuses
 
         # Determine if we should reset credit_period_start
