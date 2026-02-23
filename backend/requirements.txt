@@ -122,7 +122,7 @@ opentelemetry-semantic-conventions==0.60b1
 opentelemetry-util-http==0.60b1
 orjson==3.11.7
 ormsgpack==1.12.2
-packaging @ file:///opt/miniconda3/conda-bld/packaging_1761049079023/work
+packaging
 pg8000==1.31.5
 pillow==12.1.1
 pluggy==1.6.0
