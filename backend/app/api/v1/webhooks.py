@@ -1,4 +1,5 @@
 """Webhook handlers for Dodo Payments."""
+import json
 from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import text
@@ -19,7 +20,6 @@ async def store_webhook_event(webhook_id: str, event_type: str, subscription_id:
     Returns True if new event, False if already processed.
     """
     try:
-        import json
         async with get_db_connection() as conn:
             result = await conn.execute(
                 text("""
@@ -67,6 +67,10 @@ async def handle_dodo_webhook(request: Request):
     event_type = event.type
     event_data = event.data
     event_ts = getattr(event, 'timestamp', None) or datetime.utcnow()
+    try:
+        raw_payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raw_payload = {"type": event_type}
     
     
     logger.info(f"Received webhook: {event_type} (id: {webhook_id})")
@@ -80,7 +84,7 @@ async def handle_dodo_webhook(request: Request):
     )
     
     # Idempotency check
-    is_new = await store_webhook_event(webhook_id, event_type, subscription_id, {"type": event_type})
+    is_new = await store_webhook_event(webhook_id, event_type, subscription_id, raw_payload)
     if not is_new:
         logger.info(f"Webhook {webhook_id} already processed, skipping")
         return {"status": "already_processed"}
@@ -347,8 +351,17 @@ async def handle_subscription_expired(data, event_ts: datetime):
         logger.warning(f"Could not find user for subscription {subscription_id}")
         return
     
-    # Revert to free tier
-    await billing_service.revert_to_free(user_id)
+    await billing_service.apply_subscription_state(
+        user_id=user_id,
+        subscription_id=subscription_id,
+        customer_id=customer_id,
+        product_id=data.product_id,
+        status="expired",
+        cancel_at_period_end=data.cancel_at_next_billing_date,
+        current_period_start=data.previous_billing_date,
+        current_period_end=data.next_billing_date,
+        webhook_ts=event_ts,
+    )
 
 
 async def handle_subscription_on_hold(data, event_ts: datetime):

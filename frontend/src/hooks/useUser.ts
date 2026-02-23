@@ -19,6 +19,10 @@ export interface PendingDowngrade {
 export interface UserSubscription {
     has_subscription: boolean;
     role: string;
+    billing_state?: string;
+    allowed_actions?: string[];
+    access_granted?: boolean;
+    cancelled_with_access?: boolean;
     subscription_id?: string;
     customer_id?: string;
     product_id?: string;

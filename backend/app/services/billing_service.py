@@ -1,14 +1,191 @@
 """Billing service for subscription management."""
-import json
 from uuid import UUID
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, Any
 
 from sqlalchemy import text
 
 from app.core import logger
 from app.db.session import get_db_connection
 from app.services import dodo_client
+
+BILLING_ACTION_CHECKOUT = "checkout"
+BILLING_ACTION_PREVIEW_CHANGE = "preview_change"
+BILLING_ACTION_UPGRADE = "upgrade"
+BILLING_ACTION_DOWNGRADE = "downgrade"
+BILLING_ACTION_CANCEL = "cancel"
+BILLING_ACTION_UNDO_CANCEL = "undo_cancel"
+BILLING_ACTION_REACTIVATE = "reactivate"
+
+STATE_TO_ALLOWED_ACTIONS = {
+    "none": [BILLING_ACTION_CHECKOUT],
+    "pending": [],
+    "failed": [BILLING_ACTION_CHECKOUT],
+    "expired": [BILLING_ACTION_CHECKOUT],
+    "cancelled": [BILLING_ACTION_CHECKOUT],
+    "on_hold": [BILLING_ACTION_REACTIVATE],
+    "active": [
+        BILLING_ACTION_PREVIEW_CHANGE,
+        BILLING_ACTION_UPGRADE,
+        BILLING_ACTION_DOWNGRADE,
+        BILLING_ACTION_CANCEL,
+    ],
+    "active_cancel_scheduled": [
+        BILLING_ACTION_PREVIEW_CHANGE,
+        BILLING_ACTION_UPGRADE,
+        BILLING_ACTION_DOWNGRADE,
+        BILLING_ACTION_UNDO_CANCEL,
+    ],
+}
+
+
+def _parse_datetime(value: Any) -> Optional[datetime]:
+    """Parse datetime from DB/webhook values."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _is_cancelled_with_access(subscription: Optional[dict]) -> bool:
+    """True when cancelled subscription is still within paid access window."""
+    if not subscription or subscription.get("status") != "cancelled":
+        return False
+    period_end = _parse_datetime(subscription.get("current_period_end"))
+    return bool(period_end and period_end > datetime.now(timezone.utc))
+
+
+def classify_billing_state(subscription: Optional[dict]) -> str:
+    """Map subscription row to canonical billing state."""
+    if not subscription:
+        return "none"
+
+    status = (subscription.get("status") or "").lower()
+    cancel_at_period_end = bool(subscription.get("cancel_at_period_end"))
+
+    if status == "active":
+        return "active_cancel_scheduled" if cancel_at_period_end else "active"
+    if status in STATE_TO_ALLOWED_ACTIONS:
+        return status
+    return "none"
+
+
+def _pick_winner_subscription(subscriptions: list[dict]) -> Optional[dict]:
+    """Pick effective subscription from per-subscription history."""
+    if not subscriptions:
+        return None
+
+    now = datetime.now(timezone.utc)
+
+    def _event_sort_key(sub: dict) -> tuple:
+        period_end = _parse_datetime(sub.get("current_period_end")) or datetime.min.replace(tzinfo=timezone.utc)
+        webhook_ts = _parse_datetime(sub.get("last_webhook_ts")) or datetime.min.replace(tzinfo=timezone.utc)
+        return (period_end, webhook_ts)
+
+    active = [s for s in subscriptions if (s.get("status") or "").lower() == "active"]
+    if active:
+        return max(active, key=_event_sort_key)
+
+    on_hold = [s for s in subscriptions if (s.get("status") or "").lower() == "on_hold"]
+    if on_hold:
+        return max(on_hold, key=_event_sort_key)
+
+    cancelled_with_access = []
+    for sub in subscriptions:
+        if (sub.get("status") or "").lower() != "cancelled":
+            continue
+        period_end = _parse_datetime(sub.get("current_period_end"))
+        if period_end and period_end > now:
+            cancelled_with_access.append(sub)
+    if cancelled_with_access:
+        return max(cancelled_with_access, key=_event_sort_key)
+
+    return None
+
+
+async def _get_user_role(user_id: UUID) -> str:
+    """Read role directly from users table."""
+    async with get_db_connection() as conn:
+        result = await conn.execute(
+            text("SELECT role FROM users WHERE id = :user_id"),
+            {"user_id": user_id},
+        )
+        row = result.fetchone()
+        return row[0] if row and row[0] else "free"
+
+
+async def get_user_dodo_customer_id(user_id: UUID) -> Optional[str]:
+    """Read persisted Dodo customer id for checkout/session reuse."""
+    async with get_db_connection() as conn:
+        result = await conn.execute(
+            text("SELECT dodo_customer_id FROM users WHERE id = :user_id"),
+            {"user_id": user_id},
+        )
+        row = result.fetchone()
+        return row[0] if row and row[0] else None
+
+
+async def get_billing_context(user_id: UUID) -> dict:
+    """
+    Return canonical billing state + allowed actions + subscription snapshot.
+    """
+    subscription = await get_user_subscription(user_id)
+    state = classify_billing_state(subscription)
+    allowed_actions = STATE_TO_ALLOWED_ACTIONS.get(state, [])
+    cancelled_with_access = _is_cancelled_with_access(subscription)
+
+    if subscription:
+        db_role = subscription.get("db_role", "free")
+    else:
+        db_role = await _get_user_role(user_id)
+
+    has_subscription = state in {"active", "active_cancel_scheduled", "on_hold", "cancelled"}
+    access_granted = state in {"active", "active_cancel_scheduled", "on_hold"} or cancelled_with_access
+
+    subscription_data = dict(subscription) if subscription else {}
+    subscription_data.pop("db_role", None)
+
+    return {
+        "role": db_role,
+        "billing_state": state,
+        "allowed_actions": allowed_actions,
+        "has_subscription": has_subscription,
+        "access_granted": access_granted,
+        "cancelled_with_access": cancelled_with_access,
+        **subscription_data,
+    }
+
+
+def _blocked_action_error(action: str, state: str) -> str:
+    """Consistent error message for action-gate violations."""
+    if state == "on_hold":
+        return "Your subscription is on hold due to a failed payment. Please update your payment method first."
+    if state in {"failed", "expired", "cancelled"}:
+        return "Please start a new subscription."
+    if state == "pending":
+        return "Your subscription is still pending. Please wait for activation."
+    if state == "none":
+        return "No active subscription found."
+    if action == BILLING_ACTION_UNDO_CANCEL:
+        return "Undo cancel is only available for active subscriptions scheduled for cancellation."
+    if action == BILLING_ACTION_CANCEL:
+        return "Cancel is only available for active subscriptions."
+    return f"Cannot {action.replace('_', ' ')} while subscription is '{state}'."
+
+
+async def require_allowed_action(user_id: UUID, action: str) -> dict:
+    """Gate mutating billing actions through a single state contract."""
+    context = await get_billing_context(user_id)
+    if action not in context.get("allowed_actions", []):
+        raise ValueError(_blocked_action_error(action, context["billing_state"]))
+    return context
 
 
 async def _sync_firebase_role(user_id: UUID, role: str) -> None:
@@ -61,46 +238,88 @@ async def create_checkout(
 
 
 async def get_user_subscription(user_id: UUID) -> Optional[dict]:
-    """Get user's current subscription and any pending plan change."""
+    """Get user's current effective subscription from subscription history."""
     async with get_db_connection() as conn:
-        # Get subscription AND user's current role from DB
-        result = await conn.execute(
-            text("""
-            SELECT 
-                us.subscription_id, us.customer_id, us.product_id, us.status,
-                us.cancel_at_period_end, us.current_period_start, us.current_period_end,
-                u.role
-            FROM user_subscriptions us
-            JOIN users u ON u.id = us.user_id
-            WHERE us.user_id = :user_id
-            """),
-            {"user_id": user_id}
+        role_result = await conn.execute(
+            text("SELECT role FROM users WHERE id = :user_id"),
+            {"user_id": user_id},
         )
-        row = result.fetchone()
-        
-        if not row:
+        role_row = role_result.fetchone()
+        db_role = role_row[0] if role_row and role_row[0] else "free"
+
+        subscriptions: list[dict] = []
+        try:
+            result = await conn.execute(
+                text("""
+                SELECT
+                    subscription_id, customer_id, product_id, status,
+                    cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
+                FROM billing_subscriptions
+                WHERE user_id = :user_id
+                ORDER BY last_webhook_ts DESC
+                """),
+                {"user_id": user_id},
+            )
+            for row in result.fetchall():
+                subscriptions.append(
+                    {
+                        "subscription_id": row[0],
+                        "customer_id": row[1],
+                        "product_id": row[2],
+                        "status": row[3],
+                        "cancel_at_period_end": row[4],
+                        "current_period_start": row[5].isoformat() if row[5] else None,
+                        "current_period_end": row[6].isoformat() if row[6] else None,
+                        "last_webhook_ts": row[7].isoformat() if row[7] else None,
+                    }
+                )
+        except Exception as e:
+            # Migration-safe fallback until billing_subscriptions table exists.
+            logger.warning(f"billing_subscriptions query failed, falling back to legacy table: {e}")
+            legacy_result = await conn.execute(
+                text("""
+                SELECT
+                    subscription_id, customer_id, product_id, status,
+                    cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
+                FROM user_subscriptions
+                WHERE user_id = :user_id
+                """),
+                {"user_id": user_id},
+            )
+            legacy_row = legacy_result.fetchone()
+            if legacy_row:
+                subscriptions.append(
+                    {
+                        "subscription_id": legacy_row[0],
+                        "customer_id": legacy_row[1],
+                        "product_id": legacy_row[2],
+                        "status": legacy_row[3],
+                        "cancel_at_period_end": legacy_row[4],
+                        "current_period_start": legacy_row[5].isoformat() if legacy_row[5] else None,
+                        "current_period_end": legacy_row[6].isoformat() if legacy_row[6] else None,
+                        "last_webhook_ts": legacy_row[7].isoformat() if legacy_row[7] else None,
+                    }
+                )
+
+        subscription = _pick_winner_subscription(subscriptions)
+        if not subscription:
             return None
-        
-        subscription = {
-            "subscription_id": row[0],
-            "customer_id": row[1],
-            "product_id": row[2],
-            "status": row[3],
-            "cancel_at_period_end": row[4],
-            "current_period_start": row[5].isoformat() if row[5] else None,
-            "current_period_end": row[6].isoformat() if row[6] else None,
-            "db_role": row[7],  # User's actual role from DB
-        }
-        
+        subscription["db_role"] = db_role
+
         # Check for pending plan change
         pending_result = await conn.execute(
             text("""
             SELECT target_product_id, target_role, created_at
             FROM pending_plan_changes
-            WHERE user_id = :user_id AND status = 'pending'
+            WHERE user_id = :user_id
+              AND subscription_id = :subscription_id
+              AND status = 'pending'
             ORDER BY created_at DESC LIMIT 1
             """),
-            {"user_id": user_id}
+            {
+                "user_id": user_id,
+                "subscription_id": subscription["subscription_id"],
+            }
         )
         pending_row = pending_result.fetchone()
         
@@ -122,13 +341,15 @@ async def request_upgrade(
     Request an immediate upgrade.
     Calls Dodo changePlan with prorated_immediately.
     """
-    subscription = await get_user_subscription(user_id)
-    if not subscription:
+    context = await require_allowed_action(user_id, BILLING_ACTION_UPGRADE)
+    subscription_id = context.get("subscription_id")
+    current_product_id = context.get("product_id")
+    if not subscription_id or not current_product_id:
         raise ValueError("No active subscription found")
     
     # Verify target is actually an upgrade (higher credits)
     products = await dodo_client.get_products()
-    current_product = next((p for p in products if p["product_id"] == subscription["product_id"]), None)
+    current_product = next((p for p in products if p["product_id"] == current_product_id), None)
     target_product = next((p for p in products if p["product_id"] == target_product_id), None)
     
     if not target_product:
@@ -154,12 +375,12 @@ async def request_upgrade(
     
     # Call Dodo to change plan immediately
     result = await dodo_client.change_plan(
-        subscription_id=subscription["subscription_id"],
+        subscription_id=subscription_id,
         product_id=target_product_id,
         proration_mode="prorated_immediately",
     )
     
-    logger.info(f"Upgrade initiated for user {user_id}: {subscription['product_id']} -> {target_product_id}")
+    logger.info(f"Upgrade initiated for user {user_id}: {current_product_id} -> {target_product_id}")
     return result
 
 
@@ -171,13 +392,15 @@ async def request_downgrade(
     Request a downgrade at end of billing cycle.
     Stores in pending_plan_changes, applied on subscription.renewed webhook.
     """
-    subscription = await get_user_subscription(user_id)
-    if not subscription:
+    context = await require_allowed_action(user_id, BILLING_ACTION_DOWNGRADE)
+    subscription_id = context.get("subscription_id")
+    current_product_id = context.get("product_id")
+    if not subscription_id or not current_product_id:
         raise ValueError("No active subscription found")
     
     # Verify target is actually a downgrade (lower credits)
     products = await dodo_client.get_products()
-    current_product = next((p for p in products if p["product_id"] == subscription["product_id"]), None)
+    current_product = next((p for p in products if p["product_id"] == current_product_id), None)
     target_product = next((p for p in products if p["product_id"] == target_product_id), None)
     
     if not target_product:
@@ -185,8 +408,8 @@ async def request_downgrade(
     
     current_credits = int(current_product["metadata"].get("credits", 0)) if current_product else 0
     target_credits = int(target_product["metadata"].get("credits", 0))
-    current_price = getattr(current_product, "price", 0) if isinstance(current_product, object) else current_product.get("price", 0)
-    target_price = getattr(target_product, "price", 0) if isinstance(target_product, object) else target_product.get("price", 0)
+    current_price = current_product.get("price", 0) if current_product else 0
+    target_price = target_product.get("price", 0)
     target_role = target_product["metadata"].get("app_role", "free")
     
     # Allow downgrade if:
@@ -211,17 +434,17 @@ async def request_downgrade(
             """),
             {
                 "user_id": user_id,
-                "subscription_id": subscription["subscription_id"],
+                "subscription_id": subscription_id,
                 "target_product_id": target_product_id,
                 "target_role": target_role,
             }
         )
     
-    logger.info(f"Downgrade scheduled for user {user_id}: {subscription['product_id']} -> {target_product_id} at end of cycle")
+    logger.info(f"Downgrade scheduled for user {user_id}: {current_product_id} -> {target_product_id} at end of cycle")
     
     return {
         "message": "Downgrade scheduled for end of billing cycle",
-        "effective_at": subscription["current_period_end"],
+        "effective_at": context.get("current_period_end"),
         "target_product_id": target_product_id,
         "target_role": target_role,
     }
@@ -249,8 +472,9 @@ async def request_cancel(user_id: UUID) -> dict:
     Request subscription cancellation at end of billing period.
     User keeps access until period ends.
     """
-    subscription = await get_user_subscription(user_id)
-    if not subscription:
+    context = await require_allowed_action(user_id, BILLING_ACTION_CANCEL)
+    subscription_id = context.get("subscription_id")
+    if not subscription_id:
         raise ValueError("No active subscription found")
     
     # Cancel any pending downgrade since subscription will end
@@ -258,7 +482,7 @@ async def request_cancel(user_id: UUID) -> dict:
     
     # Set cancel_at_period_end via Dodo
     await dodo_client.set_cancel_at_period_end(
-        subscription_id=subscription["subscription_id"],
+        subscription_id=subscription_id,
         cancel=True,
     )
     
@@ -266,18 +490,19 @@ async def request_cancel(user_id: UUID) -> dict:
     
     return {
         "message": "Subscription will cancel at end of billing period",
-        "access_until": subscription["current_period_end"],
+        "access_until": context.get("current_period_end"),
     }
 
 
 async def undo_cancel(user_id: UUID) -> dict:
     """Undo scheduled cancellation."""
-    subscription = await get_user_subscription(user_id)
-    if not subscription:
+    context = await require_allowed_action(user_id, BILLING_ACTION_UNDO_CANCEL)
+    subscription_id = context.get("subscription_id")
+    if not subscription_id:
         raise ValueError("No active subscription found")
     
     await dodo_client.set_cancel_at_period_end(
-        subscription_id=subscription["subscription_id"],
+        subscription_id=subscription_id,
         cancel=False,
     )
     
@@ -301,29 +526,75 @@ async def apply_subscription_state(
 ) -> None:
     """
     Apply subscription state from webhook.
-    Updates user_subscriptions table and user role/period_start.
+    Updates canonical subscription history and recomputes winner-derived user state.
     
     is_new_subscription: Set credit_period_start (first subscription)
-    is_plan_change: Reset credit_period_start (upgrade/downgrade)
+    is_plan_change: Retained for compatibility (credits no longer reset on plan change)
     """
-    # Get product metadata for role
-    product = dodo_client.get_product_by_id(product_id)
-    if not product:
-        # Refresh cache and try again
-        await dodo_client.get_products()
-        product = dodo_client.get_product_by_id(product_id)
-    
-    role = product["metadata"].get("app_role", "free") if product else "free"
-    
     async with get_db_connection() as conn:
-        # Upsert subscription (with out-of-order protection)
+        existing_owner_result = await conn.execute(
+            text("""
+            SELECT user_id
+            FROM billing_subscriptions
+            WHERE subscription_id = :subscription_id
+            """),
+            {"subscription_id": subscription_id},
+        )
+        existing_owner_row = existing_owner_result.fetchone()
+        if existing_owner_row and existing_owner_row[0] != user_id:
+            logger.warning(
+                "Subscription owner mismatch for %s: incoming_user=%s existing_user=%s. Keeping existing owner.",
+                subscription_id,
+                user_id,
+                existing_owner_row[0],
+            )
+            user_id = existing_owner_row[0]
+
+        # Canonical per-subscription history table (new model).
         await conn.execute(
             text("""
-            INSERT INTO user_subscriptions 
+            INSERT INTO billing_subscriptions
                 (user_id, subscription_id, customer_id, product_id, status,
                  cancel_at_period_end, current_period_start, current_period_end,
                  last_webhook_ts, updated_at)
-            VALUES 
+            VALUES
+                (:user_id, :subscription_id, :customer_id, :product_id, :status,
+                 :cancel_at_period_end, :current_period_start, :current_period_end,
+                 :webhook_ts, now())
+            ON CONFLICT (subscription_id) DO UPDATE SET
+                -- Keep subscription owner immutable once first linked.
+                user_id = billing_subscriptions.user_id,
+                customer_id = EXCLUDED.customer_id,
+                product_id = EXCLUDED.product_id,
+                status = EXCLUDED.status,
+                cancel_at_period_end = EXCLUDED.cancel_at_period_end,
+                current_period_start = EXCLUDED.current_period_start,
+                current_period_end = EXCLUDED.current_period_end,
+                last_webhook_ts = EXCLUDED.last_webhook_ts,
+                updated_at = now()
+            WHERE billing_subscriptions.last_webhook_ts < EXCLUDED.last_webhook_ts
+            """),
+            {
+                "user_id": user_id,
+                "subscription_id": subscription_id,
+                "customer_id": customer_id,
+                "product_id": product_id,
+                "status": status,
+                "cancel_at_period_end": cancel_at_period_end,
+                "current_period_start": current_period_start,
+                "current_period_end": current_period_end,
+                "webhook_ts": webhook_ts,
+            },
+        )
+
+        # Legacy pointer table for compatibility with existing queries/tools.
+        await conn.execute(
+            text("""
+            INSERT INTO user_subscriptions
+                (user_id, subscription_id, customer_id, product_id, status,
+                 cancel_at_period_end, current_period_start, current_period_end,
+                 last_webhook_ts, updated_at)
+            VALUES
                 (:user_id, :subscription_id, :customer_id, :product_id, :status,
                  :cancel_at_period_end, :current_period_start, :current_period_end,
                  :webhook_ts, now())
@@ -349,78 +620,95 @@ async def apply_subscription_state(
                 "current_period_start": current_period_start,
                 "current_period_end": current_period_end,
                 "webhook_ts": webhook_ts,
-            }
+            },
         )
-        
-        # Determine if we should update role/periods
-        # Only grant paid role for non-failed states.
-        allowed_role_statuses = {"active", "on_hold", "cancelled"}
-        should_update_role = status in allowed_role_statuses
 
-        # Determine if we should reset credit_period_start
-        # Reset on: new subscription, plan change (upgrade/downgrade)
-        reset_credit_period = (is_new_subscription or is_plan_change) and should_update_role
-        
-        if should_update_role:
-            if reset_credit_period:
-                # Reset credit period to now (credits reset on plan change)
-                await conn.execute(
-                    text("""
-                    UPDATE users
-                    SET role = :role,
-                        current_period_start = :period_start,
-                        credit_period_start = now(),
-                        dodo_customer_id = :customer_id
-                    WHERE id = :user_id
-                    """),
-                    {
-                        "user_id": user_id,
-                        "role": role,
-                        "period_start": current_period_start,
-                        "customer_id": customer_id,
-                    }
-                )
-                logger.info(
-                    f"Applied subscription state for user {user_id}: role={role}, status={status}, credit_period RESET"
-                )
-            else:
-                # Just update role and period_start, don't touch credit_period_start
-                await conn.execute(
-                    text("""
-                    UPDATE users
-                    SET role = :role,
-                        current_period_start = :period_start,
-                        dodo_customer_id = :customer_id
-                    WHERE id = :user_id
-                    """),
-                    {
-                        "user_id": user_id,
-                        "role": role,
-                        "period_start": current_period_start,
-                        "customer_id": customer_id,
-                    }
-                )
-                logger.info(f"Applied subscription state for user {user_id}: role={role}, status={status}")
-        else:
-            # Keep role/periods unchanged for failed/pending states.
+        # Recompute winner from all subscriptions for this user.
+        winner_result = await conn.execute(
+            text("""
+            SELECT
+                subscription_id, customer_id, product_id, status,
+                cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
+            FROM billing_subscriptions
+            WHERE user_id = :user_id
+            ORDER BY last_webhook_ts DESC
+            """),
+            {"user_id": user_id},
+        )
+        candidates = []
+        for row in winner_result.fetchall():
+            candidates.append(
+                {
+                    "subscription_id": row[0],
+                    "customer_id": row[1],
+                    "product_id": row[2],
+                    "status": row[3],
+                    "cancel_at_period_end": row[4],
+                    "current_period_start": row[5].isoformat() if row[5] else None,
+                    "current_period_end": row[6].isoformat() if row[6] else None,
+                    "last_webhook_ts": row[7].isoformat() if row[7] else None,
+                }
+            )
+        winner = _pick_winner_subscription(candidates)
+
+        new_role = "free"
+        period_start_to_set = datetime.now(timezone.utc)
+        customer_id_to_set = customer_id
+
+        if winner:
+            winner_product = dodo_client.get_product_by_id(winner["product_id"])
+            if not winner_product:
+                await dodo_client.get_products()
+                winner_product = dodo_client.get_product_by_id(winner["product_id"])
+            new_role = winner_product["metadata"].get("app_role", "free") if winner_product else "free"
+            period_start_to_set = _parse_datetime(winner.get("current_period_start")) or datetime.now(timezone.utc)
+            customer_id_to_set = winner.get("customer_id") or customer_id
+
+        reset_credit_period = (
+            is_new_subscription
+            and winner
+            and winner.get("subscription_id") == subscription_id
+            and (winner.get("status") or "").lower() == "active"
+        )
+
+        if reset_credit_period:
             await conn.execute(
                 text("""
                 UPDATE users
-                SET dodo_customer_id = :customer_id
+                SET role = :role,
+                    current_period_start = :period_start,
+                    credit_period_start = now(),
+                    dodo_customer_id = :customer_id
                 WHERE id = :user_id
                 """),
                 {
                     "user_id": user_id,
-                    "customer_id": customer_id,
-                }
+                    "role": new_role,
+                    "period_start": period_start_to_set,
+                    "customer_id": customer_id_to_set,
+                },
             )
-            logger.info(
-                f"Applied subscription state for user {user_id}: role unchanged, status={status}"
+        else:
+            await conn.execute(
+                text("""
+                UPDATE users
+                SET role = :role,
+                    current_period_start = :period_start,
+                    dodo_customer_id = :customer_id
+                WHERE id = :user_id
+                """),
+                {
+                    "user_id": user_id,
+                    "role": new_role,
+                    "period_start": period_start_to_set,
+                    "customer_id": customer_id_to_set,
+                },
             )
-    
-    # Sync role to Firebase custom claims only when role updated
-    if should_update_role:
-        await _sync_firebase_role(user_id, role)
+
+    await _sync_firebase_role(user_id, new_role)
+    logger.info(
+        f"Applied subscription state for user {user_id}: incoming_status={status}, winner={winner.get('subscription_id') if winner else 'none'}, role={new_role}"
+    )
 
 
 async def revert_to_free(user_id: UUID) -> None:
@@ -490,6 +778,76 @@ async def mark_pending_applied(pending_id: UUID) -> None:
     logger.info(f"Marked pending plan change {pending_id} as applied")
 
 
+async def recompute_user_billing_winner(user_id: UUID) -> dict:
+    """
+    Recompute effective subscription winner for a user from billing_subscriptions.
+    Useful after backfills/replays.
+    """
+    winner: Optional[dict] = None
+    new_role = "free"
+    period_start_to_set = datetime.now(timezone.utc)
+    customer_id_to_set: Optional[str] = None
+
+    async with get_db_connection() as conn:
+        result = await conn.execute(
+            text("""
+            SELECT
+                subscription_id, customer_id, product_id, status,
+                cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
+            FROM billing_subscriptions
+            WHERE user_id = :user_id
+            ORDER BY last_webhook_ts DESC
+            """),
+            {"user_id": user_id},
+        )
+        subscriptions = []
+        for row in result.fetchall():
+            subscriptions.append(
+                {
+                    "subscription_id": row[0],
+                    "customer_id": row[1],
+                    "product_id": row[2],
+                    "status": row[3],
+                    "cancel_at_period_end": row[4],
+                    "current_period_start": row[5].isoformat() if row[5] else None,
+                    "current_period_end": row[6].isoformat() if row[6] else None,
+                    "last_webhook_ts": row[7].isoformat() if row[7] else None,
+                }
+            )
+        winner = _pick_winner_subscription(subscriptions)
+        if winner:
+            winner_product = dodo_client.get_product_by_id(winner["product_id"])
+            if not winner_product:
+                await dodo_client.get_products()
+                winner_product = dodo_client.get_product_by_id(winner["product_id"])
+            new_role = winner_product["metadata"].get("app_role", "free") if winner_product else "free"
+            period_start_to_set = _parse_datetime(winner.get("current_period_start")) or datetime.now(timezone.utc)
+            customer_id_to_set = winner.get("customer_id")
+
+        await conn.execute(
+            text("""
+            UPDATE users
+            SET role = :role,
+                current_period_start = :period_start,
+                dodo_customer_id = COALESCE(:customer_id, dodo_customer_id)
+            WHERE id = :user_id
+            """),
+            {
+                "user_id": user_id,
+                "role": new_role,
+                "period_start": period_start_to_set,
+                "customer_id": customer_id_to_set,
+            },
+        )
+
+    await _sync_firebase_role(user_id, new_role)
+    return {
+        "user_id": str(user_id),
+        "winner_subscription_id": winner.get("subscription_id") if winner else None,
+        "role": new_role,
+    }
+
+
 async def find_user_by_metadata(metadata: dict) -> Optional[UUID]:
     """Find user ID from checkout metadata."""
     user_id_str = metadata.get("user_id")
@@ -515,9 +873,20 @@ async def find_user_by_customer_id(customer_id: str) -> Optional[UUID]:
 async def find_user_by_subscription_id(subscription_id: str) -> Optional[UUID]:
     """Find user ID from subscription ID."""
     async with get_db_connection() as conn:
-        result = await conn.execute(
+        try:
+            result = await conn.execute(
+                text("SELECT user_id FROM billing_subscriptions WHERE subscription_id = :subscription_id"),
+                {"subscription_id": subscription_id},
+            )
+            row = result.fetchone()
+            if row:
+                return row[0]
+        except Exception as e:
+            logger.warning(f"billing_subscriptions lookup failed, falling back to legacy table: {e}")
+
+        legacy_result = await conn.execute(
             text("SELECT user_id FROM user_subscriptions WHERE subscription_id = :subscription_id"),
-            {"subscription_id": subscription_id}
+            {"subscription_id": subscription_id},
         )
-        row = result.fetchone()
-        return row[0] if row else None
+        legacy_row = legacy_result.fetchone()
+        return legacy_row[0] if legacy_row else None

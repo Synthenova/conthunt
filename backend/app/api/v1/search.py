@@ -767,16 +767,17 @@ async def create_search(
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
         result = await conn.execute(
-            text("SELECT current_period_start, timezone FROM users WHERE id = :id"),
+            text("SELECT role, current_period_start, timezone FROM users WHERE id = :id"),
             {"id": user_uuid}
         )
         row = result.fetchone()
-        period_start = row[0] if row else None
-        timezone = row[1] if row and row[1] else "UTC"
+        db_role = row[0] if row and row[0] else user.get("role", "free")
+        period_start = row[1] if row else None
+        timezone = row[2] if row and row[2] else "UTC"
 
         credit_result = await credit_tracker.check(
             user_id=user_uuid,
-            role=user.get("role", "free"),
+            role=db_role,
             feature="search_query",
             current_period_start=period_start,
             record=True,
@@ -1048,15 +1049,16 @@ async def load_more(
         from sqlalchemy import text
         
         result = await conn.execute(
-            text("SELECT current_period_start FROM users WHERE id = :id"),
+            text("SELECT role, current_period_start FROM users WHERE id = :id"),
             {"id": user_uuid}
         )
         row = result.fetchone()
-        period_start = row[0] if row else None
+        db_role = row[0] if row and row[0] else user.get("role", "free")
+        period_start = row[1] if row else None
 
         credit_result = await credit_tracker.check(
             user_id=user_uuid,
-            role=user.get("role", "free"),
+            role=db_role,
             feature="search_query",
             current_period_start=period_start,
             record=True,

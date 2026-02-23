@@ -46,12 +46,13 @@ class AnalysisService:
         async with get_db_connection() as conn:
             await set_rls_user(conn, user_id)
             result = await conn.execute(
-                text("SELECT current_period_start, timezone FROM users WHERE id = :id"),
+                text("SELECT role, current_period_start, timezone FROM users WHERE id = :id"),
                 {"id": user_id}
             )
             row = result.fetchone()
-            period_start = row[0] if row else None
-            timezone = row[1] if row and row[1] else "UTC"
+            db_role = row[0] if row and row[0] else user_role
+            period_start = row[1] if row else None
+            timezone = row[2] if row and row[2] else "UTC"
             
             # Check if already accessed (free re-view)
             already_accessed = await has_user_accessed_analysis(conn, user_id, media_asset_id)
@@ -61,7 +62,7 @@ class AnalysisService:
                 # First access - check and charge credits
                 credit_result = await credit_tracker.check(
                     user_id=user_id,
-                    role=user_role,
+                    role=db_role,
                     feature="video_analysis",
                     current_period_start=period_start,
                     record=True,
@@ -122,12 +123,13 @@ class AnalysisService:
         async with get_db_connection() as conn:
             await set_rls_user(conn, user_id)
             result = await conn.execute(
-                text("SELECT current_period_start, timezone FROM users WHERE id = :id"),
+                text("SELECT role, current_period_start, timezone FROM users WHERE id = :id"),
                 {"id": user_id},
             )
             row = result.fetchone()
-            period_start = row[0] if row else None
-            timezone = row[1] if row and row[1] else "UTC"
+            db_role = row[0] if row and row[0] else user_role
+            period_start = row[1] if row else None
+            timezone = row[2] if row and row[2] else "UTC"
 
             accessed_result = await conn.execute(
                 text(
@@ -147,7 +149,7 @@ class AnalysisService:
                 if media_asset_id not in already_accessed:
                     credit_result = await credit_tracker.check(
                         user_id=user_id,
-                        role=user_role,
+                        role=db_role,
                         feature="video_analysis",
                         current_period_start=period_start,
                         record=True,
