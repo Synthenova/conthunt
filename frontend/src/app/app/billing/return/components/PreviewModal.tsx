@@ -22,6 +22,8 @@ export function PreviewModal({
     onCancelPreview,
     onConfirm
 }: PreviewModalProps) {
+    const formatMoney = (amountInCents: number) => `$${(Math.abs(amountInCents) / 100).toFixed(2)}`;
+
     if (previewLoading) {
         return (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -56,6 +58,13 @@ export function PreviewModal({
     }
 
     if (previewData) {
+        const lineItemsNet = previewData.lineItems.reduce((sum, item) => {
+            const lineAmount = Math.round(item.unitPrice * item.prorationFactor);
+            return sum + lineAmount;
+        }, 0);
+        const taxableBase = Math.max(lineItemsNet, 0);
+        const estimatedTaxesAndFees = Math.max(0, previewData.settlementAmount - taxableBase);
+
         return (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <Card className="max-w-lg w-full bg-card border-border/50">
@@ -82,7 +91,7 @@ export function PreviewModal({
                                             </span>
                                             <span className={item.prorationFactor < 0 ? "text-primary" : "text-foreground"}>
                                                 {item.prorationFactor < 0 ? "-" : ""}
-                                                ${(Math.abs(item.unitPrice * item.prorationFactor) / 100).toFixed(2)}
+                                                {formatMoney(Math.round(item.unitPrice * item.prorationFactor))}
                                             </span>
                                         </div>
                                     ))}
@@ -90,11 +99,26 @@ export function PreviewModal({
                             </div>
                         )}
 
+                        <div className="bg-muted/30 rounded-lg p-3 border border-border/50 space-y-2 text-sm">
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Subtotal (after proration)</span>
+                                <span className="text-foreground">{formatMoney(lineItemsNet)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Estimated taxes & fees</span>
+                                <span className="text-foreground">{formatMoney(estimatedTaxesAndFees)}</span>
+                            </div>
+                            <div className="flex justify-between font-medium pt-1 border-t border-border/50">
+                                <span className="text-foreground">Pay today</span>
+                                <span className="text-white">{formatMoney(previewData.settlementAmount)}</span>
+                            </div>
+                        </div>
+
                         {/* Customer Credits */}
                         {previewData.customerCredits > 0 && (
                             <div className="bg-primary/5 border border-primary/10 rounded-lg p-4">
                                 <p className="text-primary font-medium">
-                                    ${(previewData.customerCredits / 100).toFixed(2)} credit will be applied to future billing
+                                    {formatMoney(previewData.customerCredits)} credit will be applied to future billing
                                 </p>
                             </div>
                         )}
@@ -103,7 +127,7 @@ export function PreviewModal({
                         {previewData.settlementAmount > 0 && (
                             <div className="bg-secondary/50 border border-border/50 rounded-lg p-4">
                                 <p className="text-foreground font-medium">
-                                    You will be charged <span className="text-white">${(previewData.settlementAmount / 100).toFixed(2)}</span> today
+                                    You will be charged <span className="text-white">{formatMoney(previewData.settlementAmount)}</span> today
                                 </p>
                             </div>
                         )}
