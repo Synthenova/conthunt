@@ -43,6 +43,8 @@ export default function PricingSection() {
     const [isAnnual, setIsAnnual] = useState(false);
     const [returnLoading, setReturnLoading] = useState(false);
     const isOnHold = subscription?.status === "on_hold";
+    const allowedActions = subscription?.allowed_actions || [];
+    const can = (action: string) => allowedActions.includes(action);
     const searchParams = useSearchParams();
     const router = useRouter();
 
@@ -143,6 +145,7 @@ export default function PricingSection() {
 
         const currentProductId = subscription?.product_id;
         const hasSubscription = subscription?.has_subscription;
+        const canPreviewChange = can("preview_change");
 
         // If same product, do nothing
         if (targetProduct.product_id === currentProductId) {
@@ -151,7 +154,7 @@ export default function PricingSection() {
 
         // Special case: Switching to Free
         if (targetProduct.metadata.app_role === "free") {
-            if (hasSubscription) {
+            if (hasSubscription && can("cancel")) {
                 // If on a paid plan, switching to free is a cancellation
                 showCancelConfirm();
             }
@@ -171,7 +174,7 @@ export default function PricingSection() {
         // (e.g. Creator -> Pro is more money and credits = Upgrade)
         const isUpgrade = targetPrice > currentPrice || targetCredits > currentCredits;
 
-        if (hasSubscription) {
+        if (hasSubscription && canPreviewChange) {
             if (isUpgrade) {
                 handleUpgrade(targetProduct.product_id, targetProduct.name);
             } else {
@@ -190,20 +193,7 @@ export default function PricingSection() {
         const hasSubscription = subscription?.has_subscription;
         const isScheduledForCancel = subscription?.cancel_at_period_end;
 
-        // If scheduled for cancellation, show "RETAIN PLAN" on current plan
-        if (isCurrent && isScheduledForCancel) {
-            return (
-                <button
-                    className="glass-button w-full py-3 text-[0.95rem] font-medium font-nav border-amber-500/20 text-amber-500"
-                    onClick={undoCancel}
-                    disabled={!!actionLoading}
-                >
-                    {actionLoading === "undo_cancel" ? <Loader2 className="animate-spin h-5 w-5" /> : "RETAIN PLAN"}
-                </button>
-            );
-        }
-
-        // Current plan (not scheduled for cancel)
+        // Current plan
         if (isCurrent) {
             // If on_hold, show UPDATE PAYMENT button instead of disabled CURRENT PLAN
             if (isOnHold) {
@@ -228,11 +218,17 @@ export default function PricingSection() {
 
         let buttonLabel = label;
         let buttonClass = "glass-button w-full py-3 text-[0.95rem] font-medium font-nav";
+        let forceDisabled = false;
 
         // Determine label based on relationship to current plan
         if (hasSubscription) {
             if (product.metadata.app_role === "free") {
-                buttonLabel = "CANCEL SUBSCRIPTION";
+                if (can("cancel")) {
+                    buttonLabel = "CANCEL SUBSCRIPTION";
+                } else {
+                    buttonLabel = "FREE TIER";
+                    forceDisabled = true;
+                }
             } else {
                 const currentProduct = products.find(p => p.product_id === subscription?.product_id);
                 const currentPrice = currentProduct?.price || 0;
@@ -243,15 +239,22 @@ export default function PricingSection() {
 
                 const isUpgrade = targetPrice > currentPrice || targetCredits > currentCredits;
 
-                buttonLabel = isUpgrade ? "UPGRADE" : "DOWNGRADE";
+                if (can("preview_change")) {
+                    buttonLabel = isUpgrade ? "UPGRADE" : "DOWNGRADE";
+                } else {
+                    // Terminal/non-editable states: always keep CTA simple.
+                    buttonLabel = "GET STARTED";
+                }
             }
+        } else {
+            buttonLabel = "GET STARTED";
         }
 
         return (
             <button
                 className={buttonClass}
                 onClick={() => handlePlanAction(product)}
-                disabled={!!actionLoading}
+                disabled={!!actionLoading || forceDisabled}
             >
                 {isLoading ? <Loader2 className="animate-spin h-5 w-5" /> : buttonLabel}
             </button>

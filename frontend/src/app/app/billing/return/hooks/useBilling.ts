@@ -7,8 +7,6 @@ import {
     trackCheckoutStarted,
     trackCheckoutCompleted,
     trackCheckoutFailed,
-    trackPlanUpgradeInitiated,
-    trackPlanUpgradeCompleted,
     trackPlanDowngradeScheduled,
     trackSubscriptionCancelled,
 } from "@/lib/telemetry/tracking";
@@ -69,6 +67,8 @@ export function useBilling(options: UseBillingOptions = {}) {
 
     // Cancel confirmation state
     const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+    const allowedActions = subscription?.allowed_actions || [];
+    const can = (action: string) => allowedActions.includes(action);
 
     useEffect(() => {
         const fetchProducts = async () => {
@@ -200,6 +200,10 @@ export function useBilling(options: UseBillingOptions = {}) {
     };
 
     const handleReactivate = async () => {
+        if (!can("reactivate")) {
+            setError("Reactivation is not available for your current billing state.");
+            return;
+        }
         setActionLoading("reactivate");
         setError(null);
 
@@ -225,14 +229,20 @@ export function useBilling(options: UseBillingOptions = {}) {
     };
 
     const handleUpgrade = async (productId: string, productName: string) => {
-        // If subscription is on_hold, redirect to reactivation instead
-        if (subscription?.status === "on_hold") {
+        // On hold users can only recover payment method.
+        if (can("reactivate")) {
             await handleReactivate();
             return;
         }
 
-        // If scheduled for cancellation, undo it first (behind the scenes)
-        if (subscription?.cancel_at_period_end) {
+        // Terminal states route to checkout instead of plan-change APIs.
+        if (can("checkout") && !can("preview_change")) {
+            await handleCheckout(productId);
+            return;
+        }
+
+        // If scheduled for cancellation, undo it first (behind the scenes).
+        if (subscription?.cancel_at_period_end && can("undo_cancel")) {
             try {
                 const undoRes = await authFetch(`${BACKEND_URL}/v1/billing/cancel`, {
                     method: "DELETE",
@@ -247,47 +257,27 @@ export function useBilling(options: UseBillingOptions = {}) {
             }
         }
 
-        // Show preview first if user has subscription
-        if (subscription?.has_subscription) {
+        // Show preview first only when backend allows plan changes.
+        if (can("preview_change")) {
             await previewPlanChange(productId, productName, true);
         } else {
-            // No subscription, just do upgrade
-            setActionLoading(productId);
-            setError(null);
-
-            const currentProduct = products.find(p => p.product_id === subscription?.product_id);
-            const fromProduct = currentProduct?.metadata?.app_role || "free";
-
-            trackPlanUpgradeInitiated(fromProduct, productId);
-
-            try {
-                const res = await authFetch(`${BACKEND_URL}/v1/billing/upgrade`, {
-                    method: "POST",
-                    body: JSON.stringify({ target_product_id: productId }),
-                });
-                if (!res.ok) {
-                    const data = (await res.json()) as ErrorDetailResponse;
-                    throw new Error(data.detail || "Upgrade failed");
-                }
-                trackPlanUpgradeCompleted(fromProduct, productId, products.find(p => p.product_id === productId)?.price || 0);
-                window.location.reload();
-            } catch (err: unknown) {
-                setError(getErrorMessage(err));
-            } finally {
-                setActionLoading(null);
-            }
+            setError("Plan change is not available for your current billing state.");
         }
     };
 
     const handleDowngrade = async (productId: string, productName: string) => {
-        // If subscription is on_hold, redirect to reactivation instead
-        if (subscription?.status === "on_hold") {
+        if (can("reactivate")) {
             await handleReactivate();
             return;
         }
 
-        // If scheduled for cancellation, undo it first (behind the scenes)
-        if (subscription?.cancel_at_period_end) {
+        if (can("checkout") && !can("preview_change")) {
+            await handleCheckout(productId);
+            return;
+        }
+
+        // If scheduled for cancellation, undo it first (behind the scenes).
+        if (subscription?.cancel_at_period_end && can("undo_cancel")) {
             try {
                 const undoRes = await authFetch(`${BACKEND_URL}/v1/billing/cancel`, {
                     method: "DELETE",
@@ -302,12 +292,13 @@ export function useBilling(options: UseBillingOptions = {}) {
             }
         }
 
-        // Show preview first
-        if (subscription?.has_subscription) {
+        if (can("preview_change")) {
             const currentProduct = products.find(p => p.product_id === subscription?.product_id);
             const fromProduct = currentProduct?.metadata?.app_role || "free";
             await previewPlanChange(productId, productName, false);
             trackPlanDowngradeScheduled(fromProduct, productId, null);
+        } else {
+            setError("Plan change is not available for your current billing state.");
         }
     };
 
