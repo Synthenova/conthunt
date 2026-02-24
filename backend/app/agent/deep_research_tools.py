@@ -126,7 +126,7 @@ async def web_search(
         return {"error": "query is required"}
 
     today_utc = datetime.now(timezone.utc).date().isoformat()
-    model = init_chat_model("openrouter/x-ai/grok-4.1-fast:online", temperature=0.2)
+    model = init_chat_model("openrouter/google/gemini-3-flash-preview:online", temperature=0.2)
 
     response = await model.ainvoke(
         [
