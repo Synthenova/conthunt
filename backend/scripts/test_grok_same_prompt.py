@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Grok :online with the same prompt shape used by search planning."""
+"""Run Grok  with the same prompt shape used by search planning."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def _as_text(content: object) -> str:
 
 
 async def main() -> int:
-    llm = init_chat_model("openrouter/x-ai/grok-4.1-fast:online")
+    llm = init_chat_model("openrouter/x-ai/grok-4.1-fast")
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=USER_MESSAGE),
@@ -80,7 +80,7 @@ async def main() -> int:
     with set_llm_context(user_id="script:grok-test", route="search.plan"):
         response = await llm.ainvoke(messages)
 
-    print("model: openrouter/x-ai/grok-4.1-fast:online")
+    print("model: openrouter/x-ai/grok-4.1-fast")
     print("temperature: 0.5 (default)")
     print("\n--- response.content ---")
     print(_as_text(getattr(response, "content", response)))

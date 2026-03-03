@@ -33,7 +33,7 @@ MODEL_LIMIT_OVERRIDES: dict[str, dict[str, int]] = {
         "rpd": 400_000,
         "tpm_burst": 1_600_000,
     },
-    "openrouter/x-ai/grok-4.1-fast:online": {
+    "openrouter/x-ai/grok-4.1-fast": {
         "rpm": 16_000,
         "tpm": 16_000_000,
         "rpd": 400_000,

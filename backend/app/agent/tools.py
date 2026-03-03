@@ -637,7 +637,7 @@ async def search(
         chat_id = configurable.get("chat_id")
         
         # 1. Initialize search-planning model
-        llm = init_chat_model("openrouter/google/gemini-3-flash-preview:online")
+        llm = init_chat_model("openrouter/google/gemini-3-flash-preview")
         structured_llm = llm.with_structured_output(SearchPlan)
 
         # 2. Extract messages for context

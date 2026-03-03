@@ -7,7 +7,7 @@ Usage:
 
 Optional:
   python3 scripts/test_online_model_websearch.py --question "..."
-  python3 scripts/test_online_model_websearch.py --model "openrouter/x-ai/grok-4.1-fast:online"
+  python3 scripts/test_online_model_websearch.py --model "openrouter/x-ai/grok-4.1-fast"
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ if str(BACKEND_DIR) not in sys.path:
 from app.agent.model_factory import init_chat_model
 
 
-DEFAULT_MODEL = "openrouter/x-ai/grok-4.1-fast:online"
+DEFAULT_MODEL = "openrouter/x-ai/grok-4.1-fast"
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Test :online model web search behavior.")
+    parser = argparse.ArgumentParser(description="Test  model web search behavior.")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Model name to test.")
     parser.add_argument(
         "--question",
