@@ -62,6 +62,7 @@
     "nanoid": "^5.1.6",
     "next": "16.0.10",
     "next-themes": "^0.4.6",
+    "posthog-js": "^1.357.1",
     "radix-ui": "^1.4.3",
     "react": "19.2.1",
     "react-dom": "19.2.1",
