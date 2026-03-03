@@ -22,8 +22,9 @@ Set these for PostHog client telemetry:
 
 ```bash
 NEXT_PUBLIC_POSTHOG_KEY=
-NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
 ```
+
+The frontend proxies PostHog browser traffic through `/ingest`, which rewrites to the US PostHog ingest host. `NEXT_PUBLIC_POSTHOG_HOST` is no longer used by the client wrapper.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
