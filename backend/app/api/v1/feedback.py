@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, Depends
 from typing import List, Optional
 from pydantic import BaseModel
 import smtplib
@@ -7,6 +7,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from app.core import get_settings, logger
+from app.auth import get_current_user, AuthUser
 
 router = APIRouter()
 settings = get_settings()
@@ -15,7 +16,12 @@ class FeedbackDisplay(BaseModel):
     message: str
 
 
-def send_email_task(message: str, attachments: List[dict]):
+def send_email_task(
+    message: str,
+    attachments: List[dict],
+    user_email: Optional[str] = None,
+    user_db_id: Optional[str] = None,
+):
     """
     Background task to send email.
     attachments: list of dict {'filename': str, 'content': bytes, 'content_type': str}
@@ -25,6 +31,8 @@ def send_email_task(message: str, attachments: List[dict]):
     try:
         if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
             logger.info("----------- BACKEND FEEDBACK LOG -----------")
+            logger.info(f"User Email: {user_email or 'unknown'}")
+            logger.info(f"User DB ID: {user_db_id or 'unknown'}")
             logger.info(f"Message: {message}")
             logger.info(f"Attachments: {len(attachments)}")
             logger.info("--------------------------------------------")
@@ -35,7 +43,14 @@ def send_email_task(message: str, attachments: List[dict]):
         msg['To'] = ", ".join(to_emails)
         msg['Subject'] = "New Feedback/Bug Report - Conthunt"
 
-        body = f"User Feedback:\n\n{message}\n\n(Sent from Conthunt App)"
+        body = (
+            "New user feedback received:\n\n"
+            f"User Email: {user_email or 'unknown'}\n"
+            f"User DB ID: {user_db_id or 'unknown'}\n\n"
+            "Feedback Message:\n"
+            f"{message}\n\n"
+            "(Sent from Conthunt App)"
+        )
         msg.attach(MIMEText(body, 'plain'))
 
         for att in attachments:
@@ -64,7 +79,8 @@ def send_email_task(message: str, attachments: List[dict]):
 async def submit_feedback(
     background_tasks: BackgroundTasks,
     message: str = Form(...),
-    images: List[UploadFile] = File(default=[])
+    images: List[UploadFile] = File(default=[]),
+    user: AuthUser = Depends(get_current_user),
 ):
     """
     Submit feedback with optional images.
@@ -81,6 +97,12 @@ async def submit_feedback(
             'content_type': img.content_type
         })
     
-    background_tasks.add_task(send_email_task, message, files_data)
+    background_tasks.add_task(
+        send_email_task,
+        message,
+        files_data,
+        user.get("email"),
+        str(user.get("db_user_id")) if user.get("db_user_id") else None,
+    )
     
     return {"status": "success", "message": "Feedback received"}
