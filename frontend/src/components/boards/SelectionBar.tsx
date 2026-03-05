@@ -157,9 +157,7 @@ export function SelectionBar({
             }
             const token = await user.getIdToken();
             const { BACKEND_URL } = await import('@/lib/api');
-            const backendUrl = BACKEND_URL;
-            const JSZip = (await import("jszip")).default;
-            const zip = new JSZip();
+            let startedDownloads = 0;
 
             for (const item of downloadableItems) {
                 const videoAsset = item.assets?.find((a: any) => a.asset_type === "video");
@@ -167,36 +165,50 @@ export function SelectionBar({
                 const safeId = String(item.id || "video").replace(/[^a-zA-Z0-9_-]/g, "_");
                 const filename = `${item.platform || "video"}_${safeId}.mp4`;
 
-
-                let downloadUrl = item.video_url || videoAsset?.source_url || videoAsset?.gcs_uri?.replace("gs://", "https://storage.googleapis.com/");
+                let downloadUrl = item.video_url || videoAsset?.source_url;
 
                 if (!downloadUrl) {
-                    console.warn(`No download URL found for item ${item.id}`);
-                    continue;
+                    try {
+                        const signedUrlResponse = await fetch(`${BACKEND_URL}/v1/media/${videoAsset.id}/signed-url`, {
+                            headers: {
+                                Authorization: `Bearer ${token}`,
+                            },
+                        });
+                        if (!signedUrlResponse.ok) {
+                            console.warn(`Failed to fetch signed URL for asset ${videoAsset.id}`);
+                            continue;
+                        }
+                        const data = await signedUrlResponse.json();
+                        downloadUrl = data?.url;
+                    } catch (error) {
+                        console.warn(`Failed signed URL request for asset ${videoAsset.id}`, error);
+                        continue;
+                    }
                 }
 
-                // If not GCS, use proxy to avoid CORS
-                if (!downloadUrl.includes("storage.googleapis.com") && !downloadUrl.includes(backendUrl)) {
-                    downloadUrl = `${backendUrl}/v1/media/proxy?url=${encodeURIComponent(downloadUrl)}`;
-                }
+                if (!downloadUrl) continue;
 
-                const response = await fetch(downloadUrl);
-                if (!response.ok) continue;
-                const data = await response.arrayBuffer();
-                zip.file(filename, data);
+                const link = document.createElement("a");
+                link.href = downloadUrl;
+                link.download = filename;
+                link.rel = "noopener";
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                startedDownloads += 1;
+
+                // Give browsers a moment between automatic downloads.
+                await new Promise((resolve) => setTimeout(resolve, 150));
             }
 
-            const blob = await zip.generateAsync({ type: "blob" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = `conthunt-videos-${new Date().toISOString().slice(0, 10)}.zip`;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-            URL.revokeObjectURL(url);
+            if (startedDownloads === 0) {
+                toast.error("No downloadable files found.");
+            } else {
+                toast.success(`Started ${startedDownloads} download${startedDownloads > 1 ? "s" : ""}.`);
+            }
         } catch (error) {
             console.error("Failed to download zip:", error);
+            toast.error("Failed to start downloads.");
         } finally {
             setIsDownloading(false);
         }
