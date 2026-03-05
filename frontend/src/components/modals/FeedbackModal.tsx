@@ -8,6 +8,7 @@ import { ImagePlus, X, Rocket, Loader2, Bug } from "lucide-react";
 import Image from 'next/image';
 import { toast } from 'sonner';
 import { BACKEND_URL } from "@/lib/api";
+import { auth } from "@/lib/firebaseClient";
 
 interface FeedbackModalProps {
     isOpen: boolean;
@@ -55,9 +56,16 @@ export function FeedbackModal({ isOpen, onClose }: FeedbackModalProps) {
                 formData.append("images", image);
             });
 
+            const headers: HeadersInit = {};
+            if (auth?.currentUser) {
+                const token = await auth.currentUser.getIdToken();
+                headers["Authorization"] = `Bearer ${token}`;
+            }
+
             const response = await fetch(`${BACKEND_URL}/v1/feedback`, {
                 method: "POST",
                 body: formData,
+                headers,
             });
 
             if (!response.ok) {
