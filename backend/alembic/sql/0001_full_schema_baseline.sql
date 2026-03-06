@@ -2,7 +2,6 @@
 -- PostgreSQL database dump
 --
 
-\restrict W4rbuOosPctAvPL4QqZ4u7Ccz2uxLM8HPDc38OB0nAMlwYKXfOFeICmVHvw1gwq
 
 -- Dumped from database version 17.7
 -- Dumped by pg_dump version 17.7 (Homebrew)
@@ -19,11 +18,14 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
+
 --
 -- Name: conthunt; Type: SCHEMA; Schema: -; Owner: conthunt_app
 --
 
-CREATE SCHEMA conthunt;
+CREATE SCHEMA IF NOT EXISTS conthunt;
 
 
 ALTER SCHEMA conthunt OWNER TO conthunt_app;
@@ -2773,6 +2775,3 @@ ALTER DEFAULT PRIVILEGES FOR ROLE conthunt_service IN SCHEMA conthunt GRANT SELE
 --
 -- PostgreSQL database dump complete
 --
-
-\unrestrict W4rbuOosPctAvPL4QqZ4u7Ccz2uxLM8HPDc38OB0nAMlwYKXfOFeICmVHvw1gwq
-
