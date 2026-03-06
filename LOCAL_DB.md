@@ -57,25 +57,20 @@ DB_POOL_TIMEOUT=10
 ## Alembic Migrations
 
 Alembic lives in `backend/alembic/`.
+For the full switch-over runbook, see `docs/alembic_migration_switch.md`.
 
 Baseline strategy:
-- Local dev bootstraps the schema by applying the legacy SQL migrations in `backend/.sqls` (via `scripts/dev_db_apply_sqls.sh`, called by `scripts/dev_db_reset.sh`).
-- Then we `alembic stamp head` to mark the current schema as the baseline revision (`0001_initial`).
+- Fresh local dev bootstraps directly from the full Alembic baseline revision `0001_initial`.
+- `alembic upgrade head` creates the base schema and applies all newer revisions.
 - All future schema changes must be made as new Alembic revisions after `0001_initial`.
 
 ### Existing DB (already has tables)
 
-If you restored from a snapshot or already bootstrapped via `backend/.sqls`, mark the baseline as applied:
+If you restored from a snapshot or already have the application schema without Alembic history, mark the baseline as applied:
 
 ```bash
 cd backend
-alembic stamp head
-```
-
-After stamping, future migrations work normally:
-
-```bash
-cd backend
+alembic stamp 0001_initial
 alembic upgrade head
 ```
 
@@ -91,14 +86,18 @@ Then edit the generated revision under `backend/alembic/versions/` and use `op.e
 ## Syncing Cloud SQL
 
 Treat Alembic as the source of truth:
-- Baseline is `0001_initial` (no-op) stamped onto the existing schema.
+- Baseline is `0001_initial` (full schema) for fresh databases, or stamped onto existing databases.
 - New schema changes are added only as new revisions in `backend/alembic/versions/`.
 
 ### Cloud SQL Is Fresh (empty DB)
 
-If Cloud SQL is empty, you need to bootstrap the schema there (for now, the same way as local):
-- apply the legacy SQL migrations (`backend/.sqls`) or restore from a snapshot
-- then stamp Alembic to the baseline
+If Cloud SQL is empty, bootstrap it directly from Alembic:
+```bash
+cd backend
+export DATABASE_URL='<cloud-sql-url>'
+export DB_SCHEMA=conthunt
+APP_ENV=local alembic upgrade head
+```
 
 ### Cloud SQL Already Has The Baseline Schema
 
@@ -107,12 +106,7 @@ If Cloud SQL already has the schema (same as your baseline), do NOT replay the b
 cd backend
 export DATABASE_URL='<cloud-sql-url>'
 export DB_SCHEMA=conthunt
-alembic stamp head
-```
-
-After stamping, future changes are applied normally:
-```bash
-cd backend
+alembic stamp 0001_initial
 alembic upgrade head
 ```
 
@@ -151,7 +145,6 @@ export DATABASE_URL='<cloud-sql-url>'
 export DB_SCHEMA=conthunt
 APP_ENV=local alembic upgrade head
 ```
-This will apply any Alembic revisions after the baseline (but it will not create the baseline schema for you).
 
 #### Case B: Cloud SQL already has the schema that matches your baseline
 1. Do **not** run `upgrade head` first. Instead “mark baseline as applied”:
@@ -159,7 +152,7 @@ This will apply any Alembic revisions after the baseline (but it will not create
 cd backend
 export DATABASE_URL='<cloud-sql-url>'
 export DB_SCHEMA=conthunt
-APP_ENV=local alembic stamp head
+APP_ENV=local alembic stamp 0001_initial
 ```
 2. Then apply any newer migrations (if you have them):
 ```bash
@@ -195,6 +188,6 @@ APP_ENV=local alembic upgrade head
 ---
 
 ### Rule that prevents drift
-After you start doing new Alembic revisions, stop editing `backend/.sqls` as the source of truth. Treat it as historical bootstrap only, and put all new changes in Alembic revisions.
+Put all schema changes in Alembic revisions only.
 
 If you tell me how you connect to Cloud SQL for migrations (Cloud SQL Proxy locally vs CI job in GCP), I’ll give you the exact recommended command/env setup for that path.

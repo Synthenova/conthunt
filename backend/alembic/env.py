@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import re
 from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.pool import NullPool
 from dotenv import load_dotenv
 
@@ -26,6 +28,8 @@ load_dotenv(_backend_dir / f".env.{_app_env}", override=False)
 # This project uses SQL-first migrations (no SQLAlchemy model metadata).
 target_metadata = None
 
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
 
 def _to_sync_url(url: str) -> str:
     # Backend runtime uses asyncpg, but Alembic runs sync migrations.
@@ -41,6 +45,12 @@ def _get_db_url() -> str:
     if not url:
         raise RuntimeError("Missing DATABASE_URL (or ALEMBIC_DATABASE_URL) for Alembic.")
     return _to_sync_url(url)
+
+
+def _validate_identifier(name: str, what: str) -> str:
+    if not _IDENT_RE.fullmatch(name):
+        raise RuntimeError(f"Invalid {what}: {name!r}")
+    return name
 
 
 def run_migrations_offline() -> None:
@@ -62,22 +72,48 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     url = _get_db_url()
-    schema = os.getenv("DB_SCHEMA", "conthunt")
+    schema = _validate_identifier(os.getenv("DB_SCHEMA", "conthunt"), "DB_SCHEMA")
 
     connectable = create_engine(url, poolclass=NullPool)
 
     with connectable.connect() as connection:
         # Match app behavior: all queries assume `conthunt` schema is on the search_path.
-        connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema};"))
+        try:
+            connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema};"))
+        except DBAPIError as exc:
+            # Cloud SQL roles can be restricted from CREATE on the database.
+            # If schema already exists, continue; otherwise fail with a clear message.
+            connection.rollback()
+            exists = connection.execute(
+                text("SELECT 1 FROM pg_namespace WHERE nspname = :schema LIMIT 1"),
+                {"schema": schema},
+            ).scalar()
+            if not exists:
+                raise RuntimeError(
+                    f"Schema {schema!r} does not exist and current DB user cannot create it."
+                ) from exc
         connection.execute(text(f"SET search_path TO {schema}, public;"))
         # Ensure the version table exists. Alembic normally creates it, but we've observed
         # stamp/upgrade runs that log success without persisting the version row.
         connection.execute(
             text(
                 f"CREATE TABLE IF NOT EXISTS {schema}.alembic_version "
-                "(version_num VARCHAR(32) PRIMARY KEY);"
+                "(version_num VARCHAR(255) PRIMARY KEY);"
             )
         )
+        # Older local runs created VARCHAR(32), which is too short for
+        # descriptive revision ids. Normalize to a safe size.
+        try:
+            connection.execute(
+                text(
+                    f"ALTER TABLE {schema}.alembic_version "
+                    "ALTER COLUMN version_num TYPE VARCHAR(255);"
+                )
+            )
+        except DBAPIError:
+            # Continue if current role is not owner of alembic_version.
+            # In that case, keep revision ids <= current column length.
+            connection.rollback()
         # SQLAlchemy 2.0 connections are in "autobegin" mode; without an explicit commit
         # these DDL statements can be rolled back when the connection closes (e.g. on stamp).
         try:

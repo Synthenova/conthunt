@@ -7,11 +7,8 @@ docker compose -f docker-compose.db.yml down -v
 rm -rf docker/postgres-data
 docker compose -f docker-compose.db.yml up -d --build
 
-# Bootstrap schema from legacy SQL migrations (until everything is fully Alembic-managed).
-./scripts/dev_db_apply_sqls.sh
-
-# Mark the bootstrapped schema as the Alembic baseline so future revisions can apply cleanly.
+# Build a fresh local database directly from Alembic.
 docker compose -f docker-compose.db.yml --profile tools run --rm migrate \
-  "pip install -r requirements.migrations.txt >/dev/null && alembic stamp head"
+  "pip install -r requirements.migrations.txt >/dev/null && alembic upgrade head"
 
 docker compose -f docker-compose.db.yml ps
