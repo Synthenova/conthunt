@@ -4,6 +4,7 @@ export interface Product {
     description: string;
     price: number;
     currency: string;
+    trial_period_days?: number;
     metadata: {
         app_role: string;
         credits: string;
@@ -21,7 +22,13 @@ export interface ProductPreviewLineItem {
 export interface PreviewData {
     productId: string;
     productName: string;
-    isUpgrade: boolean;
+    transitionType: "upgrade" | "downgrade";
+    prorationMode: string;
+    effectiveAt: string | null;
+    currentPlanName: string;
+    targetPlanName: string;
+    crossInterval: boolean;
+    requiresPaymentConfirmation: boolean;
     lineItems: ProductPreviewLineItem[];
     customerCredits: number;
     settlementAmount: number;

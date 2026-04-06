@@ -1,9 +1,10 @@
 """Dodo Payments client wrapper with product caching."""
 import asyncio
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime, timedelta
 
 from dodopayments import AsyncDodoPayments
+from dodopayments._types import NoneType
 from app.core import get_settings, logger
 
 settings = get_settings()
@@ -55,12 +56,15 @@ async def get_products() -> list[dict]:
         for product in product_list:
             logger.info(f"[DODO RAW] product_id={product.product_id}, name='{product.name}', is_recurring={product.is_recurring}, metadata={product.metadata}")
             if product.is_recurring:
+                price_detail = getattr(product, "price_detail", None)
+                trial_period_days = getattr(price_detail, "trial_period_days", 0) if price_detail else 0
                 products.append({
                     "product_id": product.product_id,
                     "name": product.name,
                     "description": product.description or '',
                     "price": product.price or 0,
                     "currency": product.currency or 'USD',
+                    "trial_period_days": trial_period_days or 0,
                     "metadata": product.metadata or {},
                 })
         
@@ -128,6 +132,8 @@ async def change_plan(
     subscription_id: str,
     product_id: str,
     proration_mode: str = "prorated_immediately",
+    metadata: Optional[dict[str, str]] = None,
+    on_payment_failure: Optional[str] = None,
 ) -> dict:
     """
     Change subscription plan immediately.
@@ -146,6 +152,8 @@ async def change_plan(
             product_id=product_id,
             quantity=1,
             proration_billing_mode=proration_mode,
+            metadata=metadata,
+            on_payment_failure=on_payment_failure,
         )
         
         logger.info(f"Changed plan for subscription {subscription_id} to {product_id}")
@@ -160,6 +168,7 @@ async def preview_change_plan(
     subscription_id: str,
     product_id: str,
     proration_mode: str = "prorated_immediately",
+    on_payment_failure: Optional[str] = None,
 ) -> dict:
     """
     Preview plan change to show proration details before confirming.
@@ -173,6 +182,7 @@ async def preview_change_plan(
             product_id=product_id,
             quantity=1,
             proration_billing_mode=proration_mode,
+            on_payment_failure=on_payment_failure,
         )
         
         # Extract key info from preview
@@ -185,6 +195,7 @@ async def preview_change_plan(
             "credit_amount": credit_amount,
             "charge_amount": charge_amount,
             "summary": getattr(immediate_charge, 'summary', None) if immediate_charge else None,
+            "new_plan": getattr(result, "new_plan", None),
             "raw": result,
         }
         
@@ -215,6 +226,52 @@ async def set_cancel_at_period_end(subscription_id: str, cancel: bool = True) ->
         raise
 
 
+async def schedule_plan_change(
+    subscription_id: str,
+    product_id: str,
+    metadata: Optional[dict[str, str]] = None,
+) -> dict:
+    """
+    Schedule a plan change for the next billing date without an immediate charge.
+    Uses the raw API path because the current SDK does not expose `effective_at`.
+    """
+    client = get_dodo_client()
+
+    try:
+        await client.subscriptions._post(
+            f"/subscriptions/{subscription_id}/change-plan",
+            cast_to=NoneType,
+            body={
+                "product_id": product_id,
+                "quantity": 1,
+                "proration_billing_mode": "do_not_bill",
+                "effective_at": "next_billing_date",
+                "metadata": metadata or {},
+            },
+        )
+        logger.info(f"Scheduled plan change for subscription {subscription_id} to {product_id}")
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Failed to schedule plan change for {subscription_id}: {e}")
+        raise
+
+
+async def cancel_scheduled_change(subscription_id: str) -> dict:
+    """Cancel a provider-side scheduled plan change."""
+    client = get_dodo_client()
+
+    try:
+        await client.subscriptions._delete(
+            f"/subscriptions/{subscription_id}/scheduled-change",
+            cast_to=NoneType,
+        )
+        logger.info(f"Cancelled scheduled plan change for subscription {subscription_id}")
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Failed to cancel scheduled plan change for {subscription_id}: {e}")
+        raise
+
+
 async def get_subscription(subscription_id: str) -> dict:
     """Retrieve subscription details from Dodo."""
     client = get_dodo_client()
@@ -223,15 +280,37 @@ async def get_subscription(subscription_id: str) -> dict:
         result = await client.subscriptions.retrieve(subscription_id)
         return {
             "subscription_id": result.subscription_id,
-            "customer_id": result.customer_id,
+            "customer_id": result.customer.customer_id,
             "product_id": result.product_id,
             "status": result.status,
-            "cancel_at_period_end": result.cancel_at_period_end,
+            "cancel_at_period_end": result.cancel_at_next_billing_date,
             "current_period_start": result.previous_billing_date,
             "current_period_end": result.next_billing_date,
+            "created_at": result.created_at,
+            "trial_period_days": result.trial_period_days,
+            "next_billing_date": result.next_billing_date,
+            "metadata": result.metadata or {},
         }
     except Exception as e:
         logger.error(f"Failed to get subscription {subscription_id}: {e}")
+        raise
+
+
+async def create_customer_portal_session(customer_id: str) -> dict[str, Any]:
+    """Create a Dodo customer portal session for billing management."""
+    client = get_dodo_client()
+
+    try:
+        session = await client.customers.customer_portal.create(
+            customer_id=customer_id,
+            send_email=False,
+        )
+        portal_link = getattr(session, "link", None)
+        if not portal_link and isinstance(session, dict):
+            portal_link = session.get("link")
+        return {"url": portal_link}
+    except Exception as e:
+        logger.error(f"Failed to create customer portal session for {customer_id}: {e}")
         raise
 
 

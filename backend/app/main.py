@@ -19,6 +19,7 @@ from app.core.telemetry import setup_telemetry
 from app.db import init_db, close_db
 from app.realtime.stream_hub import StreamFanoutHub
 from app.api import v1_router
+from app.api.v1.webhooks import router as dodo_webhooks_router
 from app.middleware.telemetry_context import TelemetryContextMiddleware
 from app.agent.runtime import create_agent_graph
 from app.integrations.langfuse_client import flush_langfuse
@@ -243,6 +244,7 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(v1_router)
+app.include_router(dodo_webhooks_router)
 
 
 @app.get("/health")

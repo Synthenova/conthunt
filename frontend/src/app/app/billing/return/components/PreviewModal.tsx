@@ -70,13 +70,29 @@ export function PreviewModal({
                 <Card className="max-w-lg w-full bg-card border-border/50">
                     <CardHeader>
                         <CardTitle className="text-foreground">
-                            {previewData.isUpgrade ? "Confirm Upgrade" : "Confirm Plan Change"}
+                            {previewData.transitionType === "upgrade" ? "Confirm Upgrade" : "Schedule Downgrade"}
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <p className="text-muted-foreground">
-                            You are changing to <strong className="text-foreground">{previewData.productName}</strong>.
+                            You are changing from <strong className="text-foreground">{previewData.currentPlanName}</strong> to{" "}
+                            <strong className="text-foreground">{previewData.targetPlanName}</strong>.
                         </p>
+                        <div className="bg-muted/30 rounded-lg p-3 border border-border/50 space-y-1 text-sm">
+                            <p className="text-muted-foreground">
+                                Billing mode: <span className="text-foreground">{previewData.prorationMode.replaceAll("_", " ")}</span>
+                            </p>
+                            {previewData.effectiveAt && (
+                                <p className="text-muted-foreground">
+                                    Effective: <span className="text-foreground">{new Date(previewData.effectiveAt).toLocaleString()}</span>
+                                </p>
+                            )}
+                            {previewData.crossInterval && (
+                                <p className="text-muted-foreground">
+                                    This change also switches billing cadence.
+                                </p>
+                            )}
+                        </div>
 
                         {/* Line Items */}
                         {previewData.lineItems.length > 0 && (
@@ -132,10 +148,18 @@ export function PreviewModal({
                             </div>
                         )}
 
+                        {previewData.transitionType === "upgrade" && previewData.requiresPaymentConfirmation && (
+                            <div className="bg-primary/5 border border-primary/10 rounded-lg p-4">
+                                <p className="text-primary font-medium">
+                                    Your plan will only switch after Dodo confirms the payment.
+                                </p>
+                            </div>
+                        )}
+
                         {/* No charge message */}
                         {previewData.settlementAmount === 0 && previewData.customerCredits === 0 && (
                             <p className="text-muted-foreground">
-                                No immediate charge. Your billing will adjust on next renewal.
+                                No immediate charge. Your billing will adjust at the scheduled effective time.
                             </p>
                         )}
 
@@ -162,7 +186,7 @@ export function PreviewModal({
                             {actionLoading ? (
                                 <Loader2 className="h-4 w-4 animate-spin text-black" />
                             ) : (
-                                "Confirm"
+                                previewData.transitionType === "upgrade" ? "Confirm Upgrade" : "Schedule Downgrade"
                             )}
                         </Button>
                     </CardFooter>

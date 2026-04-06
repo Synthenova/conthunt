@@ -2,43 +2,14 @@
 import json
 from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException
-from sqlalchemy import text
 
 from app.core import logger
-from app.db.session import get_db_connection
 from app.integrations.posthog_client import capture_event_with_error
 from app.services import dodo_client, billing_service
 from app.services.telemetry_events import emit_payment_confirmed, emit_payment_webhook_received
 
 
 router = APIRouter(prefix="/webhooks")
-
-
-async def store_webhook_event(webhook_id: str, event_type: str, subscription_id: str, payload: dict) -> bool:
-    """
-    Store webhook event for idempotency.
-    Returns True if new event, False if already processed.
-    """
-    try:
-        async with get_db_connection() as conn:
-            result = await conn.execute(
-                text("""
-                INSERT INTO webhook_events (webhook_id, event_type, subscription_id, payload)
-                VALUES (:webhook_id, :event_type, :subscription_id, CAST(:payload AS jsonb))
-                ON CONFLICT (webhook_id) DO NOTHING
-                RETURNING webhook_id
-                """),
-                {
-                    "webhook_id": webhook_id,
-                    "event_type": event_type,
-                    "subscription_id": subscription_id,
-                    "payload": json.dumps(payload),
-                }
-            )
-            return result.fetchone() is not None
-    except Exception as e:
-        logger.error(f"Failed to store webhook event {webhook_id}: {e}")
-        return True  # Process anyway on error
 
 
 @router.post("/dodo")
@@ -83,8 +54,14 @@ async def handle_dodo_webhook(request: Request):
         subject_id=subscription_id,
     )
     
-    # Idempotency check
-    is_new = await store_webhook_event(webhook_id, event_type, subscription_id, raw_payload)
+    # Durable inbox + idempotency
+    is_new = await billing_service.record_webhook_inbox_event(
+        webhook_id=webhook_id,
+        event_type=event_type,
+        subscription_id=subscription_id,
+        payload=raw_payload,
+        event_ts=event_ts,
+    )
     if not is_new:
         logger.info(f"Webhook {webhook_id} already processed, skipping")
         return {"status": "already_processed"}
@@ -111,14 +88,31 @@ async def handle_dodo_webhook(request: Request):
             
         elif event_type == "subscription.on_hold":
             await handle_subscription_on_hold(event_data, event_ts)
+
+        elif event_type == "subscription.failed":
+            await handle_subscription_failed(event_data, event_ts)
+
+        elif event_type == "payment.succeeded":
+            await handle_payment_succeeded(event_data)
+
+        elif event_type == "payment.failed":
+            await handle_payment_failed(event_data)
+
+        elif event_type == "payment.processing":
+            await handle_payment_processing(event_data)
+
+        elif event_type == "payment.cancelled":
+            await handle_payment_cancelled(event_data)
             
         else:
             logger.info(f"Unhandled webhook event type: {event_type}")
-            
+
+        await billing_service.mark_webhook_inbox_status(webhook_id, "processed")
         return {"status": "ok"}
         
     except Exception as e:
         logger.error(f"Error processing webhook {webhook_id}: {e}")
+        await billing_service.mark_webhook_inbox_status(webhook_id, "failed", str(e))
         capture_event_with_error(
             distinct_id="system:webhook_dodo",
             event="payment_webhook_failed",
@@ -130,8 +124,7 @@ async def handle_dodo_webhook(request: Request):
                 "source": "webhook_dodo",
             },
         )
-        # Still return 200 to prevent retries for application errors
-        return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=500, detail="Webhook processing failed")
 
 
 async def handle_subscription_active(data, event_ts: datetime):
@@ -155,7 +148,7 @@ async def handle_subscription_active(data, event_ts: datetime):
         logger.error(f"Could not find user for subscription {subscription_id}")
         return
     
-    # Apply subscription state - NEW subscription, set credit_period_start
+    # New subscription activation sets the initial credit period start.
     await billing_service.apply_subscription_state(
         user_id=user_id,
         subscription_id=subscription_id,
@@ -222,21 +215,6 @@ async def handle_subscription_renewed(data, event_ts: datetime):
     
     logger.info(f"Processing subscription.renewed: {subscription_id}")
     
-    # Check for pending downgrade
-    pending = await billing_service.get_pending_downgrade(subscription_id)
-    
-    if pending:
-        logger.info(f"Applying pending downgrade for subscription {subscription_id}")
-        try:
-            await dodo_client.change_plan(
-                subscription_id=subscription_id,
-                product_id=pending["target_product_id"],
-                proration_mode="prorated_immediately",
-            )
-            await billing_service.mark_pending_applied(pending["id"])
-        except Exception as e:
-            logger.error(f"Failed to apply pending downgrade: {e}")
-    
     # Find user by subscription, then customer_id, then metadata
     user_id = await billing_service.find_user_by_subscription_id(subscription_id)
     if not user_id:
@@ -261,7 +239,6 @@ async def handle_subscription_renewed(data, event_ts: datetime):
 async def handle_subscription_plan_changed(data, event_ts: datetime):
     """
     Handle plan change (upgrade or applied downgrade).
-    Updates role and resets credits to new tier.
     """
     subscription_id = data.subscription_id
     customer_id = data.customer.customer_id
@@ -290,7 +267,6 @@ async def handle_subscription_plan_changed(data, event_ts: datetime):
         current_period_start=data.previous_billing_date,
         current_period_end=data.next_billing_date,
         webhook_ts=event_ts,
-        is_plan_change=True,
     )
 
 
@@ -395,6 +371,107 @@ async def handle_subscription_on_hold(data, event_ts: datetime):
         current_period_start=data.previous_billing_date,
         current_period_end=data.next_billing_date,
         webhook_ts=event_ts,
+    )
+
+
+async def handle_subscription_failed(data, event_ts: datetime):
+    """Handle subscription creation or transition failure."""
+    subscription_id = getattr(data, "subscription_id", None)
+    customer = getattr(data, "customer", None)
+    customer_id = getattr(customer, "customer_id", None)
+    metadata = getattr(data, "metadata", None) or {}
+    product_id = getattr(data, "product_id", None) or ""
+
+    logger.info(f"Processing subscription.failed: {subscription_id}")
+
+    user_id = None
+    if subscription_id:
+        user_id = await billing_service.find_user_by_subscription_id(subscription_id)
+    if not user_id and customer_id:
+        user_id = await billing_service.find_user_by_customer_id(customer_id)
+    if not user_id:
+        user_id = await billing_service.find_user_by_metadata(metadata)
+
+    if not user_id or not subscription_id:
+        logger.warning(f"Could not fully link failed subscription webhook: sub={subscription_id}, customer={customer_id}")
+        return
+
+    await billing_service.apply_subscription_state(
+        user_id=user_id,
+        subscription_id=subscription_id,
+        customer_id=customer_id or "",
+        product_id=product_id,
+        status="failed",
+        cancel_at_period_end=False,
+        current_period_start=getattr(data, "previous_billing_date", None),
+        current_period_end=getattr(data, "next_billing_date", None),
+        webhook_ts=event_ts,
+    )
+
+
+async def handle_payment_succeeded(data) -> None:
+    """Record successful payment lifecycle updates."""
+    metadata = getattr(data, "metadata", None) or {}
+    await billing_service.record_payment_event(
+        payment_id=getattr(data, "payment_id", ""),
+        subscription_id=getattr(data, "subscription_id", None),
+        status="paid",
+        amount=getattr(data, "total_amount", 0) or 0,
+        currency=getattr(data, "currency", "USD") or "USD",
+        metadata={
+            **metadata,
+            "payload_type": getattr(data, "payload_type", None),
+        },
+    )
+
+
+async def handle_payment_failed(data) -> None:
+    """Record failed payment lifecycle updates."""
+    metadata = getattr(data, "metadata", None) or {}
+    await billing_service.record_payment_event(
+        payment_id=getattr(data, "payment_id", ""),
+        subscription_id=getattr(data, "subscription_id", None),
+        status="failed",
+        amount=getattr(data, "total_amount", 0) or 0,
+        currency=getattr(data, "currency", "USD") or "USD",
+        failure_code=getattr(data, "failure_code", None),
+        failure_message=getattr(data, "error_message", None) or getattr(data, "failure_message", None),
+        metadata={
+            **metadata,
+            "payload_type": getattr(data, "payload_type", None),
+        },
+    )
+
+
+async def handle_payment_processing(data) -> None:
+    """Record processing payment lifecycle updates."""
+    metadata = getattr(data, "metadata", None) or {}
+    await billing_service.record_payment_event(
+        payment_id=getattr(data, "payment_id", ""),
+        subscription_id=getattr(data, "subscription_id", None),
+        status="processing",
+        amount=getattr(data, "total_amount", 0) or 0,
+        currency=getattr(data, "currency", "USD") or "USD",
+        metadata={
+            **metadata,
+            "payload_type": getattr(data, "payload_type", None),
+        },
+    )
+
+
+async def handle_payment_cancelled(data) -> None:
+    """Record cancelled payment lifecycle updates."""
+    metadata = getattr(data, "metadata", None) or {}
+    await billing_service.record_payment_event(
+        payment_id=getattr(data, "payment_id", ""),
+        subscription_id=getattr(data, "subscription_id", None),
+        status="cancelled",
+        amount=getattr(data, "total_amount", 0) or 0,
+        currency=getattr(data, "currency", "USD") or "USD",
+        metadata={
+            **metadata,
+            "payload_type": getattr(data, "payload_type", None),
+        },
     )
 
 

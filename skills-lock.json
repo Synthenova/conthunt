@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "credit-based-billing": {
+      "source": "dodopayments/skills",
+      "sourceType": "github",
+      "computedHash": "d9f11fe73bc87eec7eff4303a0f93ab01eac321a7a00f06c6eb5689da26c13c7"
+    },
     "langgraph-docs": {
       "source": "langchain-ai/deepagents",
       "sourceType": "github",

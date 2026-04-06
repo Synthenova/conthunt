@@ -3,11 +3,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { Check, Sparkles, Loader2, ArrowUp, ArrowDown, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { UserSubscription } from "@/hooks/useUser";
 import { Product, roleOrder } from "../types";
 
 interface PlanCardProps {
     plan: Product;
-    subscription: any;
+    subscription: UserSubscription | null | undefined;
     currentProduct: Product | undefined;
     actionLoading: string | null;
     onUpgrade: (productId: string, productName: string) => void;
@@ -42,7 +43,10 @@ export function PlanCard({
         (planRoleOrder === currentRoleOrder && plan.price < currentPrice && !isCurrent)) &&
         planRole !== "free";
 
-    const isPendingDowngrade = subscription?.pending_downgrade?.target_role === planRole;
+    const pendingDowngrade = subscription?.pending_change?.type === "downgrade"
+        ? subscription.pending_change
+        : null;
+    const isPendingDowngrade = pendingDowngrade?.target_role === planRole;
     const credits = parseInt(plan.metadata.credits);
     const isPopular = planRole === "creator";
 
