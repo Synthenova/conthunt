@@ -94,187 +94,50 @@ def upgrade() -> None:
             reward_feature_amount,
             created_at
         )
-        VALUES
-            (
-                '6f5dff00-8aeb-4d25-9595-c6713501e780',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'free',
-                3,
-                '10 Searches',
-                'Search',
-                'search_query',
-                0,
-                10,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                '68166f8d-42fb-4337-9088-59ba96d3ee82',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'creator',
-                3,
-                '10 Searches',
-                'Search',
-                'search_query',
-                0,
-                10,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                'fc12469d-7ea5-47d5-bd71-d4e3e77043b6',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'pro_research',
-                3,
-                '10 Searches',
-                'Search',
-                'search_query',
-                0,
-                10,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                '0cb91077-7804-4144-8655-b71f224eef0f',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'free',
-                10,
-                '50 Credits',
-                'Coins',
-                NULL,
-                50,
-                0,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                '8b7f8af9-56d3-43e7-803f-9769a047dd75',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'creator',
-                10,
-                '50 Credits',
-                'Coins',
-                NULL,
-                50,
-                0,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                '7a5bc16b-d822-44b5-88e9-e968f7a01993',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'pro_research',
-                10,
-                '50 Credits',
-                'Coins',
-                NULL,
-                50,
-                0,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                '85bf370c-bc4f-4469-a098-a4eff15efc84',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'free',
-                50,
-                '100 Credits + 10 Searches',
-                'Award',
-                'search_query',
-                100,
-                10,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                'a4fb7e10-cdd3-410d-859d-7e65a84cdb1b',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'creator',
-                50,
-                '100 Credits + 10 Searches',
-                'Award',
-                'search_query',
-                100,
-                10,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                'b0efaadd-2d26-44d9-8ffc-ab6589dc9fa2',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'pro_research',
-                50,
-                '100 Credits + 10 Searches',
-                'Award',
-                'search_query',
-                100,
-                10,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                '21dcb280-b94c-4551-87f1-f02e48c95f4b',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'free',
-                100,
-                '200 Credits + 20 Searches',
-                'Crown',
-                'search_query',
-                200,
-                20,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                '54c5cae9-ad60-48ee-9352-b9744fb14ce5',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'creator',
-                100,
-                '200 Credits + 20 Searches',
-                'Crown',
-                'search_query',
-                200,
-                20,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                'fe501907-718b-4e8d-a77c-819bfb9e11f2',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'pro_research',
-                100,
-                '200 Credits + 20 Searches',
-                'Crown',
-                'search_query',
-                200,
-                20,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                '410c6745-4561-4bb0-8737-113d6f5cbad5',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'free',
-                365,
-                '500 Credits + 50 Searches',
-                'Sparkles',
-                'search_query',
-                500,
-                50,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                '8a9d7c32-17d9-4347-bd48-776082d5ff4c',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'creator',
-                365,
-                '500 Credits + 50 Searches',
-                'Sparkles',
-                'search_query',
-                500,
-                50,
-                '2026-01-20 01:17:14.805011+00'
-            ),
-            (
-                'a98e017c-c405-4a87-9fd9-abc8e37941da',
-                'c8bfb77c-4eb1-4aa5-a16d-866dbb75ae25',
-                'pro_research',
-                365,
-                '500 Credits + 50 Searches',
-                'Sparkles',
-                'search_query',
-                500,
-                50,
-                '2026-01-20 01:17:14.805011+00'
-            )
+        SELECT
+            milestone.id,
+            streak_type.id,
+            milestone.role,
+            milestone.days_required,
+            milestone.reward_description,
+            milestone.icon_name,
+            milestone.reward_feature,
+            milestone.reward_credits,
+            milestone.reward_feature_amount,
+            milestone.created_at
+        FROM (
+            VALUES
+                ('6f5dff00-8aeb-4d25-9595-c6713501e780', 'free', 3, '10 Searches', 'Search', 'search_query', 0, 10, '2026-01-20 01:17:14.805011+00'),
+                ('68166f8d-42fb-4337-9088-59ba96d3ee82', 'creator', 3, '10 Searches', 'Search', 'search_query', 0, 10, '2026-01-20 01:17:14.805011+00'),
+                ('fc12469d-7ea5-47d5-bd71-d4e3e77043b6', 'pro_research', 3, '10 Searches', 'Search', 'search_query', 0, 10, '2026-01-20 01:17:14.805011+00'),
+                ('0cb91077-7804-4144-8655-b71f224eef0f', 'free', 10, '50 Credits', 'Coins', NULL, 50, 0, '2026-01-20 01:17:14.805011+00'),
+                ('8b7f8af9-56d3-43e7-803f-9769a047dd75', 'creator', 10, '50 Credits', 'Coins', NULL, 50, 0, '2026-01-20 01:17:14.805011+00'),
+                ('7a5bc16b-d822-44b5-88e9-e968f7a01993', 'pro_research', 10, '50 Credits', 'Coins', NULL, 50, 0, '2026-01-20 01:17:14.805011+00'),
+                ('85bf370c-bc4f-4469-a098-a4eff15efc84', 'free', 50, '100 Credits + 10 Searches', 'Award', 'search_query', 100, 10, '2026-01-20 01:17:14.805011+00'),
+                ('a4fb7e10-cdd3-410d-859d-7e65a84cdb1b', 'creator', 50, '100 Credits + 10 Searches', 'Award', 'search_query', 100, 10, '2026-01-20 01:17:14.805011+00'),
+                ('b0efaadd-2d26-44d9-8ffc-ab6589dc9fa2', 'pro_research', 50, '100 Credits + 10 Searches', 'Award', 'search_query', 100, 10, '2026-01-20 01:17:14.805011+00'),
+                ('21dcb280-b94c-4551-87f1-f02e48c95f4b', 'free', 100, '200 Credits + 20 Searches', 'Crown', 'search_query', 200, 20, '2026-01-20 01:17:14.805011+00'),
+                ('54c5cae9-ad60-48ee-9352-b9744fb14ce5', 'creator', 100, '200 Credits + 20 Searches', 'Crown', 'search_query', 200, 20, '2026-01-20 01:17:14.805011+00'),
+                ('fe501907-718b-4e8d-a77c-819bfb9e11f2', 'pro_research', 100, '200 Credits + 20 Searches', 'Crown', 'search_query', 200, 20, '2026-01-20 01:17:14.805011+00'),
+                ('410c6745-4561-4bb0-8737-113d6f5cbad5', 'free', 365, '500 Credits + 50 Searches', 'Sparkles', 'search_query', 500, 50, '2026-01-20 01:17:14.805011+00'),
+                ('8a9d7c32-17d9-4347-bd48-776082d5ff4c', 'creator', 365, '500 Credits + 50 Searches', 'Sparkles', 'search_query', 500, 50, '2026-01-20 01:17:14.805011+00'),
+                ('a98e017c-c405-4a87-9fd9-abc8e37941da', 'pro_research', 365, '500 Credits + 50 Searches', 'Sparkles', 'search_query', 500, 50, '2026-01-20 01:17:14.805011+00')
+        ) AS milestone(
+            id,
+            role,
+            days_required,
+            reward_description,
+            icon_name,
+            reward_feature,
+            reward_credits,
+            reward_feature_amount,
+            created_at
+        )
+        CROSS JOIN LATERAL (
+            SELECT id
+            FROM {schema}.streak_types
+            WHERE slug = 'search'
+        ) AS streak_type
         ON CONFLICT (role, streak_type_id, days_required) DO UPDATE
         SET
             reward_description = EXCLUDED.reward_description,
