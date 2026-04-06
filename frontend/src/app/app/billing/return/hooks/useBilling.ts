@@ -7,7 +7,6 @@ import {
     trackCheckoutStarted,
     trackCheckoutCompleted,
     trackCheckoutFailed,
-    trackPlanDowngradeScheduled,
     trackSubscriptionCancelled,
 } from "@/lib/telemetry/tracking";
 
@@ -39,6 +38,17 @@ type DodoSummary = {
 };
 
 type PreviewChangeResponse = {
+    transition_type: "upgrade" | "downgrade";
+    proration_mode: string;
+    effective_at?: string | null;
+    cross_interval?: boolean;
+    requires_payment_confirmation?: boolean;
+    current_plan?: {
+        name?: string;
+    };
+    target_plan?: {
+        name?: string;
+    };
     immediate_charge?: {
         line_items?: DodoLineItem[];
         summary?: DodoSummary;
@@ -69,6 +79,21 @@ export function useBilling(options: UseBillingOptions = {}) {
     const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
     const allowedActions = subscription?.allowed_actions || [];
     const can = (action: string) => allowedActions.includes(action);
+    const operationPaymentLink =
+        typeof subscription?.current_operation?.metadata?.payment_link === "string"
+            ? subscription.current_operation.metadata.payment_link
+            : null;
+
+    const getBlockedPlanActionMessage = () => {
+        const state = subscription?.billing_state || "unknown";
+        if (can("reactivate")) {
+            return "Your subscription has a payment issue. Update your payment method first.";
+        }
+        if (subscription?.has_subscription) {
+            return `Plan changes are not available while billing is '${state}'.`;
+        }
+        return "Checkout is not available right now.";
+    };
 
     useEffect(() => {
         const fetchProducts = async () => {
@@ -98,7 +123,25 @@ export function useBilling(options: UseBillingOptions = {}) {
         return () => unsubscribe();
     }, []);
 
+    useEffect(() => {
+        if (
+            subscription?.current_operation?.type === "upgrade_request"
+            && subscription?.current_operation?.ui_status === "requires_action"
+            && operationPaymentLink
+        ) {
+            window.location.href = operationPaymentLink;
+        }
+    }, [
+        operationPaymentLink,
+        subscription?.current_operation?.type,
+        subscription?.current_operation?.ui_status,
+    ]);
+
     const handleCheckout = async (productId: string) => {
+        if (!can("checkout")) {
+            setError(getBlockedPlanActionMessage());
+            return;
+        }
         setActionLoading(productId);
         setError(null);
 
@@ -129,7 +172,7 @@ export function useBilling(options: UseBillingOptions = {}) {
         }
     };
 
-    const previewPlanChange = async (productId: string, productName: string, isUpgrade: boolean) => {
+    const previewPlanChange = async (productId: string) => {
         setPreviewLoading(true);
         setPreviewError(null);
         setPreviewData(null);
@@ -159,8 +202,14 @@ export function useBilling(options: UseBillingOptions = {}) {
 
             setPreviewData({
                 productId,
-                productName,
-                isUpgrade,
+                productName: data.target_plan?.name || productId,
+                transitionType: data.transition_type,
+                prorationMode: data.proration_mode,
+                effectiveAt: data.effective_at || null,
+                currentPlanName: data.current_plan?.name || "Current plan",
+                targetPlanName: data.target_plan?.name || "Selected plan",
+                crossInterval: !!data.cross_interval,
+                requiresPaymentConfirmation: !!data.requires_payment_confirmation,
                 lineItems,
                 customerCredits: summary.customer_credits || 0,
                 settlementAmount: summary.settlement_amount || 0,
@@ -177,7 +226,7 @@ export function useBilling(options: UseBillingOptions = {}) {
     const confirmPlanChange = async () => {
         if (!previewData) return;
 
-        const endpoint = previewData.isUpgrade ? "upgrade" : "downgrade";
+        const endpoint = previewData.transitionType === "upgrade" ? "upgrade" : "downgrade";
         setActionLoading(previewData.productId);
         setError(null);
         setPreviewData(null);
@@ -191,6 +240,12 @@ export function useBilling(options: UseBillingOptions = {}) {
                 const data = (await res.json()) as ErrorDetailResponse;
                 throw new Error(data.detail || `${endpoint} failed`);
             }
+            const data = await res.json();
+            if (data?.payment_link) {
+                window.location.href = data.payment_link;
+                return;
+            }
+            await refreshUser();
             window.location.reload();
         } catch (err: unknown) {
             setError(getErrorMessage(err));
@@ -228,7 +283,7 @@ export function useBilling(options: UseBillingOptions = {}) {
         }
     };
 
-    const handleUpgrade = async (productId: string, productName: string) => {
+    const previewManagedPlanChange = async (productId: string) => {
         // On hold users can only recover payment method.
         if (can("reactivate")) {
             await handleReactivate();
@@ -259,46 +314,59 @@ export function useBilling(options: UseBillingOptions = {}) {
 
         // Show preview first only when backend allows plan changes.
         if (can("preview_change")) {
-            await previewPlanChange(productId, productName, true);
+            await previewPlanChange(productId);
         } else {
             setError("Plan change is not available for your current billing state.");
         }
     };
 
+    const handleUpgrade = async (productId: string, productName: string) => {
+        void productName;
+        await previewManagedPlanChange(productId);
+    };
+
     const handleDowngrade = async (productId: string, productName: string) => {
+        void productName;
+        await previewManagedPlanChange(productId);
+    };
+
+    const handlePlanSelection = async (productId: string, productName: string) => {
+        if (can("preview_change")) {
+            await handleUpgrade(productId, productName);
+            return;
+        }
         if (can("reactivate")) {
             await handleReactivate();
             return;
         }
-
-        if (can("checkout") && !can("preview_change")) {
+        if (can("checkout")) {
             await handleCheckout(productId);
             return;
         }
+        setError(getBlockedPlanActionMessage());
+    };
 
-        // If scheduled for cancellation, undo it first (behind the scenes).
-        if (subscription?.cancel_at_period_end && can("undo_cancel")) {
-            try {
-                const undoRes = await authFetch(`${BACKEND_URL}/v1/billing/cancel`, {
-                    method: "DELETE",
-                });
-                if (!undoRes.ok) {
-                    const data = (await undoRes.json()) as ErrorDetailResponse;
-                    throw new Error(data.detail || "Failed to undo cancellation");
-                }
-            } catch (err: unknown) {
-                setError(getErrorMessage(err));
-                return; // Stop if undo fails
+    const handleManageBilling = async () => {
+        setActionLoading("manage_billing");
+        setError(null);
+
+        try {
+            const res = await authFetch(`${BACKEND_URL}/v1/billing/portal`, {
+                method: "POST",
+            });
+            if (!res.ok) {
+                const data = (await res.json()) as ErrorDetailResponse;
+                throw new Error(data.detail || "Failed to open billing portal");
             }
-        }
-
-        if (can("preview_change")) {
-            const currentProduct = products.find(p => p.product_id === subscription?.product_id);
-            const fromProduct = currentProduct?.metadata?.app_role || "free";
-            await previewPlanChange(productId, productName, false);
-            trackPlanDowngradeScheduled(fromProduct, productId, null);
-        } else {
-            setError("Plan change is not available for your current billing state.");
+            const data = await res.json();
+            if (!data?.url) {
+                throw new Error("No billing portal URL returned");
+            }
+            window.location.href = data.url;
+        } catch (err: unknown) {
+            setError(getErrorMessage(err));
+        } finally {
+            setActionLoading(null);
         }
     };
 
@@ -393,12 +461,14 @@ export function useBilling(options: UseBillingOptions = {}) {
         handleCheckout,
         handleUpgrade,
         handleDowngrade,
+        handlePlanSelection,
         handleReactivate,
         showCancelConfirm,
         closeCancelConfirm,
         confirmCancel,
         undoCancel,
         handleCancelDowngrade,
+        handleManageBilling,
         confirmPlanChange,
         clearPreviewError,
         clearPreviewData,

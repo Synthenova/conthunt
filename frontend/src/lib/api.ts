@@ -11,12 +11,19 @@ import { clearPostHogIdentity } from "@/lib/telemetry/posthog";
  */
 
 export function getBackendUrl(): string {
-    // Use Next rewrites in the browser to avoid CORS/mixed-content issues.
+    let url = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+
     if (typeof window !== "undefined") {
+        // In local development, talk to the backend directly to avoid Next dev
+        // rewrite/proxy failures masking real backend responses.
+        if (url.startsWith("http://localhost:") || url.startsWith("http://127.0.0.1:")) {
+            return url;
+        }
+        // Use Next rewrites in the browser for deployed environments to avoid
+        // CORS/mixed-content issues.
         return "";
     }
 
-    let url = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
     // Force HTTPS for Cloud Run deployments to prevent Mixed Content errors
     if (url.includes('run.app') && url.startsWith('http:')) {
         url = url.replace('http:', 'https:');

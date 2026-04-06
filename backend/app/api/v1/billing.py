@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.auth import get_current_user, AuthUser
+from app.core import logger
 from app.services import billing_service
 
 
@@ -42,6 +43,11 @@ async def create_checkout(
         )
         return session
     except Exception as e:
+        logger.exception(
+            "Checkout creation failed for user %s product %s",
+            user.get("db_user_id"),
+            request.product_id,
+        )
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -49,6 +55,19 @@ async def create_checkout(
 async def get_subscription(user: AuthUser = Depends(get_current_user)):
     """Get canonical billing context used for UI + action gating."""
     return await billing_service.get_billing_context(user["db_user_id"])
+
+
+@router.get("/history")
+async def get_billing_history(user: AuthUser = Depends(get_current_user)):
+    """Get recent billing timeline for the authenticated user."""
+    context = await billing_service.get_billing_context(user["db_user_id"])
+    subscription_id = context.get("subscription_id")
+    history = await billing_service.get_billing_history(
+        user_id=user["db_user_id"],
+        subscription_id=subscription_id,
+        limit=25,
+    )
+    return {"history": history}
 
 
 @router.post("/preview-change")
@@ -60,25 +79,27 @@ async def preview_plan_change(
     Preview plan change to see proration details before confirming.
     Shows credit/charge amount for the change.
     """
-    from app.services import dodo_client
-    
     try:
-        context = await billing_service.require_allowed_action(
-            user["db_user_id"], billing_service.BILLING_ACTION_PREVIEW_CHANGE
-        )
-        subscription_id = context.get("subscription_id")
-        if not subscription_id:
-            raise HTTPException(status_code=400, detail="No active subscription found")
-        
-        preview = await dodo_client.preview_change_plan(
-            subscription_id=subscription_id,
-            product_id=request.target_product_id,
+        preview = await billing_service.preview_plan_change_for_user(
+            user_id=user["db_user_id"],
+            target_product_id=request.target_product_id,
         )
         return preview
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/portal")
+async def create_billing_portal_session(user: AuthUser = Depends(get_current_user)):
+    """Create a Dodo customer portal session for billing management."""
+    try:
+        return await billing_service.create_billing_portal_session(user["db_user_id"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -101,10 +122,25 @@ async def reactivate_subscription(user: AuthUser = Depends(get_current_user)):
             raise HTTPException(status_code=400, detail="No subscription found")
         
         settings = get_settings()
+        operation_id = await billing_service.create_billing_operation(
+            user_id=user["db_user_id"],
+            operation_type=billing_service.BillingOperationType.REACTIVATION_START.value,
+            provider_subscription_id=subscription_id,
+            requested_from_product_id=context.get("product_id"),
+            status=billing_service.BillingOperationStatus.PENDING.value,
+            ui_status="awaiting_webhook",
+            metadata={"source": "backend_billing_reactivate"},
+        )
+
         result = await dodo_client.update_payment_method(
             subscription_id=subscription_id,
             return_url=settings.FRONTEND_RETURN_URL,
         )
+        await billing_service.attach_operation_external_refs(
+            operation_id=operation_id,
+            metadata_patch={"payment_id": result.get("payment_id")},
+        )
+        result["operation_id"] = operation_id
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

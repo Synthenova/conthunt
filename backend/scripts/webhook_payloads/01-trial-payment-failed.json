@@ -1,0 +1,63 @@
+{
+  "business_id": "bus_P3SXLcppjXgagmHS",
+  "data": {
+    "billing": {
+      "city": "New York",
+      "country": "US",
+      "state": "New York",
+      "street": "New York, New York",
+      "zipcode": " "
+    },
+    "brand_id": "bus_P3SXLcppjXgagmHSVaH3N",
+    "business_id": "bus_P3SXLcppjXgagmHS",
+    "card_holder_name": "Nirmal",
+    "card_issuing_country": "US",
+    "card_last_four": "0119",
+    "card_network": "VISA",
+    "card_type": "CREDIT",
+    "checkout_session_id": "cks_0Nc67WvfO3jCXoMsKpY3c",
+    "created_at": "2026-04-13T07:35:45.000000Z",
+    "currency": "USD",
+    "custom_field_responses": null,
+    "customer": {
+      "customer_id": "cus_gXpZi3dMA3J8rdMWVsUbi",
+      "email": "nirmalvelu2000@gmail.com",
+      "metadata": {},
+      "name": "Nirmal",
+      "phone_number": "+918939111111"
+    },
+    "digital_products_delivered": false,
+    "discount_id": null,
+    "disputes": [],
+    "error_code": "PROCESSING_ERROR",
+    "error_message": "Simulated first payment failure after trial.",
+    "invoice_id": "inv_trial_fail_001",
+    "invoice_url": "https://api.dodopayments.com/invoices/payments/pay_trial_fail_001",
+    "metadata": {
+      "user_id": "f460d739-86d1-49f8-b522-b66e939785be",
+      "operation_id": "be4c93e2-d99a-4cf8-93a9-1dc6803a0795"
+    },
+    "payload_type": "Payment",
+    "payment_id": "pay_trial_fail_001",
+    "payment_link": "https://test.checkout.dodopayments.com/cbq",
+    "payment_method": "card",
+    "payment_method_type": null,
+    "product_cart": [
+      {
+        "product_id": "pdt_ak5GBsLOOR8y7tqEh2plw",
+        "quantity": 1
+      }
+    ],
+    "refunds": [],
+    "settlement_amount": 2900,
+    "settlement_currency": "USD",
+    "settlement_tax": null,
+    "status": "failed",
+    "subscription_id": "sub_0Nc67cCAyR3jlEkeWM0dD",
+    "tax": null,
+    "total_amount": 2900,
+    "updated_at": null
+  },
+  "timestamp": "2026-04-13T07:36:00.000000Z",
+  "type": "payment.failed"
+}

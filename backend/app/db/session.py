@@ -3,7 +3,7 @@ import asyncio
 import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import (
@@ -23,6 +23,33 @@ settings = get_settings()
 
 connect_args = {}
 poolclass = None
+
+
+def _normalize_asyncpg_url(url: str) -> tuple[str, dict]:
+    # SQLAlchemy's asyncpg dialect passes query params through to asyncpg.connect().
+    # Strip libpq-only options like sslmode/channel_binding, and normalize any
+    # driverless PostgreSQL URL to the asyncpg dialect explicitly.
+    normalized_connect_args: dict = {}
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgresql+psycopg://"):
+        url = url.replace("postgresql+psycopg://", "postgresql+asyncpg://", 1)
+
+    parsed = urlparse(url)
+    query_params = parse_qsl(parsed.query, keep_blank_values=True)
+    allowed_query_params = []
+    for key, value in query_params:
+        if key == "sslmode":
+            if value and value.lower() not in {"disable", "allow", "prefer"}:
+                # asyncpg doesn't accept libpq's sslmode query param directly.
+                # `ssl=True` is the closest equivalent to Neon-style sslmode=require.
+                normalized_connect_args["ssl"] = True
+            continue
+        if key == "channel_binding":
+            continue
+        allowed_query_params.append((key, value))
+    normalized_url = urlunparse(parsed._replace(query=urlencode(allowed_query_params, doseq=True)))
+    return normalized_url, normalized_connect_args
 
 def _looks_like_pgbouncer(url: str) -> bool:
     try:
@@ -50,8 +77,10 @@ if bool(getattr(settings, "DB_USE_NULLPOOL", False)):
     poolclass = NullPool
 
 # Create async engine
+asyncpg_url, normalized_connect_args = _normalize_asyncpg_url(settings.DATABASE_URL)
+connect_args.update(normalized_connect_args)
 engine: AsyncEngine = create_async_engine(
-    settings.DATABASE_URL,
+    asyncpg_url,
     echo=False,
     pool_pre_ping=True,
     **(
