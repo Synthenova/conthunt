@@ -10,6 +10,7 @@ export interface Product {
     description: string;
     price: number;
     currency: string;
+    trial_period_days?: number;
     metadata: {
         app_role: string;
         credits: string;
