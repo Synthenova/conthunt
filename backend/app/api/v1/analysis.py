@@ -120,11 +120,13 @@ async def _execute_gemini_analysis(
             invoke_llm = llm
         
         # 2. Invoke LLM (plain text output - markdown)
-        logger.info(f"[ANALYSIS] Invoking Gemini LLM (markdown output)...")
+        timeout_s = float(getattr(settings, "GEMINI_ANALYSIS_TIMEOUT_S", 420.0))
+        logger.info(f"[ANALYSIS] Invoking Gemini LLM (markdown output, timeout=%ss)...", timeout_s)
         invoke_start = time.time()
 
         with set_llm_context(user_id=user_id, route="analysis.video"):
-            response = await invoke_llm.ainvoke([message],)
+            async with asyncio.timeout(timeout_s):
+                response = await invoke_llm.ainvoke([message],)
         
         analysis_markdown = response.content
         invoke_duration = time.time() - invoke_start
@@ -164,6 +166,25 @@ async def _execute_gemini_analysis(
         logger.info(f"[ANALYSIS] ✅ Completed analysis for media_asset {media_asset_id} in {total_duration:.2f}s total")
         return {"analysis": analysis_markdown}
     
+    except asyncio.TimeoutError as e:
+        timeout_s = float(getattr(settings, "GEMINI_ANALYSIS_TIMEOUT_S", 420.0))
+        timeout_error = TimeoutError(f"Gemini analysis timed out after {timeout_s:.0f}s")
+        logger.error(
+            f"[ANALYSIS] ❌ Timed out analysis for media_asset {media_asset_id} (URL: {video_uri}): {timeout_error}"
+        )
+        try:
+            if persist:
+                async with get_db_connection() as conn:
+                    await update_analysis_status(
+                        conn,
+                        analysis_id=analysis_id,
+                        status="failed",
+                        error=f"{timeout_error} (URL: {video_uri})",
+                    )
+                    await conn.commit()
+        except Exception as db_err:
+            logger.error(f"[ANALYSIS] Failed to update status to failed after timeout: {db_err}")
+        raise timeout_error from e
     except Exception as e:
         # Mark as failed so insights don't get stuck waiting
         logger.error(f"[ANALYSIS] ❌ Failed analysis for media_asset {media_asset_id} (URL: {video_uri}): {e}")

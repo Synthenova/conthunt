@@ -247,7 +247,8 @@ async def update_analysis_status_processing_batch(
         text(
             """
             UPDATE video_analyses
-            SET status = 'processing'
+            SET status = 'processing',
+                error = NULL
             WHERE id = ANY(:analysis_ids)
             """
         ),

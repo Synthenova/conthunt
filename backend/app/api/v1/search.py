@@ -9,10 +9,10 @@ import traceback
 
 import httpx
 import json
-import redis.asyncio as redis
 from sqlalchemy import text
 from sse_starlette.sse import EventSourceResponse
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from upstash_redis.asyncio import Redis
 
 from app.auth import get_current_user
 from app.core import get_settings, logger
@@ -37,7 +37,7 @@ from app.services.telemetry_payloads import (
 )
 from app.services.cdn_signer import bulk_sign_gcs_uris, should_sign_asset
 from app.services.streak_tracker import record_streak_activity_once_per_day
-from app.realtime.stream_hub import stream_id_gt
+from app.realtime.stream_ids import stream_id_gt
 
 router = APIRouter()
 
@@ -45,6 +45,16 @@ def _is_terminal_payload(payload_str: str | None) -> bool:
     if not payload_str:
         return False
     return ('"type": "done"' in payload_str) or ('"type": "error"' in payload_str)
+
+
+def _stream_field(data_map, field: str) -> str | None:
+    if isinstance(data_map, dict):
+        return data_map.get(field)
+    if isinstance(data_map, list):
+        for i in range(0, len(data_map) - 1, 2):
+            if data_map[i] == field:
+                return data_map[i + 1]
+    return None
 
 
 @trace_span("search.call_platform")
@@ -158,7 +168,7 @@ async def search_worker(
     user_uuid: UUID,
     query: str,
     inputs: dict,
-    redis_client: redis.Redis,
+    redis_client: Redis,
     dispatched_at: float | None = None,
 ):
     """
@@ -197,13 +207,14 @@ async def search_worker(
         # Push start event
         await r.xadd(
             stream_key,
+            "*",
             {"data": json.dumps({
                 "type": "start",
                 "platforms": [normalize_platform_slug(slug) for slug in inputs.keys()],
                 "search_id": str(search_id),
             })},
             maxlen=stream_maxlen,
-            approximate=True,
+            approximate_trim=True,
         )
         
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
@@ -233,9 +244,10 @@ async def search_worker(
                 event_data = transform_result_to_stream_item(result)
                 await r.xadd(
                     stream_key,
+                    "*",
                     {"data": json.dumps(event_data, default=str)},
                     maxlen=stream_maxlen,
-                    approximate=True,
+                    approximate_trim=True,
                 )
 
         # ========== DB WORK (happens after frontend is done) ==========
@@ -370,9 +382,10 @@ async def search_worker(
         # Push done event - frontend stops loading here
         await r.xadd(
             stream_key,
+            "*",
             {"data": json.dumps({"type": "done"})},
             maxlen=stream_maxlen,
-            approximate=True,
+            approximate_trim=True,
         )
         await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
 
@@ -445,9 +458,10 @@ async def search_worker(
         try:
             await r.xadd(
                 stream_key,
+                "*",
                 {"data": json.dumps({"type": "error", "error": str(e)})},
                 maxlen=stream_maxlen,
-                approximate=True,
+                approximate_trim=True,
             )
             await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
             
@@ -477,7 +491,7 @@ async def load_more_worker(
     user_uuid: UUID,
     query: str,
     platform_cursors: dict,
-    redis_client: redis.Redis,
+    redis_client: Redis,
 ):
     """
     Background worker for "load more" pagination.
@@ -504,13 +518,14 @@ async def load_more_worker(
         # Push start event
         await r.xadd(
             stream_key,
+            "*",
             {"data": json.dumps({
                 "type": "start",
                 "platforms": [normalize_platform_slug(slug) for slug in platform_cursors.keys()],
                 "search_id": str(search_id),
             })},
             maxlen=stream_maxlen,
-            approximate=True,
+            approximate_trim=True,
         )
         
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
@@ -540,9 +555,10 @@ async def load_more_worker(
                 event_data = transform_result_to_stream_item(result)
                 await r.xadd(
                     stream_key,
+                    "*",
                     {"data": json.dumps(event_data, default=str)},
                     maxlen=stream_maxlen,
-                    approximate=True,
+                    approximate_trim=True,
                 )
 
         # ========== DB WORK ==========
@@ -670,9 +686,10 @@ async def load_more_worker(
         # ========== FINISH STREAMING ==========
         await r.xadd(
             stream_key,
+            "*",
             {"data": json.dumps({"type": "done"})},
             maxlen=stream_maxlen,
-            approximate=True,
+            approximate_trim=True,
         )
         await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
         
@@ -713,9 +730,10 @@ async def load_more_worker(
         try:
             await r.xadd(
                 stream_key,
+                "*",
                 {"data": json.dumps({"type": "error", "error": str(e)})},
                 maxlen=stream_maxlen,
-                approximate=True,
+                approximate_trim=True,
             )
             await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_SEARCH)
         except Exception:
@@ -830,7 +848,7 @@ async def stream_search(
     request: Request,
     user: dict = Depends(get_current_user),
     last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-    redis_client: redis.Redis = Depends(get_redis),
+    redis_client: Redis = Depends(get_redis),
 ):
     """
     SSE endpoint to stream search results from Redis.
@@ -884,21 +902,19 @@ async def stream_search(
     # Status is 'running' - stream from Redis
     stream_key = f"search:{search_id}:stream"
     
-    hub = getattr(request.app.state, "stream_hub", None)
-
     async def event_generator():
         async def catch_up_from_redis(last_id: str):
             nonlocal last_sent_id
             cur = last_id or "0-0"
             while True:
-                streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
+                streams = await redis_client.xread({stream_key: cur}, count=200)
                 if not streams:
                     return
                 _, messages = streams[0]
                 if not messages:
                     return
                 for msg_id, data_map in messages:
-                    payload_str = data_map.get("data")
+                    payload_str = _stream_field(data_map, "data")
                     cur = msg_id
                     last_sent_id = msg_id
                     if payload_str is None:
@@ -914,40 +930,6 @@ async def stream_search(
                 if len(messages) < 200:
                     return
 
-        if hub is None:
-            logger.warning(
-                "Stream hub missing; SSE will use per-connection Redis XREAD. search_id=%s",
-                search_id,
-            )
-            last_id = last_event_id or "0-0"
-            try:
-                while True:
-                    if await request.is_disconnected():
-                        return
-                    streams = await redis_client.xread(
-                        {stream_key: last_id},
-                        count=50,
-                        block=10000,
-                    )
-                    if not streams:
-                        yield {"event": "ping", "data": ""}
-                        continue
-                    for _, messages in streams:
-                        for msg_id, data_map in messages:
-                            last_id = msg_id
-                            payload_str = data_map.get("data")
-                            yield {
-                                "id": msg_id,
-                                "event": "message",
-                                "data": payload_str,
-                            }
-                            if _is_terminal_payload(payload_str):
-                                return
-            except asyncio.CancelledError:
-                pass
-            return
-
-        queue = await hub.subscribe(stream_key)
         last_sent_id = last_event_id or "0-0"
         try:
             async for ev in catch_up_from_redis(last_sent_id):
@@ -956,31 +938,29 @@ async def stream_search(
                     return
 
             while True:
-                try:
-                    msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
-                except asyncio.TimeoutError:
-                    yield {"event": "ping", "data": ""}
-                    async for ev in catch_up_from_redis(last_sent_id):
-                        yield ev
-                        if _is_terminal_payload(ev.get("data")):
-                            return
-                    continue
-                if not payload_str:
-                    continue
-                if not stream_id_gt(msg_id, last_sent_id):
-                    continue
-                last_sent_id = msg_id
-                yield {
-                    "id": msg_id,
-                    "event": "message",
-                    "data": payload_str,
-                }
-                if _is_terminal_payload(payload_str):
+                if await request.is_disconnected():
                     return
+                emitted = False
+                streams = await redis_client.xread({stream_key: last_sent_id}, count=50)
+                for _, messages in streams or []:
+                    for msg_id, data_map in messages:
+                        payload_str = _stream_field(data_map, "data")
+                        if not payload_str or not stream_id_gt(msg_id, last_sent_id):
+                            continue
+                        emitted = True
+                        last_sent_id = msg_id
+                        yield {
+                            "id": msg_id,
+                            "event": "message",
+                            "data": payload_str,
+                        }
+                        if _is_terminal_payload(payload_str):
+                            return
+                if not emitted:
+                    yield {"event": "ping", "data": ""}
+                    await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass
-        finally:
-            await hub.unsubscribe(stream_key, queue)
     
     headers = {
         "Cache-Control": "no-cache, no-transform",
@@ -1093,7 +1073,7 @@ async def stream_load_more(
     request: Request,
     user: dict = Depends(get_current_user),
     last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-    redis_client: redis.Redis = Depends(get_redis),
+    redis_client: Redis = Depends(get_redis),
 ):
     """
     SSE endpoint to stream load_more results from Redis.
@@ -1113,21 +1093,19 @@ async def stream_load_more(
     
     # Stream from Redis
     stream_key = f"search:{search_id}:more:stream"
-    hub = getattr(request.app.state, "stream_hub", None)
-    
     async def event_generator():
         async def catch_up_from_redis(last_id: str):
             nonlocal last_sent_id
             cur = last_id or "0-0"
             while True:
-                streams = await redis_client.xread({stream_key: cur}, count=200, block=0)
+                streams = await redis_client.xread({stream_key: cur}, count=200)
                 if not streams:
                     return
                 _, messages = streams[0]
                 if not messages:
                     return
                 for msg_id, data_map in messages:
-                    payload_str = data_map.get("data")
+                    payload_str = _stream_field(data_map, "data")
                     cur = msg_id
                     last_sent_id = msg_id
                     if payload_str is None:
@@ -1143,37 +1121,6 @@ async def stream_load_more(
                 if len(messages) < 200:
                     return
 
-        if hub is None:
-            last_id = last_event_id or "0-0"
-            try:
-                while True:
-                    if await request.is_disconnected():
-                        return
-                    streams = await redis_client.xread(
-                        {stream_key: last_id},
-                        count=50,
-                        block=10000,
-                    )
-                    if not streams:
-                        yield {"event": "ping", "data": ""}
-                        continue
-                    for _, messages in streams:
-                        for msg_id, data_map in messages:
-                            last_id = msg_id
-                            payload_str = data_map.get("data")
-                            yield {
-                                "id": msg_id,
-                                "event": "message",
-                                "data": payload_str,
-                            }
-                            await asyncio.sleep(0)
-                            if _is_terminal_payload(payload_str):
-                                return
-            except asyncio.CancelledError:
-                pass
-            return
-
-        queue = await hub.subscribe(stream_key)
         last_sent_id = last_event_id or "0-0"
         try:
             async for ev in catch_up_from_redis(last_sent_id):
@@ -1182,32 +1129,30 @@ async def stream_load_more(
                     return
 
             while True:
-                try:
-                    msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
-                except asyncio.TimeoutError:
-                    yield {"event": "ping", "data": ""}
-                    async for ev in catch_up_from_redis(last_sent_id):
-                        yield ev
-                        if _is_terminal_payload(ev.get("data")):
-                            return
-                    continue
-                if not payload_str:
-                    continue
-                if not stream_id_gt(msg_id, last_sent_id):
-                    continue
-                last_sent_id = msg_id
-                yield {
-                    "id": msg_id,
-                    "event": "message",
-                    "data": payload_str,
-                }
-                await asyncio.sleep(0)
-                if _is_terminal_payload(payload_str):
+                if await request.is_disconnected():
                     return
+                emitted = False
+                streams = await redis_client.xread({stream_key: last_sent_id}, count=50)
+                for _, messages in streams or []:
+                    for msg_id, data_map in messages:
+                        payload_str = _stream_field(data_map, "data")
+                        if not payload_str or not stream_id_gt(msg_id, last_sent_id):
+                            continue
+                        emitted = True
+                        last_sent_id = msg_id
+                        yield {
+                            "id": msg_id,
+                            "event": "message",
+                            "data": payload_str,
+                        }
+                        await asyncio.sleep(0)
+                        if _is_terminal_payload(payload_str):
+                            return
+                if not emitted:
+                    yield {"event": "ping", "data": ""}
+                    await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass
-        finally:
-            await hub.unsubscribe(stream_key, queue)
     
     headers = {
         "Cache-Control": "no-cache, no-transform",

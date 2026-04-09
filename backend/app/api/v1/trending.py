@@ -3,11 +3,11 @@ import json
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Optional, List, Literal
+from upstash_redis.asyncio import Redis
 
 from app.core import get_settings, logger
 from app.core.redis_client import get_app_redis
 from app.auth import get_current_user
-import redis.asyncio as redis
 
 from app.agent.model_factory import init_chat_model
 from app.integrations.posthog_client import capture_event_with_error
@@ -27,7 +27,7 @@ def _is_http_429(exc: Exception) -> bool:
     return False
 
 
-async def get_redis_client(request: Request) -> redis.Redis:
+async def get_redis_client(request: Request) -> Redis:
     """Helper to get redis client from app state or create new one."""
     return get_app_redis(request)
 

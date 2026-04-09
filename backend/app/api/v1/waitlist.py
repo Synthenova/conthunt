@@ -2,13 +2,21 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
+from upstash_ratelimit.asyncio import Ratelimit
+from upstash_ratelimit.limiter import SlidingWindow
 
 from app.core import logger
+from app.core.redis_client import get_global_redis
 from app.db.session import get_db_connection
 
 router = APIRouter()
 
 MAX_REQUESTS_PER_MINUTE = 5
+waitlist_ratelimit = Ratelimit(
+    redis=get_global_redis(),
+    limiter=SlidingWindow(max_requests=MAX_REQUESTS_PER_MINUTE, window=60, unit="s"),
+    prefix="rl:waitlist",
+)
 
 
 class WaitlistRequest(BaseModel):
@@ -30,33 +38,13 @@ async def join_waitlist(payload: WaitlistRequest, request: Request) -> WaitlistR
     user_agent = request.headers.get("user-agent")
     email = payload.email.lower()
 
+    if ip_address:
+        response = await waitlist_ratelimit.limit(ip_address)
+        if not response.allowed:
+            logger.warning("Waitlist rate limit hit for ip=%s", ip_address)
+            raise HTTPException(status_code=429, detail="Too many requests")
+
     async with get_db_connection() as conn:
-        if ip_address:
-            rate_limit = await conn.execute(
-                text(
-                    """
-                    SELECT COUNT(*)
-                    FROM waitlist_requests
-                    WHERE ip_address = :ip
-                      AND created_at > now() - interval '1 minute'
-                    """
-                ),
-                {"ip": ip_address},
-            )
-            if rate_limit.scalar_one() >= MAX_REQUESTS_PER_MINUTE:
-                logger.warning("Waitlist rate limit hit for ip=%s", ip_address)
-                raise HTTPException(status_code=429, detail="Too many requests")
-
-        await conn.execute(
-            text(
-                """
-                INSERT INTO waitlist_requests (ip_address)
-                VALUES (:ip)
-                """
-            ),
-            {"ip": ip_address},
-        )
-
         result = await conn.execute(
             text(
                 """

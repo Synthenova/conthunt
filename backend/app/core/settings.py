@@ -16,16 +16,6 @@ class Settings(BaseSettings):
     # If true, disable SQLAlchemy pooling and rely on PgBouncer for pooling/multiplexing.
     # This avoids app-side QueuePool timeouts under high concurrency (e.g., deep research fanout).
     DB_USE_NULLPOOL: bool = True
-    # Global DB backpressure (Redis ZSET + Lua). Fail-open by design if Redis is down.
-    DB_SEMAPHORE_ENABLED: bool = False
-    DB_SEM_KEY_PREFIX: str = "sem:db"
-    DB_SEM_TTL_MS: int = 10_000
-    DB_SEM_API_LIMIT: int = 7
-    DB_SEM_TASKS_LIMIT: int = 13
-    # Wait budgets for acquiring a DB slot. Keep these large enough to queue under burst
-    # instead of failing fast with 429/503.
-    DB_SEM_API_MAX_WAIT_MS: int = 5_000
-    DB_SEM_TASKS_MAX_WAIT_MS: int = 20_000
     # Cloud Run can scale horizontally; keep per-instance pools small to avoid exceeding
     # Cloud SQL connection caps when max instances are active.
     DB_POOL_SIZE: int = 5
@@ -100,24 +90,15 @@ class Settings(BaseSettings):
     TWELVELABS_INDEX_ID: str = "" # Static Index ID
     TWELVELABS_UPLOAD_TIMEOUT: int = 120  # seconds
     TWELVELABS_INDEX_TIMEOUT: int = 180  # seconds
+    GEMINI_ANALYSIS_TIMEOUT_S: float = 420.0
 
 
     # Frontend Return URL
     FRONTEND_RETURN_URL: str = "http://localhost:3000/app/billing/return"
 
-    # Redis
-    REDIS_URL: str = "redis://localhost:6379"
-    REDIS_MAX_CONNECTIONS: int = 40  # legacy/shared cap; prefer per-role caps below
-    # Per-role Redis pool budgets
-    REDIS_MAIN_MAX_CONNECTIONS: int = 24
-    REDIS_STREAM_MAX_CONNECTIONS: int = 10
-    REDIS_LIMITER_MAX_CONNECTIONS: int = 6
-    REDIS_MAIN_POOL_TIMEOUT_S: float = 20.0
-    REDIS_STREAM_POOL_TIMEOUT_S: float = 20.0
-    REDIS_LIMITER_POOL_TIMEOUT_S: float = 15.0
-    # Capacity guardrail logs
-    REDIS_MAX_CLIENTS_BUDGET: int = 250
-    APP_MAX_INSTANCES: int = 5
+    # Upstash Redis (HTTP)
+    UPSTASH_REDIS_REST_URL: str = ""
+    UPSTASH_REDIS_REST_TOKEN: str = ""
 
     # Redis Streams (SSE replay buffer)
     # These are for "live-ish" updates only; DB remains the durable source of truth.

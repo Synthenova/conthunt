@@ -11,24 +11,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 # from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 
-import redis.asyncio as redis
+from upstash_redis.asyncio import Redis
 
 from app.core import get_settings, logger
 from app.core.logging import setup_logging, get_log_level
 from app.core.telemetry import setup_telemetry
 from app.db import init_db, close_db
-from app.realtime.stream_hub import StreamFanoutHub
 from app.api import v1_router
 from app.api.v1.webhooks import router as dodo_webhooks_router
 from app.middleware.telemetry_context import TelemetryContextMiddleware
 from app.agent.runtime import create_agent_graph
 from app.integrations.langfuse_client import flush_langfuse
-from app.db.db_semaphore import (
-    DBSemaphore,
-    SemaphoreConfig,
-    db_kind_override,
-    set_global_db_semaphore,
-)
 from app.llm.global_rate_limiter import LlmRateLimited
 
 
@@ -52,95 +45,8 @@ async def lifespan(app: FastAPI):
     try:
         await init_db()
         logger.debug("Database connection verified")
-        
-        # Use BlockingConnectionPool to wait for connections instead of failing
-        from redis.asyncio.connection import BlockingConnectionPool
-        redis_pool = BlockingConnectionPool.from_url(
-            settings.REDIS_URL,
-            max_connections=settings.REDIS_MAIN_MAX_CONNECTIONS,
-            timeout=settings.REDIS_MAIN_POOL_TIMEOUT_S,  # Wait for a free connection
-            decode_responses=True,
-            # Managed Redis/proxies can silently close idle sockets; health checks prevent
-            # handing out dead connections from the pool.
-            health_check_interval=30,
-            socket_keepalive=True,
-            client_name="conthunt-main",
-        )
-        app.state.redis = redis.Redis(connection_pool=redis_pool)
-        max_conn = getattr(app.state.redis.connection_pool, "max_connections", None)
-        logger.info("Redis main client initialized (max_connections=%s)", max_conn)
-
-        # Initialize global DB semaphore (fail-open if anything goes wrong).
-        if getattr(settings, "DB_SEMAPHORE_ENABLED", False):
-            try:
-                cfg = SemaphoreConfig(
-                    app_env=settings.APP_ENV,
-                    key_prefix=settings.DB_SEM_KEY_PREFIX,
-                    ttl_ms=settings.DB_SEM_TTL_MS,
-                    api_limit=settings.DB_SEM_API_LIMIT,
-                    tasks_limit=settings.DB_SEM_TASKS_LIMIT,
-                )
-                sem = DBSemaphore(app.state.redis, cfg)
-                await sem.init()
-                app.state.db_semaphore = sem
-                set_global_db_semaphore(sem)
-                logger.info(
-                    "DB semaphore enabled (env=%s api_limit=%s tasks_limit=%s ttl_ms=%s)",
-                    settings.APP_ENV,
-                    settings.DB_SEM_API_LIMIT,
-                    settings.DB_SEM_TASKS_LIMIT,
-                    settings.DB_SEM_TTL_MS,
-                )
-            except Exception as exc:
-                logger.warning("DB semaphore init failed (fail-open): %s", exc, exc_info=True)
-                app.state.db_semaphore = None
-                set_global_db_semaphore(None)
-        else:
-            app.state.db_semaphore = None
-            set_global_db_semaphore(None)
-
-        # StreamFanoutHub uses a BLOCKING xread (up to 10s per call) which holds
-        # a Redis connection for the entire block duration.  Give it a dedicated
-        # small pool so it can never starve the main pool used by the DB
-        # semaphore and other short-lived commands.
-        stream_pool = BlockingConnectionPool.from_url(
-            settings.REDIS_URL,
-            max_connections=settings.REDIS_STREAM_MAX_CONNECTIONS,
-            timeout=settings.REDIS_STREAM_POOL_TIMEOUT_S,
-            decode_responses=True,
-            health_check_interval=30,
-            socket_keepalive=True,
-            client_name="conthunt-stream",
-        )
-        app.state.stream_redis = redis.Redis(connection_pool=stream_pool)
-
-        # Startup guardrail: projected client usage across instances.
-        per_instance_budget = (
-            int(settings.REDIS_MAIN_MAX_CONNECTIONS)
-            + int(settings.REDIS_STREAM_MAX_CONNECTIONS)
-            + int(settings.REDIS_LIMITER_MAX_CONNECTIONS)
-            + 1  # small overhead for ad-hoc/background control paths
-        )
-        projected_total = per_instance_budget * int(settings.APP_MAX_INSTANCES)
-        budget = max(1, int(settings.REDIS_MAX_CLIENTS_BUDGET))
-        usage_ratio = projected_total / budget
-        logger.info(
-            "Redis budget: per_instance=%s projected_total=%s (instances=%s) budget=%s ratio=%.2f",
-            per_instance_budget,
-            projected_total,
-            settings.APP_MAX_INSTANCES,
-            budget,
-            usage_ratio,
-        )
-        if usage_ratio >= 0.8:
-            logger.warning(
-                "Redis projected client usage is high (%.0f%% of budget). Consider lowering pool caps or increasing Redis max clients.",
-                usage_ratio * 100.0,
-            )
-
-        app.state.stream_hub = StreamFanoutHub(app.state.stream_redis, logger)
-        await app.state.stream_hub.start()
-        logger.debug("Stream hub initialized")
+        app.state.redis = Redis.from_env(read_your_writes=True)
+        logger.info("Upstash Redis client initialized")
 
         # Centralized writer/outbox removed.
         
@@ -157,15 +63,9 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.debug("Shutting down Conthunt backend...")
-    if hasattr(app.state, "stream_hub"):
-        await app.state.stream_hub.stop()
-        logger.debug("Stream hub stopped")
     if hasattr(app.state, "redis"):
         await app.state.redis.close()
         logger.debug("Redis client closed")
-    if hasattr(app.state, "stream_redis"):
-        await app.state.stream_redis.close()
-        logger.debug("Stream Redis client closed")
     if hasattr(app.state, '_agent_saver_cm'):
         await app.state._agent_saver_cm.__aexit__(None, None, None)
         logger.debug("Agent checkpointer closed")
@@ -213,13 +113,6 @@ async def _llm_rate_limited_handler(request, exc: LlmRateLimited):
             "route": exc.route,
         },
     )
-
-# Middleware: mark DB work as "tasks" for /v1/tasks/*, else "api".
-@app.middleware("http")
-async def _db_kind_middleware(request, call_next):
-    kind = "tasks" if request.url.path.startswith("/v1/tasks/") else "api"
-    with db_kind_override(kind):
-        return await call_next(request)
 
 # Honor X-Forwarded-* headers from Cloud Run so redirects keep HTTPS.
 # app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")

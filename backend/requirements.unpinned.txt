@@ -138,7 +138,8 @@ python-dateutil
 python-dotenv
 python-multipart
 PyYAML
-redis
+upstash-ratelimit
+upstash-redis
 regex
 requests
 requests-toolbelt
@@ -155,7 +156,6 @@ standardwebhooks
 starlette
 structlog
 tenacity
-throttled-py
 tiktoken
 tqdm
 truststore

@@ -13,9 +13,8 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, UploadFile, File
 from sse_starlette.sse import EventSourceResponse
-import redis.asyncio as redis
-from redis.exceptions import ConnectionError as RedisConnectionError
 from pydantic import BaseModel
+from upstash_redis.asyncio import Redis
 try:
     from psycopg.errors import OperationalError
 except Exception:  # pragma: no cover - fallback if psycopg isn't available
@@ -62,7 +61,7 @@ from app.schemas.chats import (
     RenameChatRequest,
     ChatTag,
 )
-from app.realtime.stream_hub import stream_id_gt
+from app.realtime.stream_ids import stream_id_gt
 
 router = APIRouter()
 settings = get_settings()
@@ -72,6 +71,16 @@ def _is_terminal_payload(payload_str: str | None) -> bool:
         return False
     # Chat stream producers send {"type":"done"} and {"type":"error", ...}
     return ('"type": "done"' in payload_str) or ('"type": "error"' in payload_str)
+
+
+def _stream_field(data_map, field: str) -> str | None:
+    if isinstance(data_map, dict):
+        return data_map.get(field)
+    if isinstance(data_map, list):
+        for i in range(0, len(data_map) - 1, 2):
+            if data_map[i] == field:
+                return data_map[i + 1]
+    return None
 
 def _jsonable(obj):
     """
@@ -256,7 +265,7 @@ async def stream_generator_to_redis(
     chat_id: str,
     thread_id: str,
     inputs: dict,
-    redis_client: redis.Redis,
+    redis_client: Redis,
     context: dict | None = None,
     model_name: str | None = None,
     image_urls: list[str] | None = None,
@@ -300,11 +309,10 @@ async def stream_generator_to_redis(
         nonlocal xadd_retry_count
         data = {"data": json.dumps(payload, default=str)}
         try:
-            await r.xadd(stream_key, data, maxlen=stream_maxlen, approximate=True)
-        except RedisConnectionError:
-            # Retry once without tearing down the whole pool.
+            await r.xadd(stream_key, "*", data, maxlen=stream_maxlen, approximate_trim=True)
+        except Exception:
             xadd_retry_count += 1
-            await r.xadd(stream_key, data, maxlen=stream_maxlen, approximate=True)
+            await r.xadd(stream_key, "*", data, maxlen=stream_maxlen, approximate_trim=True)
 
     async def _heartbeat_loop() -> None:
         interval_s = max(1.0, float(getattr(settings, "CHAT_STREAM_WRITER_HEARTBEAT_S", 10.0)))
@@ -660,11 +668,8 @@ async def stream_generator_to_redis(
 
             try:
                 await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
-            except RedisConnectionError:
-                try:
-                    await r.expire(stream_key, settings.REDIS_STREAM_TTL_S_CHAT)
-                except Exception:
-                    pass
+            except Exception:
+                pass
             logger.info(f"Background stream finished for {chat_id}")
 
 
@@ -946,7 +951,7 @@ async def delete_chat_tag(
 async def send_message(
     chat_id: uuid.UUID,
     req_obj: Request,
-    redis_client: redis.Redis = Depends(get_redis),
+    redis_client: Redis = Depends(get_redis),
     user: dict = Depends(get_current_user),
 ):
     """Send a message (triggers background stream)."""
@@ -1111,7 +1116,7 @@ async def stream_chat(
     request: Request,
     user: dict = Depends(get_current_user),
     last_event_id: Optional[str] = Header(None, alias="Last-Event-ID"),
-    redis_client: redis.Redis = Depends(get_redis),
+    redis_client: Redis = Depends(get_redis),
 ):
     """SSE endpoint for chat updates."""
     user_uuid = user["db_user_id"]
@@ -1127,21 +1132,19 @@ async def stream_chat(
 
     stream_key = f"chat:{str(chat_id)}:stream"
 
-    hub = getattr(request.app.state, "stream_hub", None)
-
     async def event_generator():
         xread_retry_count = 0
 
-        async def _safe_xread(streams: dict[str, str], *, count: int, block: int):
+        async def _safe_xread(streams: dict[str, str], *, count: int):
             nonlocal xread_retry_count
             try:
-                return await redis_client.xread(streams, count=count, block=block)
-            except RedisConnectionError as exc:
+                return await redis_client.xread(streams, count=count)
+            except Exception as exc:
                 logger.warning("Redis xread failed for chat stream %s: %s", chat_id, exc)
                 xread_retry_count += 1
                 try:
-                    return await redis_client.xread(streams, count=count, block=block)
-                except RedisConnectionError as retry_exc:
+                    return await redis_client.xread(streams, count=count)
+                except Exception as retry_exc:
                     logger.warning("Redis xread retry failed for chat stream %s: %s", chat_id, retry_exc)
                     return []
 
@@ -1154,14 +1157,14 @@ async def stream_chat(
             cur = last_id or "0-0"
             # Drain until the stream has no more entries after cur.
             while True:
-                streams = await _safe_xread({stream_key: cur}, count=200, block=0)
+                streams = await _safe_xread({stream_key: cur}, count=200)
                 if not streams:
                     return
                 _, messages = streams[0]
                 if not messages:
                     return
                 for msg_id, data_map in messages:
-                    payload_str = data_map.get("data")
+                    payload_str = _stream_field(data_map, "data")
                     if payload_str is None:
                         cur = msg_id
                         last_sent_id = msg_id
@@ -1180,44 +1183,6 @@ async def stream_chat(
                 if len(messages) < 200:
                     return
 
-        if hub is None:
-            logger.warning(
-                "Stream hub missing; SSE will use per-connection Redis XREAD. chat_id=%s",
-                chat_id,
-            )
-            last_id = last_event_id or "0-0"
-            try:
-                while True:
-                    if await request.is_disconnected():
-                        return
-                    streams = await _safe_xread(
-                        {stream_key: last_id},
-                        count=50,
-                        block=10000,
-                    )
-                    if not streams:
-                        yield {"event": "ping", "data": ""}
-                        continue
-                    for _, messages in streams:
-                        for msg_id, data_map in messages:
-                            last_id = msg_id
-                            payload_str = data_map.get("data")
-                            yield {
-                                "id": msg_id,
-                                "event": "message",
-                                "data": payload_str,
-                            }
-                            # Give the event loop a chance to flush each SSE event.
-                            # Without this, fast producers (or history replay) can be coalesced
-                            # into a single write, making events appear to arrive "all at once".
-                            await asyncio.sleep(0)
-                            if _is_terminal_payload(payload_str):
-                                return
-            except asyncio.CancelledError:
-                pass
-            return
-
-        queue = await hub.subscribe(stream_key)
         last_sent_id = last_event_id or "0-0"
         try:
             # Catch up first (bounded) based on Last-Event-ID.
@@ -1227,33 +1192,31 @@ async def stream_chat(
                     return
 
             while True:
-                try:
-                    msg_id, payload_str = await asyncio.wait_for(queue.get(), timeout=10)
-                except asyncio.TimeoutError:
-                    yield {"event": "ping", "data": ""}
-                    # Best-effort: also catch up from Redis on idle ticks (helps reconnect/replay).
-                    async for ev in catch_up_from_redis(last_sent_id):
-                        yield ev
-                        if _is_terminal_payload(ev.get("data")):
-                            return
-                    continue
-                if not payload_str:
-                    continue
-                if not stream_id_gt(msg_id, last_sent_id):
-                    continue
-                last_sent_id = msg_id
-                yield {
-                    "id": msg_id,
-                    "event": "message",
-                    "data": payload_str,
-                }
-                await asyncio.sleep(0)
-                if _is_terminal_payload(payload_str):
+                if await request.is_disconnected():
                     return
+                emitted = False
+                streams = await _safe_xread({stream_key: last_sent_id}, count=50)
+                for _, messages in streams or []:
+                    for msg_id, data_map in messages:
+                        payload_str = _stream_field(data_map, "data")
+                        if not payload_str or not stream_id_gt(msg_id, last_sent_id):
+                            continue
+                        emitted = True
+                        last_sent_id = msg_id
+                        yield {
+                            "id": msg_id,
+                            "event": "message",
+                            "data": payload_str,
+                        }
+                        await asyncio.sleep(0)
+                        if _is_terminal_payload(payload_str):
+                            return
+                if not emitted:
+                    yield {"event": "ping", "data": ""}
+                    await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass
         finally:
-            await hub.unsubscribe(stream_key, queue)
             if xread_retry_count:
                 logger.info("chat stream %s xread_retries=%s", chat_id, xread_retry_count)
 

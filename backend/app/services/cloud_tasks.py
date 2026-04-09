@@ -2,6 +2,7 @@
 import asyncio
 import json
 import time
+from uuid import UUID
 from google.cloud import tasks_v2
 from google.protobuf import duration_pb2
 from google.protobuf import timestamp_pb2
@@ -9,7 +10,6 @@ from google.protobuf import timestamp_pb2
 from app.core import get_settings, logger
 from app.core.telemetry import trace_span
 from app.db.session import get_db_connection
-from app.db.db_semaphore import db_kind_override
 
 
 class CloudTasksService:
@@ -57,12 +57,27 @@ class CloudTasksService:
                 local_media_sem = self._get_local_media_download_semaphore(queue_name)
 
             async def _run_single(local_payload):
-                with db_kind_override("tasks"):
+                try:
                     if local_media_sem is not None:
                         async with local_media_sem:
                             await self._run_local_task(relative_uri, local_payload)
                     else:
                         await self._run_local_task(relative_uri, local_payload)
+                except asyncio.CancelledError:
+                    logger.error("[LOCAL] Task %s was cancelled before completion", relative_uri)
+                    if relative_uri == "/v1/tasks/gemini/analyze":
+                        await self._mark_gemini_payloads_failed(
+                            local_payload,
+                            "Local analysis task was cancelled before completion",
+                        )
+                    raise
+                except Exception as exc:
+                    logger.error("[LOCAL] Task %s crashed: %s", relative_uri, exc, exc_info=True)
+                    if relative_uri == "/v1/tasks/gemini/analyze":
+                        await self._mark_gemini_payloads_failed(
+                            local_payload,
+                            f"Local analysis task crashed: {exc}",
+                        )
 
             # Local-only queue control for media downloads:
             # - normal queue: 1 concurrent item
@@ -115,8 +130,6 @@ class CloudTasksService:
         Execute task logic locally (mirroring app/api/v1/tasks.py).
         All tasks have proper error handling to mark DB status as failed.
         """
-        from uuid import UUID
-        
         if payload is None:
             payload = {}
 
@@ -325,9 +338,10 @@ class CloudTasksService:
                     settings = get_settings()
                     await redis_client.xadd(
                         f"chat:{str(chat_id)}:stream",
+                        "*",
                         {"data": json.dumps({"type": "error", "error": str(e)})},
                         maxlen=settings.REDIS_STREAM_MAXLEN_CHAT,
-                        approximate=True,
+                        approximate_trim=True,
                     )
                     await redis_client.expire(
                         f"chat:{str(chat_id)}:stream",
@@ -338,6 +352,28 @@ class CloudTasksService:
                 
         else:
             logger.warning(f"[LOCAL] Unknown task URI: {uri}")
+
+    async def _mark_gemini_payloads_failed(self, payload: dict | list[dict] | None, error: str) -> None:
+        payloads = payload if isinstance(payload, list) else [payload]
+        failed_rows: list[dict[str, str]] = []
+        for item in payloads:
+            if not isinstance(item, dict):
+                continue
+            analysis_id = item.get("analysis_id")
+            if not analysis_id:
+                continue
+            try:
+                failed_rows.append({"analysis_id": str(UUID(str(analysis_id))), "error": error[:1000]})
+            except Exception:
+                continue
+        if not failed_rows:
+            return
+
+        from app.db.queries.analysis import update_analysis_status_failed_batch
+
+        async with get_db_connection() as conn:
+            await update_analysis_status_failed_batch(conn, failed_rows)
+            await conn.commit()
 
 # Global instance
 cloud_tasks = CloudTasksService()

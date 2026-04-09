@@ -1,11 +1,8 @@
 """Database session and engine management."""
-import asyncio
-import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
@@ -17,7 +14,6 @@ from sqlalchemy import event, text
 from sqlalchemy.pool import NullPool
 
 from app.core import get_settings, logger
-from app.db.db_semaphore import db_slot, get_db_kind, get_global_db_semaphore
 
 settings = get_settings()
 
@@ -117,37 +113,6 @@ async_session_factory = async_sessionmaker(
 @asynccontextmanager
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Provide a transactional scope around a series of operations."""
-    sem = get_global_db_semaphore()
-    kind = get_db_kind()
-    max_wait_ms = settings.DB_SEM_TASKS_MAX_WAIT_MS if kind == "tasks" else settings.DB_SEM_API_MAX_WAIT_MS
-    fail_status = 503 if kind == "tasks" else 429
-
-    if settings.DB_SEMAPHORE_ENABLED and sem is not None:
-        slot_cm = db_slot(sem, kind, max_wait_ms=max_wait_ms, fail_status=fail_status)
-        try:
-            await slot_cm.__aenter__()
-        except Exception as exc:
-            # Busy is an HTTPException and should propagate.
-            if isinstance(exc, HTTPException):
-                raise
-            # Fail-open only for semaphore infrastructure errors.
-            logger.warning("DB semaphore error in get_db_session (fail-open): %s", exc, exc_info=True)
-        else:
-            try:
-                async with async_session_factory() as session:
-                    try:
-                        yield session
-                        await session.commit()
-                    except Exception:
-                        await session.rollback()
-                        raise
-                return
-            finally:
-                try:
-                    await slot_cm.__aexit__(None, None, None)
-                except Exception:
-                    pass
-
     async with async_session_factory() as session:
         try:
             yield session
@@ -160,36 +125,6 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 @asynccontextmanager
 async def get_db_connection() -> AsyncGenerator[AsyncConnection, None]:
     """Get raw async connection for RLS operations."""
-    sem = get_global_db_semaphore()
-    kind = get_db_kind()
-    max_wait_ms = settings.DB_SEM_TASKS_MAX_WAIT_MS if kind == "tasks" else settings.DB_SEM_API_MAX_WAIT_MS
-    fail_status = 503 if kind == "tasks" else 429
-
-    if settings.DB_SEMAPHORE_ENABLED and sem is not None:
-        slot_cm = db_slot(sem, kind, max_wait_ms=max_wait_ms, fail_status=fail_status)
-        try:
-            await slot_cm.__aenter__()
-        except Exception as exc:
-            if isinstance(exc, HTTPException):
-                raise
-            logger.warning("DB semaphore error in get_db_connection (fail-open): %s", exc, exc_info=True)
-        else:
-            try:
-                async with engine.connect() as conn:
-                    await conn.execute(text(f"SET search_path TO {settings.DB_SCHEMA}, public"))
-                    try:
-                        yield conn
-                        await conn.commit()
-                    except Exception:
-                        await conn.rollback()
-                        raise
-                return
-            finally:
-                try:
-                    await slot_cm.__aexit__(None, None, None)
-                except Exception:
-                    pass
-
     async with engine.connect() as conn:
         await conn.execute(text(f"SET search_path TO {settings.DB_SCHEMA}, public"))
         try:

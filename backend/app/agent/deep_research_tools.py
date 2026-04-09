@@ -153,27 +153,29 @@ async def web_search(
 
 
 async def _wait_search_done(search_id: str, headers: Dict[str, str]) -> None:
-    stream_url = f"{_get_api_base_url()}/search/{search_id}/stream"
-    async with httpx.AsyncClient(timeout=None) as client:
-        async with client.stream("GET", stream_url, headers=headers) as resp:
-            resp.raise_for_status()
-            content_type = resp.headers.get("content-type", "")
-            if "application/json" in content_type:
-                data = await resp.json()
-                if data.get("status") == "failed":
-                    raise RuntimeError(f"Search {search_id} failed.")
-                return
+    detail_url = f"{_get_api_base_url()}/searches/{search_id}"
+    deadline = asyncio.get_running_loop().time() + float(settings.DEEP_RESEARCH_ANALYSIS_POLL_TIMEOUT_S)
+    poll_interval = max(1.0, float(settings.DEEP_RESEARCH_ANALYSIS_POLL_INTERVAL_S))
 
-            async for line in resp.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                payload = line[5:].strip()
-                if not payload:
-                    continue
-                if '"type": "done"' in payload:
-                    return
-                if '"type": "error"' in payload:
-                    raise RuntimeError(f"Search {search_id} failed.")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        while True:
+            resp = await client.get(detail_url, headers=headers)
+            if resp.status_code == 404:
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise RuntimeError(f"Search {search_id} did not become visible in time.")
+                await asyncio.sleep(poll_interval)
+                continue
+
+            resp.raise_for_status()
+            data = resp.json()
+            status = data.get("status")
+            if status == "completed":
+                return
+            if status == "failed":
+                raise RuntimeError(f"Search {search_id} failed.")
+            if asyncio.get_running_loop().time() >= deadline:
+                raise RuntimeError(f"Search {search_id} did not complete in time.")
+            await asyncio.sleep(poll_interval)
 
 
 async def _fetch_search_items_summary(search_id: str, headers: Dict[str, str]) -> List[dict]:

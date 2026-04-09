@@ -6,9 +6,9 @@ from typing import Any, TypeVar
 from uuid import UUID
 
 import httpx
-import redis.asyncio as redis
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+from upstash_redis.asyncio import Redis
 
 from app.agent.runtime import create_agent_graph
 from app.api.v1.analysis import _execute_gemini_analysis
@@ -48,7 +48,7 @@ settings = get_settings()
 TPayload = TypeVar("TPayload", bound=BaseModel)
 
 
-def _get_request_redis(request: Request) -> redis.Redis:
+def _get_request_redis(request: Request) -> Redis:
     return get_app_redis(request)
 
 
@@ -201,7 +201,7 @@ async def _handle_gemini_analysis_single(payload: AnalysisTaskPayload, request: 
             await conn.commit()
 
     async with get_db_connection() as conn:
-        await update_analysis_status(conn, payload.analysis_id, status="processing")
+        await update_analysis_status_processing_batch(conn, [payload.analysis_id])
         asset = await get_media_asset_by_id(conn, payload.media_asset_id)
         await conn.commit()
 
@@ -263,158 +263,186 @@ async def _handle_gemini_analysis_batch(items: list[AnalysisTaskPayload]) -> dic
     analysis_ids = [item.analysis_id for item in task_items]
     media_asset_ids = [item.media_asset_id for item in task_items]
 
-    async with get_db_connection() as conn:
-        await update_analysis_status_processing_batch(conn, analysis_ids)
-        assets = await get_media_assets_by_ids(conn, media_asset_ids)
-        await conn.commit()
-    assets_by_id = {row["id"]: row for row in assets}
-
-    ready_jobs: list[dict[str, Any]] = []
+    success_rows: list[dict[str, Any]] = []
     failed_rows: list[dict[str, Any]] = []
     failed_events: list[dict[str, Any]] = []
+    runtime_failed_rows: list[dict[str, Any]] = []
+    retry_analysis_ids: list[UUID] = []
+    retry_payloads: list[dict[str, Any]] = []
+    finalized_ids: set[UUID] = set()
 
-    waiting_by_asset_id: dict[UUID, AnalysisTaskPayload] = {}
-    for item in task_items:
-        asset = assets_by_id.get(item.media_asset_id)
-        if not asset:
-            failed_rows.append({"analysis_id": item.analysis_id, "error": "Media asset not found"})
-            failed_events.append({"payload": item, "error": "Media asset not found"})
-            continue
-
-        source_url = asset.get("source_url", "")
-        is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
-        status = asset.get("status", "")
-
-        if is_youtube:
-            ready_jobs.append(
-                {
-                    "payload": item,
-                    "video_uri": source_url or item.video_uri,
-                }
-            )
-            continue
-
-        if status in ("stored", "downloaded"):
-            ready_jobs.append(
-                {
-                    "payload": item,
-                    "video_uri": asset.get("gcs_uri") or asset.get("video_url") or item.video_uri,
-                }
-            )
-            continue
-
-        if status == "failed":
-            failed_rows.append({"analysis_id": item.analysis_id, "error": "Video download failed"})
-            failed_events.append({"payload": item, "error": "Video download failed"})
-            continue
-
-        waiting_by_asset_id[item.media_asset_id] = item
-
-    for attempt in range(18):
-        if not waiting_by_asset_id:
-            break
+    async def _mark_unfinalized_failed(reason: str) -> None:
+        remaining_ids = [analysis_id for analysis_id in analysis_ids if analysis_id not in finalized_ids]
+        if not remaining_ids:
+            return
         async with get_db_connection() as conn:
-            polled_assets = await get_media_assets_by_ids(conn, list(waiting_by_asset_id.keys()))
+            await update_analysis_status_failed_batch(
+                conn,
+                [{"analysis_id": analysis_id, "error": reason} for analysis_id in remaining_ids],
+            )
             await conn.commit()
-        polled_by_id = {row["id"]: row for row in polled_assets}
-        done_ids: list[UUID] = []
+        finalized_ids.update(remaining_ids)
 
-        for media_asset_id, item in waiting_by_asset_id.items():
-            asset = polled_by_id.get(media_asset_id)
-            status = asset.get("status", "") if asset else ""
+    try:
+        async with get_db_connection() as conn:
+            await update_analysis_status_processing_batch(conn, analysis_ids)
+            assets = await get_media_assets_by_ids(conn, media_asset_ids)
+            await conn.commit()
+        assets_by_id = {row["id"]: row for row in assets}
+
+        ready_jobs: list[dict[str, Any]] = []
+        waiting_by_asset_id: dict[UUID, AnalysisTaskPayload] = {}
+        for item in task_items:
+            asset = assets_by_id.get(item.media_asset_id)
+            if not asset:
+                failed_rows.append({"analysis_id": item.analysis_id, "error": "Media asset not found"})
+                failed_events.append({"payload": item, "error": "Media asset not found"})
+                continue
+
+            source_url = asset.get("source_url", "")
+            is_youtube = "youtube.com" in source_url or "youtu.be" in source_url
+            status = asset.get("status", "")
+
+            if is_youtube:
+                ready_jobs.append(
+                    {
+                        "payload": item,
+                        "video_uri": source_url or item.video_uri,
+                    }
+                )
+                continue
+
             if status in ("stored", "downloaded"):
                 ready_jobs.append(
                     {
                         "payload": item,
-                        "video_uri": (asset.get("gcs_uri") or asset.get("video_url") or item.video_uri),
+                        "video_uri": asset.get("gcs_uri") or asset.get("video_url") or item.video_uri,
                     }
                 )
-                done_ids.append(media_asset_id)
-            elif status == "failed":
+                continue
+
+            if status == "failed":
                 failed_rows.append({"analysis_id": item.analysis_id, "error": "Video download failed"})
                 failed_events.append({"payload": item, "error": "Video download failed"})
-                done_ids.append(media_asset_id)
+                continue
 
-        for media_asset_id in done_ids:
-            waiting_by_asset_id.pop(media_asset_id, None)
+            waiting_by_asset_id[item.media_asset_id] = item
 
-        if waiting_by_asset_id:
-            await asyncio.sleep(10)
+        for attempt in range(18):
+            if not waiting_by_asset_id:
+                break
+            async with get_db_connection() as conn:
+                polled_assets = await get_media_assets_by_ids(conn, list(waiting_by_asset_id.keys()))
+                await conn.commit()
+            polled_by_id = {row["id"]: row for row in polled_assets}
+            done_ids: list[UUID] = []
 
-    for item in waiting_by_asset_id.values():
-        failed_rows.append({"analysis_id": item.analysis_id, "error": "Video not ready after timeout"})
-        failed_events.append({"payload": item, "error": "Video not ready after timeout"})
+            for media_asset_id, item in waiting_by_asset_id.items():
+                asset = polled_by_id.get(media_asset_id)
+                status = asset.get("status", "") if asset else ""
+                if status in ("stored", "downloaded"):
+                    ready_jobs.append(
+                        {
+                            "payload": item,
+                            "video_uri": (asset.get("gcs_uri") or asset.get("video_url") or item.video_uri),
+                        }
+                    )
+                    done_ids.append(media_asset_id)
+                elif status == "failed":
+                    failed_rows.append({"analysis_id": item.analysis_id, "error": "Video download failed"})
+                    failed_events.append({"payload": item, "error": "Video download failed"})
+                    done_ids.append(media_asset_id)
 
-    success_rows: list[dict[str, Any]] = []
-    success_events: list[AnalysisTaskPayload] = []
-    runtime_failed_rows: list[dict[str, Any]] = []
-    retry_analysis_ids: list[UUID] = []
-    retry_payloads: list[dict[str, Any]] = []
+            for media_asset_id in done_ids:
+                waiting_by_asset_id.pop(media_asset_id, None)
 
-    async def _process_ready(job: dict[str, Any]) -> None:
-        payload: AnalysisTaskPayload = job["payload"]
-        video_uri = job["video_uri"]
-        try:
-            result = await _execute_gemini_analysis(
-                analysis_id=payload.analysis_id,
-                media_asset_id=payload.media_asset_id,
-                video_uri=video_uri,
-                chat_id=str(payload.chat_id) if payload.chat_id else None,
-                user_id=str(payload.user_id) if payload.user_id else None,
-                dispatched_at=payload.dispatched_at,
-                persist=False,
-            )
-            success_rows.append({"analysis_id": payload.analysis_id, "analysis": result.get("analysis", "")})
-            success_events.append(payload)
-        except Exception as exc:
-            err_text = f"{exc} (URL: {video_uri})"
-            attempt_no = int(payload.attempt_no or 0)
-            if _is_llm_429_retryable_exception(exc) and (attempt_no + 1) < int(getattr(settings, "TASK_WORKER_MAX_ATTEMPTS", 5)):
-                retry_analysis_ids.append(payload.analysis_id)
-                retry_payloads.append(
-                    {
-                        "analysis_id": str(payload.analysis_id),
-                        "media_asset_id": str(payload.media_asset_id),
-                        "video_uri": payload.video_uri,
-                        "chat_id": str(payload.chat_id) if payload.chat_id else None,
-                        "user_id": str(payload.user_id) if payload.user_id else None,
-                        "dispatched_at": time.time(),
-                        "attempt_no": attempt_no + 1,
-                    }
+            if waiting_by_asset_id:
+                await asyncio.sleep(10)
+
+        for item in waiting_by_asset_id.values():
+            failed_rows.append({"analysis_id": item.analysis_id, "error": "Video not ready after timeout"})
+            failed_events.append({"payload": item, "error": "Video not ready after timeout"})
+
+        success_events: list[AnalysisTaskPayload] = []
+
+        async def _process_ready(job: dict[str, Any]) -> None:
+            payload: AnalysisTaskPayload = job["payload"]
+            video_uri = job["video_uri"]
+            try:
+                result = await _execute_gemini_analysis(
+                    analysis_id=payload.analysis_id,
+                    media_asset_id=payload.media_asset_id,
+                    video_uri=video_uri,
+                    chat_id=str(payload.chat_id) if payload.chat_id else None,
+                    user_id=str(payload.user_id) if payload.user_id else None,
+                    dispatched_at=payload.dispatched_at,
+                    persist=False,
                 )
-            else:
+                success_rows.append({"analysis_id": payload.analysis_id, "analysis": result.get("analysis", "")})
+                success_events.append(payload)
+            except asyncio.CancelledError:
+                err_text = f"Local analysis task was cancelled before completion (URL: {video_uri})"
                 runtime_failed_rows.append({"analysis_id": payload.analysis_id, "error": err_text})
-                failed_events.append({"payload": payload, "error": str(exc)})
+                failed_events.append({"payload": payload, "error": err_text})
+            except Exception as exc:
+                err_text = f"{exc} (URL: {video_uri})"
+                attempt_no = int(payload.attempt_no or 0)
+                if _is_llm_429_retryable_exception(exc) and (attempt_no + 1) < int(getattr(settings, "TASK_WORKER_MAX_ATTEMPTS", 5)):
+                    retry_analysis_ids.append(payload.analysis_id)
+                    retry_payloads.append(
+                        {
+                            "analysis_id": str(payload.analysis_id),
+                            "media_asset_id": str(payload.media_asset_id),
+                            "video_uri": payload.video_uri,
+                            "chat_id": str(payload.chat_id) if payload.chat_id else None,
+                            "user_id": str(payload.user_id) if payload.user_id else None,
+                            "dispatched_at": time.time(),
+                            "attempt_no": attempt_no + 1,
+                        }
+                    )
+                else:
+                    runtime_failed_rows.append({"analysis_id": payload.analysis_id, "error": err_text})
+                    failed_events.append({"payload": payload, "error": str(exc)})
 
-    await asyncio.gather(*[_process_ready(job) for job in ready_jobs])
+        await asyncio.gather(*[_process_ready(job) for job in ready_jobs])
 
-    async with get_db_connection() as conn:
-        if success_rows:
-            await update_analysis_status_completed_batch(conn, success_rows)
-        all_failed_rows = failed_rows + runtime_failed_rows
-        if all_failed_rows:
-            await update_analysis_status_failed_batch(conn, all_failed_rows)
-        if retry_analysis_ids:
-            await update_analysis_status_queued_batch(conn, retry_analysis_ids)
-        await conn.commit()
+        async with get_db_connection() as conn:
+            if success_rows:
+                await update_analysis_status_completed_batch(conn, success_rows)
+                finalized_ids.update(row["analysis_id"] for row in success_rows)
+            all_failed_rows = failed_rows + runtime_failed_rows
+            if all_failed_rows:
+                await update_analysis_status_failed_batch(conn, all_failed_rows)
+                finalized_ids.update(row["analysis_id"] for row in all_failed_rows)
+            if retry_analysis_ids:
+                await update_analysis_status_queued_batch(conn, retry_analysis_ids)
+                finalized_ids.update(retry_analysis_ids)
+            await conn.commit()
 
-    if retry_payloads:
-        batch_size = max(1, int(getattr(settings, "GEMINI_TASK_ENQUEUE_BATCH_SIZE", 100)))
-        for idx in range(0, len(retry_payloads), batch_size):
-            await cloud_tasks.create_http_task(
-                queue_name=settings.QUEUE_GEMINI,
-                relative_uri="/v1/tasks/gemini/analyze",
-                payload=retry_payloads[idx: idx + batch_size],
-            )
+        if retry_payloads:
+            batch_size = max(1, int(getattr(settings, "GEMINI_TASK_ENQUEUE_BATCH_SIZE", 100)))
+            for idx in range(0, len(retry_payloads), batch_size):
+                await cloud_tasks.create_http_task(
+                    queue_name=settings.QUEUE_GEMINI,
+                    relative_uri="/v1/tasks/gemini/analyze",
+                    payload=retry_payloads[idx: idx + batch_size],
+                )
 
-    failed_total = len(failed_rows) + len(runtime_failed_rows)
-    return _batch_summary(
-        route="gemini/analyze",
-        processed=len(task_items),
-        succeeded=len(success_rows),
-        failed=failed_total,
-        retried_enqueued=len(retry_payloads),
-    )
+        failed_total = len(failed_rows) + len(runtime_failed_rows)
+        return _batch_summary(
+            route="gemini/analyze",
+            processed=len(task_items),
+            succeeded=len(success_rows),
+            failed=failed_total,
+            retried_enqueued=len(retry_payloads),
+        )
+    except asyncio.CancelledError:
+        await _mark_unfinalized_failed("Local analysis task was cancelled before completion")
+        raise
+    except Exception as exc:
+        logger.error("[LOCAL] Gemini analysis batch crashed: %s", exc, exc_info=True)
+        await _mark_unfinalized_failed(f"Local analysis batch crashed: {exc}")
+        raise
 
 
 @router.post("/gemini/analyze")
@@ -980,9 +1008,10 @@ async def _handle_chat_stream_single(payload: ChatStreamTaskPayload, request: Re
             return
         await redis_client.xadd(
             f"chat:{str(payload.chat_id)}:stream",
+            "*",
             {"data": json.dumps({"type": "error", "error": str(e)})},
             maxlen=settings.REDIS_STREAM_MAXLEN_CHAT,
-            approximate=True,
+            approximate_trim=True,
         )
         await redis_client.expire(
             f"chat:{str(payload.chat_id)}:stream",
