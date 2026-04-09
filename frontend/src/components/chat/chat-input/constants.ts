@@ -11,4 +11,5 @@ export const MODEL_OPTIONS = [
     { label: 'GPT-5.1 (OpenAI)', value: 'openrouter/openai/gpt-5.1' },
     { label: 'DeepSeek V3.2 (DeepSeek)', value: 'openrouter/deepseek/deepseek-v3.2' },
     { label: 'Mistral Small Creative (Mistral)', value: 'openrouter/mistralai/mistral-small-creative' },
+    { label: 'GLM-4.7 (Zhipu AI)', value: 'openrouter/z-ai/glm-4.7' },
 ];
