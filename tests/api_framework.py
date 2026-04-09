@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 import httpx
 
 BACKEND_URL = os.getenv("BACKEND_URL", "https://conthunt-976912795426.us-central1.run.app")
-BEARER_TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjA4MmU5NzVlMDdkZmE0OTYwYzdiN2I0ZmMxZDEwZjkxNmRjMmY1NWIiLCJ0eXAiOiJKV1QifQ.eyJuYW1lIjoiTmlybWFsIFYiLCJwaWN0dXJlIjoiaHR0cHM6Ly9saDMuZ29vZ2xldXNlcmNvbnRlbnQuY29tL2EvQUNnOG9jSTRJVmU5aFJSRFJmeGdhcW1MbmtoRzVSUTZ4ZGoydnZsR2tnX01WMGNpOTUwd29RPXM5Ni1jIiwiZGJfdXNlcl9pZCI6IjY4ZGE1YzI3LWZmYzItNDE4Zi05YTJiLTUwYjdkNjg2YzczZCIsInJvbGUiOiJjcmVhdG9yIiwiaXNzIjoiaHR0cHM6Ly9zZWN1cmV0b2tlbi5nb29nbGUuY29tL2NvbnRodW50LWRldiIsImF1ZCI6ImNvbnRodW50LWRldiIsImF1dGhfdGltZSI6MTc2ODcyMjczNywidXNlcl9pZCI6ImhaVFBUQVNXQnVnTnlhdmc0QUxrdzNCcVFmdzEiLCJzdWIiOiJoWlRQVEFTV0J1Z055YXZnNEFMa3czQnFRZncxIiwiaWF0IjoxNzY4NzU2MzQ3LCJleHAiOjE3Njg3NTk5NDcsImVtYWlsIjoibGFtcmluQHN5bnRoZW5vdmEueHl6IiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImZpcmViYXNlIjp7ImlkZW50aXRpZXMiOnsiZ29vZ2xlLmNvbSI6WyIxMDUyMTc2ODYyNTU3MzIzNDc2MjYiXSwiZW1haWwiOlsibGFtcmluQHN5bnRoZW5vdmEueHl6Il19LCJzaWduX2luX3Byb3ZpZGVyIjoiZ29vZ2xlLmNvbSJ9fQ.qdsQD94OlaNyoMkoESkozdomSvXWqnEfg0uMh2hUUT9-aIgfn5EbCzzbokO2HkxfXtiuNtEXklsTWSQB7GS8QrDqXv9hgiJzw2REdliGHQ9FvsZSloCxCoJaHxFoVRwFmo4ilMVHw2IdINIK6f5sJZMH6g2mxRsrhNhoFNyZ02lDdhQCV3fVa4CldWVbKk6s9_v1PAsVgrejmsbH4Kea7UwW0UzlGM5fZwb1mBlv1EQzlrcOKhZzuJl5x5KHqZ-G6q7HR7rhYpxcKBHRLJTvuVgx4Ft_0xgI-yaVo-psE3ycc1SkMvPn1AC9V5ACbc1MqECsZjaDVZOjSQRHSU5I-Q"
+BEARER_TOKEN = os.getenv("BEARER_TOKEN", "")
 
 MODEL_NAME = "google/gemini-3-flash-preview"
 MESSAGE_1 = os.getenv("MESSAGE_1", "Find me trending fitness content")
@@ -21,7 +21,7 @@ logger = logging.getLogger("api-framework")
 
 def build_headers() -> Dict[str, str]:
     if not BEARER_TOKEN:
-        raise SystemExit("BEARER_TOKEN is empty. Fill it in before running.")
+        raise SystemExit("BEARER_TOKEN is empty. Export it before running this script.")
     return {
         "Authorization": f"Bearer {BEARER_TOKEN}",
         "Content-Type": "application/json",
