@@ -43,8 +43,6 @@ steps:
           --set-secrets=SCRAPECREATORS_API_KEY=SCRAPECREATORS_API_KEY:latest \
           --set-secrets=SCRAPECREATORS_BASE_URL=SCRAPECREATORS_BASE_URL:latest \
           --set-secrets=GCP_REGION=GCP_REGION:latest \
-          --set-secrets=REDIS_URL=REDIS_URL:latest \
-          --set-secrets=REDIS_MAX_CONNECTIONS=REDIS_MAX_CONNECTIONS:latest \
           --set-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest \
           --set-secrets=OPENAI_BASE_URL=OPENAI_BASE_URL:latest \
           --set-secrets=LOG_LEVEL=LOG_LEVEL:latest \
@@ -52,13 +50,6 @@ steps:
           --set-secrets=DB_SCHEMA=DB_SCHEMA:latest \
           --set-secrets=DB_PGBOUNCER_MODE=DB_PGBOUNCER_MODE:latest \
           --set-secrets=DB_USE_NULLPOOL=DB_USE_NULLPOOL:latest \
-          --set-secrets=DB_SEMAPHORE_ENABLED=DB_SEMAPHORE_ENABLED:latest \
-          --set-secrets=DB_SEM_KEY_PREFIX=DB_SEM_KEY_PREFIX:latest \
-          --set-secrets=DB_SEM_TTL_MS=DB_SEM_TTL_MS:latest \
-          --set-secrets=DB_SEM_API_LIMIT=DB_SEM_API_LIMIT:latest \
-          --set-secrets=DB_SEM_TASKS_LIMIT=DB_SEM_TASKS_LIMIT:latest \
-          --set-secrets=DB_SEM_API_MAX_WAIT_MS=DB_SEM_API_MAX_WAIT_MS:latest \
-          --set-secrets=DB_SEM_TASKS_MAX_WAIT_MS=DB_SEM_TASKS_MAX_WAIT_MS:latest \
           --set-secrets=DB_POOL_SIZE=DB_POOL_SIZE:latest \
           --set-secrets=DB_MAX_OVERFLOW=DB_MAX_OVERFLOW:latest \
           --set-secrets=DB_POOL_TIMEOUT=DB_POOL_TIMEOUT:latest \
@@ -66,7 +57,6 @@ steps:
           --set-secrets=GCS_BUCKET_MEDIA=GCS_BUCKET_MEDIA:latest \
           --set-secrets=GCS_DEEPAGNT_FS=GCS_DEEPAGNT_FS:latest \
           --set-secrets=/secrets/gcs-signer/key.json=gcs-url-signer-key:latest \
-          --set-env-vars=GCS_SIGNER_KEY_PATH=/secrets/gcs-signer/key.json \
           --set-secrets=CLOUD_TASKS_SA_EMAIL=CLOUD_TASKS_SA_EMAIL:latest \
           --set-secrets=QUEUE_MEDIA_DOWNLOAD=QUEUE_MEDIA_DOWNLOAD:latest \
           --set-secrets=QUEUE_TWELVELABS=QUEUE_TWELVELABS:latest \
@@ -123,7 +113,8 @@ steps:
           --set-secrets=LLM_LIMIT_TIMEOUT_START_BACKGROUND_S=LLM_LIMIT_TIMEOUT_START_BACKGROUND_S:latest \
           --set-secrets=LLM_LIMIT_TIMEOUT_TOKENS_BACKGROUND_S=LLM_LIMIT_TIMEOUT_TOKENS_BACKGROUND_S:latest \
           --set-secrets=LLM_EST_COMPLETION_TOKENS_DEFAULT=LLM_EST_COMPLETION_TOKENS_DEFAULT:latest \
-          --set-env-vars=GCP_PROJECT=$PROJECT_ID,GCLOUD_PROJECT=$PROJECT_ID
+          --remove-secrets=REDIS_URL,REDIS_MAX_CONNECTIONS,DB_SEMAPHORE_ENABLED,DB_SEM_KEY_PREFIX,DB_SEM_TTL_MS,DB_SEM_API_LIMIT,DB_SEM_TASKS_LIMIT,DB_SEM_API_MAX_WAIT_MS,DB_SEM_TASKS_MAX_WAIT_MS \
+          --set-env-vars=UPSTASH_REDIS_REST_URL=${_UPSTASH_REDIS_REST_URL},UPSTASH_REDIS_REST_TOKEN=${_UPSTASH_REDIS_REST_TOKEN},GEMINI_ANALYSIS_TIMEOUT_S=420,GCP_PROJECT=$PROJECT_ID,GCLOUD_PROJECT=$PROJECT_ID
 
 options:
   logging: CLOUD_LOGGING_ONLY

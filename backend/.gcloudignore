@@ -1,0 +1,27 @@
+# Keep Cloud Build upload context minimal for backend image builds.
+.git
+.gitignore
+.gcloudignore
+
+# Local environments / secrets
+.env
+.env.*
+gcs-url-signer.json
+fb-sa.json
+conthunt-dev-firebase-adminsdk-*.json
+
+# Local Python artifacts
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+
+# Local-only scripts / ad hoc tests
+test_*.py
+check_count.py
+verify_signer.py
+debug_rls.sql
+
+# Editor / OS noise
+.DS_Store
