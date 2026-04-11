@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
@@ -12,6 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from app.agent.model_factory import init_chat_model
+from app.agent.deep_research import gcs_store
 from app.agent.tools import _get_api_base_url, _get_headers
 from app.core import get_settings
 from app.core.logging import logger
@@ -22,81 +22,6 @@ settings = get_settings()
 def _get_chat_id_from_config(config: RunnableConfig) -> str | None:
     configurable = (config or {}).get("configurable") or {}
     return configurable.get("chat_id")
-
-
-def _gcs_key_for_chat(chat_id: str, filename: str) -> str:
-    return f"deepagents/{chat_id}/{filename}"
-
-
-async def _read_json_from_gcs(chat_id: str, filename: str) -> dict:
-    from google.cloud import storage
-
-    key = _gcs_key_for_chat(chat_id, filename)
-
-    def _read():
-        client = storage.Client()
-        bucket = client.bucket(settings.GCS_DEEPAGNT_FS)
-        blob = bucket.blob(key)
-        if not blob.exists():
-            return {}
-        content = blob.download_as_text()
-        return json.loads(content)
-
-    return await asyncio.to_thread(_read)
-
-
-async def _write_json_to_gcs(chat_id: str, filename: str, payload: dict) -> None:
-    from google.cloud import storage
-
-    key = _gcs_key_for_chat(chat_id, filename)
-    data = json.dumps(payload, ensure_ascii=False, indent=2)
-
-    def _write():
-        client = storage.Client()
-        bucket = client.bucket(settings.GCS_DEEPAGNT_FS)
-        blob = bucket.blob(key)
-        blob.upload_from_string(data.encode("utf-8"), content_type="application/json")
-
-    await asyncio.to_thread(_write)
-
-async def _read_text_from_gcs(chat_id: str, filename: str) -> str:
-    from google.cloud import storage
-
-    key = _gcs_key_for_chat(chat_id, filename)
-
-    def _read() -> str:
-        client = storage.Client()
-        bucket = client.bucket(settings.GCS_DEEPAGNT_FS)
-        blob = bucket.blob(key)
-        if not blob.exists():
-            return ""
-        return blob.download_as_text()
-
-    return await asyncio.to_thread(_read)
-
-
-async def _write_text_to_gcs(chat_id: str, filename: str, content: str, *, content_type: str) -> None:
-    from google.cloud import storage
-
-    key = _gcs_key_for_chat(chat_id, filename)
-
-    def _write() -> None:
-        client = storage.Client()
-        bucket = client.bucket(settings.GCS_DEEPAGNT_FS)
-        blob = bucket.blob(key)
-        blob.upload_from_string(content.encode("utf-8"), content_type=content_type)
-
-    await asyncio.to_thread(_write)
-
-
-async def _append_jsonl_to_gcs(chat_id: str, filename: str, record: dict) -> None:
-    # Simple implementation: read + append + write. Good enough for now.
-    existing = await _read_text_from_gcs(chat_id, filename)
-    line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
-    needs_nl = bool(existing) and (not existing.endswith("\n"))
-    prefix = "\n" if needs_nl else ""
-    content = f"{existing}{prefix}{line}\n"
-    await _write_text_to_gcs(chat_id, filename, content, content_type="application/x-ndjson")
 
 
 def _now_iso() -> str:
@@ -330,7 +255,7 @@ async def deep_search_batch_wait(
                 })
 
             # ── Write raw file (full, with UUIDs — agent-blocked) ───
-            await _write_json_to_gcs(chat_id, f"searches_raw/search_{search_number}.json", {
+            await gcs_store.write_json(chat_id, f"searches_raw/search_{search_number}.json", {
                 "search_number": search_number,
                 "search_id": str(search_id),
                 "query": nq,
@@ -340,7 +265,7 @@ async def deep_search_batch_wait(
 
             # ── Write slim ranked file (no UUIDs, no metrics) ───────
             slim_path = f"searches/search_{search_number}.json"
-            await _write_json_to_gcs(chat_id, slim_path, {
+            await gcs_store.write_json(chat_id, slim_path, {
                 "search_number": search_number,
                 "query": nq,
                 "item_count": len(slim_items),
@@ -373,7 +298,7 @@ async def deep_search_batch_wait(
         "files_written": files_written,
     }
 
-    await _append_jsonl_to_gcs(
+    await gcs_store.append_jsonl(
         chat_id,
         "tool_calls.jsonl",
         {
