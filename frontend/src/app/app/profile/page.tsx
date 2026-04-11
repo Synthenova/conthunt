@@ -25,7 +25,6 @@ import { RocketIcon, type RocketIconHandle } from "@/components/ui/rocket";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { StreakMilestone } from "@/components/streak/StreakMilestone";
 
-import { cn } from "@/lib/utils";
 import { BACKEND_URL, authFetch } from "@/lib/api";
 
 type UsagePoint = {
@@ -85,26 +84,6 @@ async function fetchUsageSeries(range: "daily" | "monthly"): Promise<UsagePoint[
     return data.series || [];
 }
 
-function ProgressRow({ label, complete }: { label: string; complete?: boolean }) {
-    return (
-        <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-                {complete ? (
-                    <CheckCircle2 className="h-4 w-4 text-foreground" />
-                ) : (
-                    <Circle className="h-4 w-4 text-muted-foreground" />
-                )}
-                <span className={cn("text-sm", complete ? "text-foreground" : "text-muted-foreground")}>
-                    {label}
-                </span>
-            </div>
-            <span className="text-[10px] text-muted-foreground">
-                {complete ? "Complete" : "Pending"}
-            </span>
-        </div>
-    );
-}
-
 export default function ProfilePage() {
     const { profile, user, subscription, isLoading } = useUser({ refreshOnMount: true });
     const { getPlanName } = useProducts();
@@ -122,12 +101,18 @@ export default function ProfilePage() {
         if (!isClaimSyncing) return;
         if (isClaiming) return;
         if (meFetching > 0 || streakFetching > 0) return;
-        setIsClaimSyncing(false);
+
+        const timer = window.setTimeout(() => {
+            setIsClaimSyncing(false);
+        }, 0);
+
+        return () => window.clearTimeout(timer);
     }, [isClaimSyncing, isClaiming, meFetching, streakFetching]);
 
     useTutorialAutoStart({ flowId: "profile_tour" });
 
     const searchUsage = profile?.usage?.find((item) => item.feature === "search_query");
+    const isNoPlan = profile?.role === "free";
     const searchLimit = searchUsage?.limit ?? 0;
     const searchUsed = searchUsage?.used ?? 0;
     const searchBonus = profile?.reward_balances?.search_query ?? 0;
@@ -230,16 +215,18 @@ export default function ProfilePage() {
                                 {user?.displayName || "Research Profile"}
                             </h1>
                             <Badge variant="secondary" className="bg-white/10 text-foreground border-white/20 px-3 py-1">
-                                {profile?.role ? getPlanName(profile.role) : "Explorer"}
+                                {isNoPlan ? "No plan" : profile?.role ? getPlanName(profile.role) : "Explorer"}
                             </Badge>
                         </div>
                         <p className="text-muted-foreground flex items-center gap-2">
                             <Mail className="h-4 w-4" />
                             {user?.email}
                         </p>
-                        <p className="text-xs text-muted-foreground">
-                            Plan period: <span className="text-foreground/80">{planPeriod}</span>
-                        </p>
+                        {!isNoPlan && (
+                            <p className="text-xs text-muted-foreground">
+                                Plan period: <span className="text-foreground/80">{planPeriod}</span>
+                            </p>
+                        )}
                     </div>
 
                     <div className="flex items-center gap-3">
@@ -322,7 +309,7 @@ export default function ProfilePage() {
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
                     <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground">Credits & Usage</h2>
-                    {profile.next_reset && (
+                    {!isNoPlan && profile.next_reset && (
                         <span className="text-xs text-muted-foreground">Resets {formatDate(profile.next_reset)}</span>
                     )}
                 </div>
@@ -334,10 +321,16 @@ export default function ProfilePage() {
                             <Search className="h-4 w-4 text-foreground" />
                         </div>
                         <div className="flex items-baseline gap-2">
-                            <span className="text-3xl font-bold text-foreground">{searchLeft}</span>
-                            <span className="text-sm text-muted-foreground">/ {searchLimit}</span>
+                            {isNoPlan ? (
+                                <span className="text-3xl font-bold text-foreground">-/-</span>
+                            ) : (
+                                <>
+                                    <span className="text-3xl font-bold text-foreground">{searchLeft}</span>
+                                    <span className="text-sm text-muted-foreground">/ {searchLimit}</span>
+                                </>
+                            )}
                         </div>
-                        {searchBonus > 0 && (
+                        {!isNoPlan && searchBonus > 0 && (
                             <p className="text-xs text-muted-foreground">
                                 Includes {searchBonus} reward searches
                             </p>
@@ -350,10 +343,16 @@ export default function ProfilePage() {
                             <span className="text-[10px] text-muted-foreground">AI analysis: 2 credits</span>
                         </div>
                         <div className="flex items-baseline gap-2">
-                            <span className="text-3xl font-bold text-foreground">{analysisCreditsRemaining}</span>
-                            <span className="text-sm text-muted-foreground">/ {analysisCreditsTotal}</span>
+                            {isNoPlan ? (
+                                <span className="text-3xl font-bold text-foreground">-/-</span>
+                            ) : (
+                                <>
+                                    <span className="text-3xl font-bold text-foreground">{analysisCreditsRemaining}</span>
+                                    <span className="text-sm text-muted-foreground">/ {analysisCreditsTotal}</span>
+                                </>
+                            )}
                         </div>
-                        {rewardCredits > 0 && (
+                        {!isNoPlan && rewardCredits > 0 && (
                             <p className="text-xs text-muted-foreground">
                                 Reward credits {rewardCredits}
                             </p>

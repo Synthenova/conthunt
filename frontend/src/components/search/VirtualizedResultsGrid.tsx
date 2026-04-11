@@ -4,7 +4,7 @@ import { useRef, useMemo, useCallback, useEffect, useLayoutEffect, useState } fr
 import { useVirtualizer, Virtualizer } from "@tanstack/react-virtual";
 import { motion } from "framer-motion";
 import { SelectableMediaCard } from "./SelectableMediaCard";
-import { ContentDrawer } from "@/components/twelvelabs/ContentDrawer";
+import { ContentDrawer } from "@/components/content/ContentDrawer";
 import { getResponsiveColumns } from "./gridUtils";
 import { useChatStore } from "@/lib/chatStore";
 import { scrollToAndHighlight } from "@/hooks/useScrollToMedia";

@@ -3,7 +3,6 @@
 import {
     createContext,
     useContext,
-    useEffect,
     useMemo,
     useState,
     type ReactNode,
@@ -25,29 +24,24 @@ import {
     trackCheckoutStarted,
 } from "@/lib/telemetry/tracking";
 
-const MODAL_VERSION = "v1";
-
-type FirstLoginPricingPromptContextValue = {
+type PricingPromptContextValue = {
     isResolved: boolean;
-    shouldBlockTutorial: boolean;
-    dismissedThisSession: boolean;
-    markPromptSeen: () => void;
+    isEligibleForPricingPrompt: boolean;
+    isOpen: boolean;
+    openPricingPrompt: () => void;
+    closePricingPrompt: () => void;
 };
 
-const FirstLoginPricingPromptContext =
-    createContext<FirstLoginPricingPromptContextValue>({
-        isResolved: false,
-        shouldBlockTutorial: false,
-        dismissedThisSession: false,
-        markPromptSeen: () => {},
-    });
+const PricingPromptContext = createContext<PricingPromptContextValue>({
+    isResolved: false,
+    isEligibleForPricingPrompt: false,
+    isOpen: false,
+    openPricingPrompt: () => {},
+    closePricingPrompt: () => {},
+});
 
-export function useFirstLoginPricingPrompt() {
-    return useContext(FirstLoginPricingPromptContext);
-}
-
-function getSeenKey(firebaseUid: string) {
-    return `first_pricing_prompt_seen:${MODAL_VERSION}:${firebaseUid}`;
+export function usePricingPrompt() {
+    return useContext(PricingPromptContext);
 }
 
 function getDisplayPrice(priceCents: number, annual: boolean) {
@@ -64,13 +58,11 @@ function planRank(role: string) {
     return 0;
 }
 
-function FirstLoginPricingPromptBody() {
+function PricingPromptBody() {
     const { products, loading: productsLoading } = useProducts();
-    const { profile, subscription, isLoading: userLoading } = useUser();
-    const { dismissedThisSession, markPromptSeen } = useFirstLoginPricingPrompt();
-    const [isOpen, setIsOpen] = useState(false);
-    const [isAnnual, setIsAnnual] = useState(false);
-    const [isCheckingStorage, setIsCheckingStorage] = useState(true);
+    const { profile, isLoading: userLoading } = useUser();
+    const { isOpen, isEligibleForPricingPrompt, closePricingPrompt } = usePricingPrompt();
+    const [isAnnual, setIsAnnual] = useState(true);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -95,49 +87,6 @@ function FirstLoginPricingPromptBody() {
     const proProduct = isAnnual ? proProducts[proProducts.length - 1] : proProducts[0];
     const creatorPrice = creatorProduct ? getDisplayPrice(creatorProduct.price, isAnnual) : 0;
     const proPrice = proProduct ? getDisplayPrice(proProduct.price, isAnnual) : 0;
-
-    const shouldShowForUser = useMemo(() => {
-        if (!profile?.firebase_uid || profile.firebase_uid.startsWith("whop:")) {
-            return false;
-        }
-
-        const currentRole = subscription?.role || profile.role;
-        return planRank(currentRole) === 0;
-    }, [profile, subscription]);
-
-    useEffect(() => {
-        if (typeof window === "undefined") return;
-        if (userLoading || productsLoading) return;
-
-        if (!profile?.firebase_uid) {
-            setIsCheckingStorage(false);
-            setIsOpen(false);
-            return;
-        }
-
-        if (!shouldShowForUser) {
-            setIsCheckingStorage(false);
-            setIsOpen(false);
-            return;
-        }
-
-        const seen =
-            dismissedThisSession ||
-            !!window.localStorage.getItem(getSeenKey(profile.firebase_uid));
-        setIsOpen(!seen);
-        setIsCheckingStorage(false);
-    }, [
-        dismissedThisSession,
-        productsLoading,
-        profile?.firebase_uid,
-        shouldShowForUser,
-        userLoading,
-    ]);
-
-    const closeModal = () => {
-        markPromptSeen();
-        setIsOpen(false);
-    };
 
     const handleCheckout = async (productId: string) => {
         const product = products.find((item) => item.product_id === productId);
@@ -164,7 +113,6 @@ function FirstLoginPricingPromptBody() {
                 throw new Error("No checkout URL returned");
             }
 
-            markPromptSeen();
             trackCheckoutCompleted(productId, product?.price || 0, product?.currency || "USD");
             window.location.href = data.url;
         } catch (checkoutError) {
@@ -256,11 +204,11 @@ function FirstLoginPricingPromptBody() {
         );
     };
 
-    if (isCheckingStorage || userLoading || productsLoading) {
+    if (userLoading || productsLoading) {
         return null;
     }
 
-    if (!shouldShowForUser || !isOpen || (!creatorProduct && !proProduct)) {
+    if (!isEligibleForPricingPrompt || !isOpen || (!creatorProduct && !proProduct) || !profile) {
         return null;
     }
 
@@ -268,23 +216,13 @@ function FirstLoginPricingPromptBody() {
         <Dialog
             open={isOpen}
             onOpenChange={(open) => {
-                if (open) {
-                    setIsOpen(true);
+                if (!open) {
+                    closePricingPrompt();
                 }
             }}
         >
             <DialogContent
                 showCloseButton={false}
-                onEscapeKeyDown={(event) => {
-                    event.preventDefault();
-                    closeModal();
-                }}
-                onPointerDownOutside={(event) => {
-                    event.preventDefault();
-                }}
-                onInteractOutside={(event) => {
-                    event.preventDefault();
-                }}
                 className="overflow-hidden border border-white/10 bg-[#050505] p-0 text-white shadow-[0_30px_120px_rgba(0,0,0,0.65)] sm:max-w-5xl"
             >
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_40%)]" />
@@ -297,7 +235,7 @@ function FirstLoginPricingPromptBody() {
                                     Unlock Full Conthunt
                                 </div>
                                 <DialogTitle className="text-2xl font-medium text-white sm:text-3xl">
-                                    Choose a paid plan to start with the full workflow.
+                                    Choose a paid plan to continue.
                                 </DialogTitle>
                                 <DialogDescription className="mt-2 max-w-2xl text-sm text-neutral-400 sm:text-base">
                                     Pick monthly or annual billing, then continue through the same checkout flow used on the billing page.
@@ -305,7 +243,7 @@ function FirstLoginPricingPromptBody() {
                             </DialogHeader>
                             <button
                                 type="button"
-                                onClick={closeModal}
+                                onClick={closePricingPrompt}
                                 className="rounded-full border border-white/10 bg-white/5 p-2 text-neutral-400 transition hover:bg-white/10 hover:text-white"
                                 aria-label="Close pricing modal"
                             >
@@ -344,7 +282,7 @@ function FirstLoginPricingPromptBody() {
                                 </span>
                             </div>
                             <p className="max-w-xl text-sm text-neutral-500">
-                                You can stay on Free for now. This prompt only appears once in this browser for this account.
+                                No plan users need a paid plan to start searching.
                             </p>
                             {error && (
                                 <div className="w-full max-w-lg rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
@@ -382,16 +320,6 @@ function FirstLoginPricingPromptBody() {
                                 product: proProduct,
                             })}
                         </div>
-
-                        <div className="mt-6 flex items-center justify-center">
-                            <button
-                                type="button"
-                                onClick={closeModal}
-                                className="text-sm font-medium text-neutral-500 transition hover:text-neutral-300"
-                            >
-                                Continue on Free
-                            </button>
-                        </div>
                     </div>
                 </div>
             </DialogContent>
@@ -399,74 +327,48 @@ function FirstLoginPricingPromptBody() {
     );
 }
 
-export function FirstLoginPricingPromptProvider({
+export function PricingPromptProvider({
     children,
 }: {
     children: ReactNode;
 }) {
-    const { products, loading: productsLoading } = useProducts();
-    const { profile, subscription, isLoading: userLoading } = useUser();
-    const [dismissedState, setDismissedState] = useState<{
-        firebaseUid: string | null;
-        dismissed: boolean;
-    }>({
-        firebaseUid: null,
-        dismissed: false,
-    });
-    const currentFirebaseUid = profile?.firebase_uid || null;
-    const dismissedThisSession =
-        dismissedState.firebaseUid === currentFirebaseUid && dismissedState.dismissed;
-
-    const markPromptSeen = () => {
-        if (typeof window !== "undefined" && currentFirebaseUid) {
-            window.localStorage.setItem(getSeenKey(currentFirebaseUid), "1");
-        }
-        setDismissedState({
-            firebaseUid: currentFirebaseUid,
-            dismissed: true,
-        });
-    };
+    const { loading: productsLoading } = useProducts();
+    const { profile, isLoading: userLoading } = useUser();
+    const [isOpen, setIsOpen] = useState(false);
 
     const isResolved =
         typeof window !== "undefined" && !userLoading && !productsLoading;
 
-    const shouldBlockTutorial = (() => {
-        if (typeof window === "undefined") return true;
-        if (!isResolved) return true;
+    const isEligibleForPricingPrompt = useMemo(() => {
         if (!profile?.firebase_uid || profile.firebase_uid.startsWith("whop:")) {
             return false;
         }
 
-        const currentRole = subscription?.role || profile.role;
-        if (planRank(currentRole) !== 0) {
-            return false;
-        }
+        return planRank(profile.role) === 0;
+    }, [profile]);
 
-        const hasPaidProducts = products.some((product) =>
-            ["creator", "pro_research"].includes(product.metadata.app_role),
-        );
-        if (!hasPaidProducts) {
-            return false;
+    const openPricingPrompt = () => {
+        if (isEligibleForPricingPrompt) {
+            setIsOpen(true);
         }
+    };
 
-        if (dismissedThisSession) {
-            return false;
-        }
-
-        return !window.localStorage.getItem(getSeenKey(profile.firebase_uid));
-    })();
+    const closePricingPrompt = () => {
+        setIsOpen(false);
+    };
 
     return (
-        <FirstLoginPricingPromptContext.Provider
+        <PricingPromptContext.Provider
             value={{
                 isResolved,
-                shouldBlockTutorial,
-                dismissedThisSession,
-                markPromptSeen,
+                isEligibleForPricingPrompt,
+                isOpen,
+                openPricingPrompt,
+                closePricingPrompt,
             }}
         >
             {children}
-            <FirstLoginPricingPromptBody />
-        </FirstLoginPricingPromptContext.Provider>
+            <PricingPromptBody />
+        </PricingPromptContext.Provider>
     );
 }

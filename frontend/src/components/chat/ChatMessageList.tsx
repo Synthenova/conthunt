@@ -23,7 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { Loader } from '@/components/ui/loader';
 import { ChatLoader } from './ChatLoader';
 import { ImageLightbox } from '@/components/ui/image-lightbox';
-import { ContentDrawer } from '@/components/twelvelabs/ContentDrawer';
+import { ContentDrawer } from '@/components/content/ContentDrawer';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Loader2, Sparkles, Sparkle, MessageSquare, LayoutDashboard, Search, ChevronDown, Globe, Circle, ListTodo, Check, ImagePlus, Coins } from 'lucide-react';

@@ -7,7 +7,7 @@
 import { useEffect, useRef } from "react";
 import { useOnboardingStatus } from "@/hooks/useOnboarding";
 import { useTutorial } from "@/components/tutorial/TutorialProvider";
-import { useFirstLoginPricingPrompt } from "@/components/modals/FirstLoginPricingModal";
+import { usePricingPrompt } from "@/components/modals/PricingPrompt";
 import { auth } from "@/lib/firebaseClient";
 
 interface UseTutorialAutoStartOptions {
@@ -30,14 +30,13 @@ export function useTutorialAutoStart({
 }: UseTutorialAutoStartOptions) {
     const { data: flowData, isLoading } = useOnboardingStatus(flowId);
     const { startFlow, isActive, flowId: activeFlowId } = useTutorial();
-    const { isResolved, shouldBlockTutorial } = useFirstLoginPricingPrompt();
+    const { isResolved } = usePricingPrompt();
     const hasTriggeredRef = useRef(false);
 
     useEffect(() => {
         // Guard conditions
         if (!enabled) return;
         if (!isResolved) return;
-        if (shouldBlockTutorial) return;
         if (!auth?.currentUser) return;
         if (isLoading) return;
         if (hasTriggeredRef.current) return;
@@ -68,7 +67,6 @@ export function useTutorialAutoStart({
         isActive,
         activeFlowId,
         isResolved,
-        shouldBlockTutorial,
     ]);
 
     return {

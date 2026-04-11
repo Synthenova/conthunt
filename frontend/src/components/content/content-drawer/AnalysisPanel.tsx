@@ -354,4 +354,3 @@ function SimpleAccordion({ title, children, icon }: { title: string; children: R
         </Collapsible>
     )
 }
-

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { useCreateChat } from "@/hooks/useChat";
+import { useUser } from "@/hooks/useUser";
+import { usePricingPrompt } from "@/components/modals/PricingPrompt";
 import { useChatStore } from "@/lib/chatStore";
 import { SendHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,7 @@ export function HomeSearchBox({
     const [localMessage, setLocalMessage] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
+    const pendingSubmitRef = useRef(false);
 
     const togglePlatform = (platform: string) => {
         setSelectedPlatforms(prev =>
@@ -44,18 +46,22 @@ export function HomeSearchBox({
     const message = value !== undefined ? value : localMessage;
 
     // Handler to update message
-    const handleMessageChange = (newValue: string) => {
+    const handleMessageChange = useCallback((newValue: string) => {
         if (value === undefined) {
             setLocalMessage(newValue);
         }
         onChange?.(newValue);
-    };
+    }, [onChange, value]);
 
     const router = useRouter();
     const createChat = useCreateChat();
+    const { user, profile, isLoading, isAuthLoading } = useUser();
+    const { isOpen: isPricingPromptOpen, openPricingPrompt } = usePricingPrompt();
     const setPendingFirstMessage = useChatStore((s) => s.setPendingFirstMessage);
+    const isResolvingPlan = !!user && (isAuthLoading || isLoading || !profile);
+    const wasPricingPromptOpenRef = useRef(false);
 
-    const handleSubmit = async () => {
+    const submitMessage = useCallback(async () => {
         if (!message.trim() || createChat.isPending || isSubmitting) return;
 
         const messageText = message.trim();
@@ -70,14 +76,75 @@ export function HomeSearchBox({
                 deepResearchEnabled,
             });
 
-            // Set pending message and navigate - chat page will handle sending
             setPendingFirstMessage({ chatId: chat.id, message: messageText });
             router.push(`/app/chats/${chat.id}`);
         } catch (error) {
             console.error("Failed to create chat:", error);
             setIsSubmitting(false);
         }
+    }, [
+        message,
+        createChat,
+        isSubmitting,
+        deepResearchEnabled,
+        setPendingFirstMessage,
+        router,
+        handleMessageChange,
+    ]);
+
+    const handleSubmit = async () => {
+        if (!message.trim() || createChat.isPending || isSubmitting) return;
+        if (isResolvingPlan) {
+            pendingSubmitRef.current = true;
+            setIsSubmitting(true);
+            return;
+        }
+        if (profile?.role === "free") {
+            openPricingPrompt();
+            setIsSubmitting(false);
+            return;
+        }
+
+        await submitMessage();
     };
+
+    useEffect(() => {
+        if (!pendingSubmitRef.current) return;
+        if (isResolvingPlan) return;
+
+        pendingSubmitRef.current = false;
+
+        if (profile?.role === "free") {
+            openPricingPrompt();
+            const timer = window.setTimeout(() => {
+                setIsSubmitting(false);
+            }, 0);
+            return () => window.clearTimeout(timer);
+        }
+
+        const timer = window.setTimeout(() => {
+            void submitMessage();
+        }, 0);
+
+        return () => window.clearTimeout(timer);
+    }, [isResolvingPlan, openPricingPrompt, profile?.role, submitMessage]);
+
+    useEffect(() => {
+        if (isPricingPromptOpen) {
+            wasPricingPromptOpenRef.current = true;
+            return;
+        }
+
+        if (!wasPricingPromptOpenRef.current) return;
+        wasPricingPromptOpenRef.current = false;
+        pendingSubmitRef.current = false;
+
+        const timer = window.setTimeout(() => {
+            setIsSubmitting(false);
+        }, 0);
+
+        return () => window.clearTimeout(timer);
+    }, [isPricingPromptOpen]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
