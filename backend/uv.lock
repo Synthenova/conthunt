@@ -529,7 +529,6 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tqdm" },
     { name = "truststore" },
-    { name = "twelvelabs" },
     { name = "types-deprecated" },
     { name = "types-python-dateutil" },
     { name = "typing-extensions" },
@@ -736,7 +735,6 @@ requires-dist = [
     { name = "tiktoken", specifier = "==0.12.0" },
     { name = "tqdm", specifier = "==4.67.3" },
     { name = "truststore", specifier = "==0.10.4" },
-    { name = "twelvelabs", specifier = "==1.2.0" },
     { name = "types-deprecated", specifier = "==1.3.1.20260130" },
     { name = "types-python-dateutil", specifier = "==2.9.0.20260124" },
     { name = "typing-extensions", specifier = "==4.15.0" },
@@ -3187,21 +3185,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/53/a3/1585216310e344e8102c22482f6060c7a6ea0322b63e026372e6dcefcfd6/truststore-0.10.4.tar.gz", hash = "sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301", size = 26169, upload-time = "2025-08-12T18:49:02.73Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/19/97/56608b2249fe206a67cd573bc93cd9896e1efb9e98bce9c163bcdc704b88/truststore-0.10.4-py3-none-any.whl", hash = "sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981", size = 18660, upload-time = "2025-08-12T18:49:01.46Z" },
-]
-
-[[package]]
-name = "twelvelabs"
-version = "1.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "pydantic-core" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6a/7e/0a25a5ab30c91fe3e58372dd9245f48f32030612ddfc01302728d11c3398/twelvelabs-1.2.0.tar.gz", hash = "sha256:5f4115d8967583dabcee7258749689881152a8ed57209e6d761f19ad4805f343", size = 140814, upload-time = "2026-02-12T06:12:46.345Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/32/a80060293e3abb6100bb93b8da25ed87fa246e2e3a0f94b42fa7d30ff060/twelvelabs-1.2.0-py3-none-any.whl", hash = "sha256:122daf6ba745a557910bbf4977155ac7494c30301d08aaa0ba6c0d98550b5257", size = 284755, upload-time = "2026-02-12T06:12:44.693Z" },
 ]
 
 [[package]]
