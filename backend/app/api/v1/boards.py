@@ -6,16 +6,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 
 from app.auth import get_current_user
 from app.db import get_db_connection, set_rls_user, queries
-from app.db.queries.content import get_video_media_asset_for_content_item
 from app.schemas.boards import (
     BoardCreate, BoardResponse,
     BoardItemCreate, BoardItemBatchCreate, BoardItemResponse
 )
 from app.schemas.insights import BoardInsightsResponse, BoardInsightsResult, BoardInsightsProgress
-from app.api.v1.analysis import run_gemini_analysis
-from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.services.cdn_signer import generate_signed_url
-from app.services.cloud_tasks import cloud_tasks
 
 from app.core import get_settings, logger
 
@@ -321,13 +317,6 @@ async def add_item_to_board(
     # NOTE: Gemini analysis disabled to reduce costs.
     # await run_gemini_analysis(media_asset_id, background_tasks=None, use_cloud_tasks=True)
 
-    # Trigger TwelveLabs Indexing (via Cloud Tasks)
-    await cloud_tasks.create_http_task(
-        queue_name=settings.QUEUE_TWELVELABS,
-        relative_uri="/v1/tasks/twelvelabs/index",
-        payload={"media_asset_id": str(media_asset_id)}
-    )
-             
     return {"status": "added"}
 
 
@@ -348,8 +337,6 @@ async def batch_add_items_to_board(
     if not user_uuid:
         raise HTTPException(status_code=401, detail="Invalid user")
     
-    media_asset_ids = []
-        
     async with get_db_connection() as conn:
         await set_rls_user(conn, user_uuid)
         
@@ -366,24 +353,6 @@ async def batch_add_items_to_board(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Could not add items: {str(e)}")
         
-        # Collect media_asset_ids for background processing
-        for content_item_id in items_in.content_item_ids:
-            media_asset = await get_video_media_asset_for_content_item(conn, content_item_id)
-            if media_asset:
-                media_asset_ids.append(media_asset.get("id"))
-    
-    # Trigger background analysis for each video
-    for media_asset_id in media_asset_ids:
-        # Trigger Gemini via Cloud Tasks (passed flag)
-        # NOTE: Gemini analysis disabled to reduce costs.
-        # await run_gemini_analysis(media_asset_id, background_tasks=None, use_cloud_tasks=True)
-        
-        # Trigger TwelveLabs via Cloud Tasks directly
-        await cloud_tasks.create_http_task(
-           queue_name=settings.QUEUE_TWELVELABS,
-           relative_uri="/v1/tasks/twelvelabs/index",
-           payload={"media_asset_id": str(media_asset_id)}
-        )
     
     return {
         "status": "added",

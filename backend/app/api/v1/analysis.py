@@ -28,7 +28,6 @@ from app.db.queries.content import (
     get_media_assets_by_ids,
 )
 from app.schemas.analysis import VideoAnalysisResponse
-from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.services.cloud_tasks import cloud_tasks
 from app.core import get_settings
 from app.prompts.video_analysis import DEFAULT_ANALYSIS_PROMPT
@@ -658,20 +657,8 @@ async def analyze_video(
     
     user_id = _user["db_user_id"]
     
-    # Check if this is a YouTube video (TwelveLabs can't handle YouTube URLs directly)
     async with get_db_connection() as conn:
         media_asset = await get_media_asset_by_id(conn, media_asset_id)
-    
-    source_url = media_asset.get("source_url", "") if media_asset else ""
-    is_youtube = "youtube.com" in source_url or "youtu.be" in source_url    
-    
-    # if not is_youtube:
-    #     # Trigger 12Labs Indexing in Background (only for non-YouTube)
-    #     await cloud_tasks.create_http_task(
-    #         queue_name=settings.QUEUE_TWELVELABS,
-    #         relative_uri="/v1/tasks/twelvelabs/index",
-    #         payload={"media_asset_id": str(media_asset_id)}
-    #     )
     
     # Use centralized service to enforce credit consumption
     return await analysis_service.trigger_paid_analysis(

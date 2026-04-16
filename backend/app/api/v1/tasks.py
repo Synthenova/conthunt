@@ -17,7 +17,7 @@ from app.api.v1.search import load_more_worker, search_worker
 from app.core import get_settings, logger
 from app.core.redis_client import get_app_redis
 from app.core.telemetry_context import bind_telemetry, merge_telemetry, telemetry_from_mapping
-from app.db.queries import update_board_insights_status, update_twelvelabs_asset_status
+from app.db.queries import update_board_insights_status
 from app.db.queries.analysis import (
     update_analysis_status,
     update_analysis_status_completed_batch,
@@ -38,7 +38,6 @@ from app.media.downloader import (
 from app.services.board_insights import execute_board_insights
 from app.services.cloud_tasks import cloud_tasks
 from app.services.task_executor import CloudTaskExecutor
-from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
 from app.llm.global_rate_limiter import LlmRateLimited
 from app.integrations.posthog_client import capture_event, capture_event_with_error, categorize_error
 
@@ -120,10 +119,6 @@ class AnalysisTaskPayload(BaseModel):
     user_id: UUID | None = None
     dispatched_at: float | None = None
     attempt_no: int = 0
-
-
-class TwelveLabsTaskPayload(BaseModel):
-    media_asset_id: UUID
 
 
 class MediaDownloadTaskPayload(BaseModel):
@@ -454,110 +449,6 @@ async def handle_gemini_analysis_task(
     if is_single:
         return await _handle_gemini_analysis_single(items[0], request)
     return await _handle_gemini_analysis_batch(items)
-
-
-async def _handle_twelvelabs_index_single(payload: TwelveLabsTaskPayload, request: Request) -> dict[str, Any]:
-    logger.info("Received TwelveLabs indexing task for %s", payload.media_asset_id)
-    executor = CloudTaskExecutor(request)
-
-    start_time = time.time()
-
-    async def _on_fail(e: Exception):
-        capture_event_with_error(
-            distinct_id="system:twelvelabs",
-            event="twelvelabs_index_failed",
-            exception=e,
-            properties={
-                "media_asset_id": str(payload.media_asset_id),
-                "duration_ms": int((time.time() - start_time) * 1000),
-            },
-        )
-        async with get_db_connection() as conn:
-            await update_twelvelabs_asset_status(
-                conn,
-                media_asset_id=payload.media_asset_id,
-                asset_status="failed",
-                index_status="failed",
-                error=str(e),
-            )
-            await conn.commit()
-
-    async with get_db_connection() as conn:
-        await update_twelvelabs_asset_status(
-            conn,
-            media_asset_id=payload.media_asset_id,
-            asset_status="processing",
-            index_status="processing",
-        )
-        asset = await get_media_asset_by_id(conn, payload.media_asset_id)
-        await conn.commit()
-
-    if not asset:
-        await _on_fail(Exception("Media asset not found"))
-        return {"status": "failed", "error": "Media asset not found"}
-
-    for attempt in range(18):
-        async with get_db_connection() as conn:
-            asset = await get_media_asset_by_id(conn, payload.media_asset_id)
-            await conn.commit()
-        status = asset.get("status", "") if asset else ""
-        if status in ("stored", "downloaded"):
-            break
-        if status == "failed":
-            await _on_fail(Exception("Video download failed"))
-            return {"status": "failed", "error": "Video download failed"}
-        logger.info(
-            "Video not ready (status=%s), waiting... attempt %s/18 for TwelveLabs %s",
-            status,
-            attempt + 1,
-            payload.media_asset_id,
-        )
-        await asyncio.sleep(10)
-    else:
-        await _on_fail(Exception("Video not ready after 3 min timeout"))
-        return {"status": "failed", "error": "Video not ready after timeout"}
-
-    result = await executor.run(
-        handler=process_twelvelabs_indexing_by_media_asset,
-        on_fail=_on_fail,
-        media_asset_id=payload.media_asset_id,
-    )
-    # Track successful completion
-    if result.get("status") == "ok":
-        capture_event(
-            distinct_id="system:twelvelabs",
-            event="twelvelabs_index_completed",
-            properties={
-                "media_asset_id": str(payload.media_asset_id),
-                "duration_ms": int((time.time() - start_time) * 1000),
-            },
-        )
-    return result
-
-
-@router.post("/twelvelabs/index")
-async def handle_twelvelabs_index_task(
-    payload: TwelveLabsTaskPayload | list[TwelveLabsTaskPayload],
-    request: Request,
-):
-    items, is_single = _normalize_payload(payload)
-    if is_single:
-        return await _handle_twelvelabs_index_single(items[0], request)
-
-    results = []
-    for item in items:
-        try:
-            res = await _handle_twelvelabs_index_single(item, request)
-            results.append(res)
-        except Exception as exc:
-            results.append({"status": "failed", "error": str(exc)})
-    succeeded = sum(1 for row in results if row.get("status") == "ok")
-    return _batch_summary(
-        route="twelvelabs/index",
-        processed=len(items),
-        succeeded=succeeded,
-        failed=len(items) - succeeded,
-    )
 
 
 async def _handle_media_download_single(payload: MediaDownloadTaskPayload, request: Request) -> dict[str, Any]:

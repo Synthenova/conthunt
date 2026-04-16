@@ -159,7 +159,6 @@ tenacity
 tiktoken
 tqdm
 truststore
-twelvelabs
 types-Deprecated
 types-python-dateutil
 typing-inspection

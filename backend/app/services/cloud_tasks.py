@@ -154,47 +154,7 @@ class CloudTasksService:
                 await self._run_local_task(uri, item)
             return
              
-        if uri == "/v1/tasks/twelvelabs/index":
-            from app.services.twelvelabs_processing import process_twelvelabs_indexing_by_media_asset
-            from app.db.queries import update_twelvelabs_asset_status
-            from app.db.queries.content import get_media_asset_by_id
-            import asyncio
-            
-            media_asset_id = UUID(payload["media_asset_id"])
-            try:
-                # Mark as processing on pickup
-                async with get_db_connection() as conn:
-                    await update_twelvelabs_asset_status(
-                        conn, media_asset_id=media_asset_id,
-                        asset_status="processing", index_status="processing"
-                    )
-                    await conn.commit()
-                
-                # Wait for video to be ready (max 3 min)
-                for attempt in range(18):
-                    async with get_db_connection() as conn:
-                        asset = await get_media_asset_by_id(conn, media_asset_id)
-                    status = asset.get("status", "") if asset else ""
-                    if status in ("stored", "downloaded"):
-                        break
-                    if status == "failed":
-                        raise Exception("Video download failed")
-                    logger.info(f"[LOCAL] Video not ready (status={status}), waiting for TwelveLabs... {attempt+1}/18")
-                    await asyncio.sleep(10)
-                else:
-                    raise Exception("Video not ready after 3 min timeout")
-                
-                await process_twelvelabs_indexing_by_media_asset(media_asset_id=media_asset_id)
-            except Exception as e:
-                logger.error(f"[LOCAL] TwelveLabs indexing failed: {e}", exc_info=True)
-                async with get_db_connection() as conn:
-                    await update_twelvelabs_asset_status(
-                        conn, media_asset_id=media_asset_id,
-                        asset_status="failed", index_status="failed", error=str(e)
-                    )
-                    await conn.commit()
-                
-        elif uri == "/v1/tasks/raw/archive":
+        if uri == "/v1/tasks/raw/archive":
             from app.storage.raw_archive import upload_raw_compressed, upload_raw_json_gz
             import base64
             

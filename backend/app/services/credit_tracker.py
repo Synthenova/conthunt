@@ -1,5 +1,6 @@
 """Credit-based usage tracking with monthly credit period resets."""
 import json
+import math
 from uuid import UUID
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -21,7 +22,7 @@ FEATURE_CREDITS = {
 
 # Role to monthly credits mapping (matches Dodo product metadata)
 ROLE_CREDITS = {
-    "free": 10000 if get_settings().APP_ENV == "local" else 60,
+    "free": 0,
     "creator": 10000 if get_settings().APP_ENV == "local" else 1050,
     "pro_research": 10000 if get_settings().APP_ENV == "local" else 3300,
 }
@@ -44,6 +45,31 @@ class CreditTracker:
         )
         row = result.fetchone()
         return row[0] if row and row[0] else None
+
+    async def _get_trial_status(self, user_id: UUID, role: str) -> dict:
+        if role == "free":
+            return {
+                "is_trialing": False,
+                "trial_ends_at": None,
+                "first_charge_at": None,
+                "trial_period_days": 0,
+            }
+
+        from app.services import billing_service
+
+        return await billing_service.get_current_trial_status_for_user(user_id)
+
+    def _get_effective_monthly_amount(self, amount: int, trial_status: dict) -> int:
+        if amount <= 0:
+            return 0
+        if not trial_status.get("is_trialing"):
+            return amount
+
+        trial_days = int(trial_status.get("trial_period_days") or 0)
+        if trial_days <= 0:
+            return amount
+
+        return max(0, math.floor(amount * trial_days / CREDIT_PERIOD_DAYS))
 
     async def _get_reward_balance(
         self,
@@ -252,7 +278,6 @@ class CreditTracker:
         Check and optionally record usage against credit limits.
         """
         credit_cost = FEATURE_CREDITS.get(feature, 1)
-        total_credits = ROLE_CREDITS.get(role, 50)
 
         async def _ensure_period_start(active_conn: AsyncConnection) -> datetime:
             period_start = await self._get_credit_period_start(active_conn, user_id)
@@ -268,6 +293,11 @@ class CreditTracker:
             settings = get_settings()
             await set_rls_user(active_conn, user_id)
             period_start = await _ensure_period_start(active_conn)
+            trial_status = await self._get_trial_status(user_id, role)
+            total_credits = self._get_effective_monthly_amount(
+                ROLE_CREDITS.get(role, 50),
+                trial_status,
+            )
 
             limit_result = await active_conn.execute(
                 text("""
@@ -279,6 +309,8 @@ class CreditTracker:
             )
             limit_row = limit_result.fetchone()
             limit_count = limit_row[0] if limit_row else None
+            if limit_count is not None:
+                limit_count = self._get_effective_monthly_amount(limit_count, trial_status)
 
             # OVERRIDE: Increase search limit for local dev
             if settings.APP_ENV == "local" and feature == "search_query":
@@ -342,8 +374,11 @@ class CreditTracker:
         Get usage summary with actual credit limits based on role.
         Automatically advances credit period if 30 days have passed.
         """
-        # Get credit limit based on role
-        total_credits = ROLE_CREDITS.get(role, 50)
+        trial_status = await self._get_trial_status(user_id, role)
+        total_credits = self._get_effective_monthly_amount(
+            ROLE_CREDITS.get(role, 50),
+            trial_status,
+        )
         
         async with get_db_connection() as conn:
             await set_rls_user(conn, user_id)
@@ -366,7 +401,10 @@ class CreditTracker:
                 """),
                 {"role": role}
             )
-            usage_limits = {row[0]: row[1] for row in limits_result.fetchall()}
+            usage_limits = {
+                row[0]: self._get_effective_monthly_amount(row[1], trial_status)
+                for row in limits_result.fetchall()
+            }
 
             # OVERRIDE: Increase search limit for local dev
             if get_settings().APP_ENV == "local":

@@ -48,16 +48,6 @@ from app.db.queries.boards import (
     search_in_board,
 )
 
-# TwelveLabs queries (indexing only)
-from app.db.queries.twelvelabs import (
-    get_twelvelabs_asset_by_media_asset,
-    upsert_twelvelabs_asset,
-    update_twelvelabs_asset_status,
-    get_user_twelvelabs_assets,
-    get_twelvelabs_id_for_media_asset,
-    resolve_indexed_asset_ids_to_media,
-)
-
 # Analysis queries (Gemini-based)
 from app.db.queries.analysis import (
     get_video_analysis_by_media_asset,
@@ -154,12 +144,6 @@ __all__ = [
     "get_board_items_summary",
     "search_user_boards",
     "search_in_board",
-    # TwelveLabs
-    "get_twelvelabs_asset_by_media_asset",
-    "upsert_twelvelabs_asset",
-    "update_twelvelabs_asset_status",
-    "get_user_twelvelabs_assets",
-    "resolve_indexed_asset_ids_to_media",
     "get_video_analysis_by_media_asset",
     "get_video_analyses_by_media_assets",
     "insert_video_analysis",

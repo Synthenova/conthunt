@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     
     # queues
     QUEUE_MEDIA_DOWNLOAD: str = "media-download-queue"
-    QUEUE_TWELVELABS: str = "twelvelabs-queue"
     QUEUE_GEMINI: str = "gemini-queue"
     QUEUE_RAW_ARCHIVE: str = "raw-archive-queue"
     QUEUE_MEDIA_DOWNLOAD_PRIORITY: str = "media-download-priority"
@@ -85,11 +84,6 @@ class Settings(BaseSettings):
     MEDIA_IMAGE_QUALITY: int = 75
     RAW_UPLOAD_ENABLED: bool = True
 
-    # TwelveLabs Video Analysis
-    TWELVELABS_API_KEY: str = ""
-    TWELVELABS_INDEX_ID: str = "" # Static Index ID
-    TWELVELABS_UPLOAD_TIMEOUT: int = 120  # seconds
-    TWELVELABS_INDEX_TIMEOUT: int = 180  # seconds
     GEMINI_ANALYSIS_TIMEOUT_S: float = 420.0
 
 

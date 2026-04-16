@@ -55,7 +55,6 @@ STATE_TO_ALLOWED_ACTIONS = {
     ],
 }
 
-
 def _parse_datetime(value: Any) -> Optional[datetime]:
     """Parse datetime from DB/webhook values."""
     if value is None:
@@ -124,10 +123,14 @@ async def _enrich_subscription_record(conn, subscription: dict) -> dict:
     status = (enriched.get("status") or "").lower()
     current_period_end = _parse_datetime(enriched.get("current_period_end"))
     now = datetime.now(timezone.utc)
+    enriched["has_successful_paid_charge"] = await _has_prior_successful_paid_charge(
+        conn,
+        enriched["subscription_id"],
+    )
 
     hold_reason = None
     if status == "on_hold":
-        if await _has_prior_successful_paid_charge(conn, enriched["subscription_id"]):
+        if enriched["has_successful_paid_charge"]:
             hold_reason = "grace" if current_period_end and current_period_end > now else "ended"
         else:
             hold_reason = "trial_failed"
@@ -192,6 +195,43 @@ def _pick_winner_subscription(subscriptions: list[dict]) -> Optional[dict]:
         return max(cancelled_with_access, key=_event_sort_key)
 
     return None
+
+
+async def _get_product_trial_fields(
+    product_id: Optional[str],
+    current_period_start: Optional[datetime],
+    current_period_end: Optional[datetime],
+) -> dict[str, Any]:
+    """Compute persisted trial fields from product metadata and billing dates."""
+    if not product_id:
+        return {
+            "trial_period_days": None,
+            "trial_ends_at": None,
+            "first_charge_at": None,
+        }
+
+    product = dodo_client.get_product_by_id(product_id)
+    if not product:
+        await dodo_client.get_products()
+        product = dodo_client.get_product_by_id(product_id)
+
+    trial_period_days = int((product or {}).get("trial_period_days") or 0)
+    if trial_period_days <= 0 or current_period_start is None:
+        return {
+            "trial_period_days": None,
+            "trial_ends_at": None,
+            "first_charge_at": None,
+        }
+
+    trial_ends_at = current_period_start + timedelta(days=trial_period_days)
+    if current_period_end and current_period_end < trial_ends_at:
+        trial_ends_at = current_period_end
+
+    return {
+        "trial_period_days": trial_period_days,
+        "trial_ends_at": trial_ends_at,
+        "first_charge_at": trial_ends_at,
+    }
 
 
 async def _get_user_role(user_id: UUID) -> str:
@@ -309,7 +349,7 @@ async def get_billing_context(user_id: UUID) -> dict:
 
 
 async def get_trial_summary(subscription_id: Optional[str]) -> dict:
-    """Infer trial status from Dodo subscription details."""
+    """Infer trial status from persisted billing subscription data."""
     if not subscription_id:
         return {
             "is_trialing": False,
@@ -318,10 +358,62 @@ async def get_trial_summary(subscription_id: Optional[str]) -> dict:
             "trial_period_days": 0,
         }
 
-    try:
-        provider_subscription = await dodo_client.get_subscription(subscription_id)
-    except Exception as e:
-        logger.warning(f"Failed to fetch provider subscription for trial summary {subscription_id}: {e}")
+    async with get_db_connection() as conn:
+        result = await conn.execute(
+            text("""
+            SELECT
+                status,
+                access_status,
+                trial_period_days,
+                trial_ends_at,
+                first_charge_at
+            FROM billing_subscriptions
+            WHERE subscription_id = :subscription_id
+            """),
+            {"subscription_id": subscription_id},
+        )
+        row = result.fetchone()
+        if not row:
+            return {
+                "is_trialing": False,
+                "trial_ends_at": None,
+                "first_charge_at": None,
+                "trial_period_days": 0,
+            }
+
+        status = (row[0] or "").lower()
+        access_status = (row[1] or "").lower()
+        trial_period_days = int(row[2] or 0)
+        trial_ends_at = row[3]
+        first_charge_at = row[4]
+        now = datetime.now(timezone.utc)
+        has_successful_paid_charge = await _has_prior_successful_paid_charge(conn, subscription_id)
+
+        is_trialing = bool(
+            trial_period_days > 0
+            and trial_ends_at
+            and now < trial_ends_at
+            and status in {"pending", "active"}
+            and access_status in {AccessStatus.ACTIVE.value, AccessStatus.GRACE.value, ""}
+            and not has_successful_paid_charge
+        )
+
+        return {
+            "is_trialing": is_trialing,
+            "trial_ends_at": trial_ends_at.isoformat() if trial_ends_at else None,
+            "first_charge_at": first_charge_at.isoformat() if first_charge_at else None,
+            "trial_period_days": trial_period_days,
+        }
+
+
+async def get_current_trial_status_for_user(user_id: UUID) -> dict:
+    """
+    Infer the current user's trial state from the effective subscription.
+    This reuses provider-backed trial inference so trial end remains correct after
+    the first paid billing period starts.
+    """
+    subscription = await get_user_subscription(user_id)
+    if not subscription or not _subscription_grants_paid_role(subscription):
         return {
             "is_trialing": False,
             "trial_ends_at": None,
@@ -329,26 +421,18 @@ async def get_trial_summary(subscription_id: Optional[str]) -> dict:
             "trial_period_days": 0,
         }
 
-    trial_period_days = int(provider_subscription.get("trial_period_days") or 0)
-    created_at = _parse_datetime(provider_subscription.get("created_at"))
-    next_billing_date = _parse_datetime(provider_subscription.get("next_billing_date"))
-    status = (provider_subscription.get("status") or "").lower()
+    trial_period_days = int(subscription.get("trial_period_days") or 0)
+    trial_ends_at = _parse_datetime(subscription.get("trial_ends_at"))
+    first_charge_at = _parse_datetime(subscription.get("first_charge_at"))
     now = datetime.now(timezone.utc)
-
-    trial_ends_at = None
-    if trial_period_days > 0 and created_at:
-        trial_ends_at = created_at + timedelta(days=trial_period_days)
-    if next_billing_date and (trial_ends_at is None or next_billing_date < trial_ends_at):
-        trial_ends_at = next_billing_date
 
     is_trialing = bool(
         trial_period_days > 0
         and trial_ends_at
         and now < trial_ends_at
-        and status in {"pending", "active"}
+        and _subscription_grants_paid_role(subscription)
+        and not subscription.get("has_successful_paid_charge", False)
     )
-
-    first_charge_at = trial_ends_at if trial_period_days > 0 else None
 
     return {
         "is_trialing": is_trialing,
@@ -557,7 +641,8 @@ async def get_user_subscription(user_id: UUID) -> Optional[dict]:
                 subscription_id, customer_id, product_id, effective_product_id, status,
                 billing_state, payment_status, access_status, entitlement_status,
                 pending_change_type, pending_target_product_id, pending_effective_at,
-                cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
+                cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts,
+                trial_period_days, trial_ends_at, first_charge_at
             FROM billing_subscriptions
             WHERE user_id = :user_id
             ORDER BY last_webhook_ts DESC
@@ -583,6 +668,9 @@ async def get_user_subscription(user_id: UUID) -> Optional[dict]:
                 "current_period_start": row[13].isoformat() if row[13] else None,
                 "current_period_end": row[14].isoformat() if row[14] else None,
                 "last_webhook_ts": row[15].isoformat() if row[15] else None,
+                "trial_period_days": int(row[16] or 0),
+                "trial_ends_at": row[17].isoformat() if row[17] else None,
+                "first_charge_at": row[18].isoformat() if row[18] else None,
             }
             subscriptions.append(await _enrich_subscription_record(conn, subscription))
 
@@ -1032,6 +1120,17 @@ async def apply_subscription_state(
     new_role = "free"
 
     async with get_db_connection() as conn:
+        user_period_result = await conn.execute(
+            text("""
+            SELECT current_period_start
+            FROM users
+            WHERE id = :user_id
+            """),
+            {"user_id": user_id},
+        )
+        user_period_row = user_period_result.fetchone()
+        existing_current_period_start = user_period_row[0] if user_period_row else None
+
         existing_owner_result = await conn.execute(
             text("""
             SELECT user_id
@@ -1058,6 +1157,11 @@ async def apply_subscription_state(
             cancel_at_period_end=cancel_at_period_end,
             current_period_end=current_period_end,
         )
+        trial_fields = await _get_product_trial_fields(
+            derived["effective_product_id"] or product_id,
+            current_period_start,
+            current_period_end,
+        )
 
         # Canonical per-subscription history table (new model).
         upsert_result = await conn.execute(
@@ -1067,6 +1171,7 @@ async def apply_subscription_state(
                  effective_product_id, billing_state, payment_status, access_status,
                  entitlement_status, pending_change_type, pending_target_product_id,
                  pending_effective_at, last_payment_status, last_paid_at,
+                 trial_period_days, trial_ends_at, first_charge_at,
                  cancel_at_period_end, current_period_start, current_period_end,
                  last_webhook_ts, updated_at)
             VALUES
@@ -1074,6 +1179,7 @@ async def apply_subscription_state(
                  :effective_product_id, :billing_state, :payment_status, :access_status,
                  :entitlement_status, :pending_change_type, :pending_target_product_id,
                  :pending_effective_at, :last_payment_status, :last_paid_at,
+                 :trial_period_days, :trial_ends_at, :first_charge_at,
                  :cancel_at_period_end, :current_period_start, :current_period_end,
                  :webhook_ts, now())
             ON CONFLICT (subscription_id) DO UPDATE SET
@@ -1092,6 +1198,9 @@ async def apply_subscription_state(
                 pending_effective_at = EXCLUDED.pending_effective_at,
                 last_payment_status = EXCLUDED.last_payment_status,
                 last_paid_at = EXCLUDED.last_paid_at,
+                trial_period_days = EXCLUDED.trial_period_days,
+                trial_ends_at = EXCLUDED.trial_ends_at,
+                first_charge_at = EXCLUDED.first_charge_at,
                 cancel_at_period_end = EXCLUDED.cancel_at_period_end,
                 current_period_start = EXCLUDED.current_period_start,
                 current_period_end = EXCLUDED.current_period_end,
@@ -1117,6 +1226,9 @@ async def apply_subscription_state(
                 "pending_effective_at": derived["pending_effective_at"],
                 "last_payment_status": derived["last_payment_status"],
                 "last_paid_at": derived["last_paid_at"],
+                "trial_period_days": trial_fields["trial_period_days"],
+                "trial_ends_at": trial_fields["trial_ends_at"],
+                "first_charge_at": trial_fields["first_charge_at"],
                 "cancel_at_period_end": cancel_at_period_end,
                 "current_period_start": current_period_start,
                 "current_period_end": current_period_end,
@@ -1139,7 +1251,8 @@ async def apply_subscription_state(
             SELECT
                 subscription_id, customer_id, product_id, effective_product_id, status,
                 billing_state, payment_status, access_status, entitlement_status,
-                cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
+                cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts,
+                trial_period_days, trial_ends_at, first_charge_at
             FROM billing_subscriptions
             WHERE user_id = :user_id
             ORDER BY last_webhook_ts DESC
@@ -1163,6 +1276,9 @@ async def apply_subscription_state(
                 "current_period_start": row[10].isoformat() if row[10] else None,
                 "current_period_end": row[11].isoformat() if row[11] else None,
                 "last_webhook_ts": row[12].isoformat() if row[12] else None,
+                "trial_period_days": int(row[13] or 0),
+                "trial_ends_at": row[14].isoformat() if row[14] else None,
+                "first_charge_at": row[15].isoformat() if row[15] else None,
             }
             candidates.append(await _enrich_subscription_record(conn, candidate))
         winner = _pick_winner_subscription(candidates)
@@ -1182,10 +1298,18 @@ async def apply_subscription_state(
             customer_id_to_set = winner.get("customer_id") or customer_id
 
         reset_credit_period = (
-            is_new_subscription
-            and winner
+            winner
             and winner.get("subscription_id") == subscription_id
-            and (winner.get("status") or "").lower() == "active"
+            and new_role != "free"
+            and period_start_to_set is not None
+            and (
+                existing_current_period_start is None
+                or (
+                    existing_current_period_start.replace(tzinfo=timezone.utc)
+                    if existing_current_period_start.tzinfo is None
+                    else existing_current_period_start.astimezone(timezone.utc)
+                ) != period_start_to_set.astimezone(timezone.utc)
+            )
         )
 
         if reset_credit_period:
@@ -1194,7 +1318,7 @@ async def apply_subscription_state(
                 UPDATE users
                 SET role = :role,
                     current_period_start = :period_start,
-                    credit_period_start = now(),
+                    credit_period_start = :period_start,
                     dodo_customer_id = :customer_id
                 WHERE id = :user_id
                 """),
@@ -1298,12 +1422,24 @@ async def recompute_user_billing_winner(user_id: UUID) -> dict:
     customer_id_to_set: Optional[str] = None
 
     async with get_db_connection() as conn:
+        user_period_result = await conn.execute(
+            text("""
+            SELECT current_period_start
+            FROM users
+            WHERE id = :user_id
+            """),
+            {"user_id": user_id},
+        )
+        user_period_row = user_period_result.fetchone()
+        existing_current_period_start = user_period_row[0] if user_period_row else None
+
         result = await conn.execute(
             text("""
             SELECT
                 subscription_id, customer_id, product_id, effective_product_id, status,
                 billing_state, payment_status, access_status, entitlement_status,
-                cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts
+                cancel_at_period_end, current_period_start, current_period_end, last_webhook_ts,
+                trial_period_days, trial_ends_at, first_charge_at
             FROM billing_subscriptions
             WHERE user_id = :user_id
             ORDER BY last_webhook_ts DESC
@@ -1327,6 +1463,9 @@ async def recompute_user_billing_winner(user_id: UUID) -> dict:
                 "current_period_start": row[10].isoformat() if row[10] else None,
                 "current_period_end": row[11].isoformat() if row[11] else None,
                 "last_webhook_ts": row[12].isoformat() if row[12] else None,
+                "trial_period_days": int(row[13] or 0),
+                "trial_ends_at": row[14].isoformat() if row[14] else None,
+                "first_charge_at": row[15].isoformat() if row[15] else None,
             }
             subscriptions.append(await _enrich_subscription_record(conn, subscription))
         winner = _pick_winner_subscription(subscriptions)
@@ -1341,21 +1480,52 @@ async def recompute_user_billing_winner(user_id: UUID) -> dict:
         elif winner:
             customer_id_to_set = winner.get("customer_id")
 
-        await conn.execute(
-            text("""
-            UPDATE users
-            SET role = :role,
-                current_period_start = :period_start,
-                dodo_customer_id = COALESCE(:customer_id, dodo_customer_id)
-            WHERE id = :user_id
-            """),
-            {
-                "user_id": user_id,
-                "role": new_role,
-                "period_start": period_start_to_set,
-                "customer_id": customer_id_to_set,
-            },
+        should_reset_credit_period = (
+            new_role != "free"
+            and period_start_to_set is not None
+            and (
+                existing_current_period_start is None
+                or (
+                    existing_current_period_start.replace(tzinfo=timezone.utc)
+                    if existing_current_period_start.tzinfo is None
+                    else existing_current_period_start.astimezone(timezone.utc)
+                ) != period_start_to_set.astimezone(timezone.utc)
+            )
         )
+
+        if should_reset_credit_period:
+            await conn.execute(
+                text("""
+                UPDATE users
+                SET role = :role,
+                    current_period_start = :period_start,
+                    credit_period_start = :period_start,
+                    dodo_customer_id = COALESCE(:customer_id, dodo_customer_id)
+                WHERE id = :user_id
+                """),
+                {
+                    "user_id": user_id,
+                    "role": new_role,
+                    "period_start": period_start_to_set,
+                    "customer_id": customer_id_to_set,
+                },
+            )
+        else:
+            await conn.execute(
+                text("""
+                UPDATE users
+                SET role = :role,
+                    current_period_start = :period_start,
+                    dodo_customer_id = COALESCE(:customer_id, dodo_customer_id)
+                WHERE id = :user_id
+                """),
+                {
+                    "user_id": user_id,
+                    "role": new_role,
+                    "period_start": period_start_to_set,
+                    "customer_id": customer_id_to_set,
+                },
+            )
 
     await _sync_firebase_role(user_id, new_role)
     return {
